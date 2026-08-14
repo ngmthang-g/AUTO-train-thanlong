@@ -1,71 +1,45 @@
-# Rà soát kỹ thuật - Auto Train v0.8.0
+# Rà soát kỹ thuật - Auto Train v0.8.1
 
-Ngày rà soát: 14-08-2026.
+## Auto chat
 
-## 1. Hồi quy NPC v0.7.2
+Video người dùng thể hiện chuỗi thao tác UI thật: mở Chat, nhập nội dung ở ô chat, gửi, rồi đóng bảng. Metadata IL2CPP v39 xác nhận class `FGStudio.LuaSystem.GUI.UIInput` và method `set_Text` tại RVA `0x63C270`. v0.8.1 dùng chính `UIObject.instances` để tìm UIInput trong cây Chat và gọi setter managed; sau đó resolver gọi control `Gửi tin nhắn` và `Đóng`.
 
-Nguyên nhân đã xác định:
+`UIFactory.SendDefaultChat(string)` vẫn tồn tại trong game nhưng không còn là đường chính vì runtime thực tế không tái hiện đúng workflow/kênh chat người dùng cần.
 
-- `LuaSystemAPI_Game.GetNearestNPC()` (0 tham số) trả `LuaMapObjectData`.
-- v0.7.2 đã gọi getter ResID của lớp dẫn xuất trên object base và biến ResID thành điều kiện bắt buộc, làm NPC hợp lệ bị loại.
-- Nhánh lookup 1 tham số trước đó còn dùng sai RVA `0x673AA0`; entry đúng của overload 1 tham số nằm ở `0x673A80`. v0.8.0 không còn phụ thuộc overload này để lưu/mở NPC.
+## Trị liệu
 
-Fix:
+Chuỗi được thực hiện tuần tự bằng resolver nội bộ:
 
-- Save NPC dùng đúng `GetNearestNPC() -> get_RoleID + get_Name` như v0.7.0.
-- Tới vị trí NPC, re-scan nearest NPC và so tên trước khi dùng RoleID hiện tại để `ClickNPC()`.
-- Nếu nearest NPC khác tên, không click mù.
+`ClickNPC(RoleID hiện tại) → Trị liệu → Xác nhận → Ta biết rồi`.
 
-## 2. Shop / bán trang bị
+Không PostMessage/click tọa độ màn hình cho chuỗi này.
 
-Metadata C# không có API `SellItem` trực tiếp. Những API liên quan được xác nhận gồm:
+## AUTO → Đánh quái
 
-- `GetFreeBagSpace()`
-- `IsItemSellable(itemID)`
-- `IsItemSellToShopWithBoundMoney(itemID)`
-- `GetItemsAtSite(site)` / `GetItemAtSite(site,pos)`
+Hồi quy v0.8.0 đến từ việc mở rộng resolver AUTO sang toàn bộ `UIRectTransform` có Lua click handler. Quét tất cả rect + cây con vừa nặng vừa tăng nguy cơ gọi nhầm handler khi UI game thay đổi.
 
-Do enum/site và packet bán trực tiếp không được chứng minh đủ để gọi an toàn, v0.8.0 giữ đường callback UI nội bộ:
+v0.8.1 giới hạn production path:
 
-`ClickNPC -> Mua thú cưỡi -> Bán vật phẩm -> Bán vật phẩm nhanh -> Trang bị -> item cells`.
+- AUTO root: `UIButton` duy nhất, giống đường bản cũ đã mở menu ổn định.
+- `Đánh quái`: `UIButton` hoặc `UIToggle`.
+- `Dừng`: `UIButton` hoặc `UIToggle`.
+- Không gọi `UIRectTransform` trong AUTO production path.
+- Sau callback phải xác minh `LuaSystemAPI_Game.get_EnableAutoF1()`.
+- Retry thất bại: 3 giây.
 
-Mỗi item tối đa 3 lần, toàn chuỗi tối đa 90 callback. Chỉ click control thuộc cây bag/inventory và hỗ trợ UIButton hoặc UIRect-Lua.
+Metadata còn có `LuaSystemAPI_Game.AutoSetFlag(int)` và `AutoRemoveFlag()`, nhưng ý nghĩa giá trị `RangerAuto` chưa được chứng minh đủ. Bản này **không đoán flag** để tránh gây trạng thái sai hoặc crash. Đây là hướng nghiên cứu kế tiếp nếu cần bypass hoàn toàn menu AUTO.
 
-## 3. AUTO -> Đánh quái
+## NPC tách dữ liệu
 
-- Navigation, map guard, confirm map, Đầu thai và mount là luồng dùng chung với SelectedSkill.
-- AUTO root, Fight và Stop đều resolve đa control.
-- Fight phải xác nhận AutoFight=ON; Stop phải xác nhận AutoFight=OFF.
-- Không dùng direct setter để giả thành công.
+Hai nút lưu dùng hai vector, hai file và hai lookup độc lập. Không còn trường hợp lưu NPC trị liệu ghi đè/chèn chung vào danh sách bán đồ.
 
-## 4. Repeated death / PK crash guard
+## Buff
 
-Race nguy hiểm trong luồng cũ: thao tác menu AUTO hoặc callback UI khác có thể trùng lúc death overlay đang được tạo/hủy; lặp callback Đầu thai trên object UI cũ làm nguy cơ crash tăng sau nhiều chu kỳ.
+Mỗi skill buff được thử một lần mỗi chu kỳ. `TryApplyAndVerifyBuff()` vẫn kiểm tra buff trước/sau cast; nếu không thấy effect thì chuyển ngay sang skill tiếp theo và chỉ thử lại ở chu kỳ 5 phút sau.
 
-v0.8.0:
+## Kiểm tra source
 
-1. Death edge chỉ Stop AutoPath.
-2. Chờ `IsDeath=true`, `MapReady=true`, `WaitingChangeMap=false` ổn định 2 scan.
-3. Re-scan nút Đầu thai rồi gọi đúng một lần.
-4. Không gửi UI/path khác khi còn dead.
-5. Chỉ cho một retry muộn sau 15 giây, và retry cũng re-scan object mới.
-6. `IsDeath=false` phải ổn định 2 scan trước khi tiếp tục.
-7. Sau sống lại đi qua map guard; nếu bật trị liệu thì trị liệu trước khi về bãi.
-
-## 5. Auto buff / chat / trị liệu
-
-- Buff: dùng `GetBuffs`, `HasBuff`, `RequestUsingSkill` và LuaBuffData getters; không giả định `buffID == skillID`.
-- Chat: `UIFactory.SendDefaultChat(string)` đã được xác nhận trong metadata và disassembly; đường này tạo chat data rồi gửi command nội bộ. Chưa có bằng chứng đủ để chọn channel cụ thể từ API này.
-- Trị liệu: không tìm thấy API C# trực tiếp tương đương NPC treatment; dùng UI callback có nhận diện nhãn/cây control.
-
-## 6. Kiểm tra binary/source
-
-- PE guard: TimeDateStamp `0x6A410C14`, SizeOfImage `0x03DCB000`.
-- 56/56 signature runtime hiện có trong source khớp byte với `GameAssembly.dll` đã cung cấp.
-- C++17 `-Wall -Wextra -Werror`: PASS.
-- Clang Static Analyzer: 0 diagnostics.
-- `remote_worker.S` -> x86-64 Windows COFF: PASS; arg5 được đặt tại `[rsp+0x20]`.
-
-## 7. Giới hạn còn lại
-
-Không ghi “runtime OK” cho các control shop/treatment/buff/AUTO khi chưa chạy trực tiếp server game. Mọi resolver mới đều ưu tiên fail-safe: không nhận diện duy nhất thì dừng nhánh đó, không click theo tọa độ màn hình và không click mù.
+- `main.cpp`: C++17 syntax check với `-Wall -Wextra -Werror` qua Win32 compatibility stubs: PASS.
+- `remote_worker.S`: assemble target Windows x64 COFF: PASS.
+- Worker 5 tham số giữ nguyên ABI: arg5 được đặt ở `[rsp+0x20]`.
+- Không thay đổi đường `SelectedSkill` đang hoạt động ổn ngoài việc dùng chung state machine hiện hữu.

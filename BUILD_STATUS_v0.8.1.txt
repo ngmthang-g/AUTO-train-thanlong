@@ -1,0 +1,12 @@
+THAN LONG AUTO TRAIN v0.8.1 - SOURCE VALIDATION STATUS
+
+PASS: C++17 syntax check
+PASS: -Wall -Wextra -Werror (Win32 compatibility syntax harness)
+PASS: remote_worker.S -> Windows x64 COFF
+PASS: build.cmd/resource/manifest version = 0.8.1
+PASS: GitHub workflow searches dist/ThanLongAutoTrain_v*.exe dynamically
+
+Runtime validation still required inside the actual game/server for Chat/Treatment/AUTO UI identity.
+Expected Windows output:
+  dist\ThanLongAutoTrain_v0.8.1.exe
+PASS: Clang Static Analyzer = 0 diagnostics (syntax harness)
