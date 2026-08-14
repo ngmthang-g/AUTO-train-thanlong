@@ -1,0 +1,31 @@
+ThanLongAutoTrain v0.9.0
+
+SOURCE CHECKS
+- C++17 / -Wall / -Wextra / -Werror syntax check with Win32 declaration stubs: PASS
+- Clang Static Analyzer: 0 diagnostics
+- remote_worker.S -> Windows x64 COFF: PASS
+- GameAssembly byte signatures remaining in Validate(): 59/59 PASS
+- namespace rva/off constexpr with zero call-sites: 0
+
+COMBAT
+- Ctrl+TabSkill and AutoFight use separate enum paths/state confirmation.
+- Ctrl+Tab mode: continuous coordinate decision.
+- AUTO mode: coordinate decision every 5 minutes after verified AUTO; MapID continuous.
+- AUTO action: direct AutoFight_Main.StartAutoFight(Train/None), no TopIcon wrapper and no AutoFightGroup open.
+
+MOUNT
+- 4 s mount wait -> 10 s cleanup (AUTO start max 2 attempts) -> retry.
+- two mount failures -> 1 minute walking fallback -> restart cycle.
+- riding=true is checked before cleanup combat; raw AUTO is stopped immediately on the first riding scan; no target/skill while mounted.
+- AUTO stop not verified -> no mount request; walking fallback instead.
+
+SELL STABILITY
+- AUTO must be stopped before NPC selling.
+- ClickNPC quiet window 1.2 s.
+- GameDialog/NPCShop stable for 2 reads.
+- root-scoped UI search only, no global toggle scan for shop.
+- one sell -> server ACK -> ~1 s quiet -> rescan.
+
+WINDOWS OUTPUT
+- build.cmd target: dist\ThanLongAutoTrain_v0.9.0.exe
+- GitHub Actions workflow uses wildcard verification/upload.

@@ -1,21 +1,41 @@
-# AUDIT v0.8.9
+# AUDIT v0.9.0
 
-## Removal audit
+## Combat separation
 
-Các symbol/đường cũ sau đã được grep toàn bộ `src/main.cpp` và đều có 0 kết quả:
+`TrainActivationMode` hiện chỉ có:
 
-`ChatPing`, `ClickGamePoint`, `TypeUnicode`, `CalibrateChat`, `CapturePoint`, `AutoChat`, `autoChat`, `OpenAutoRootButton`, `FindChatOpen`, `FindChatPanelAction`, `InvokeRectLua`, `UIRectTransform`, `UIInput`, `NavigationMode`, `NormalizedPoint`, `RectLua`, `PointerEventData`, `WM_MOUSEMOVE`, `WM_LBUTTONDOWN`, `WM_LBUTTONUP`, `WM_CHAR`.
+- `CtrlTabSkill = 1`
+- `AutoFight = 2`
 
-RVA/signature của `UIInput.set_Text` và `UIRectTransform.get_OnPointerClickHandler`, class caches/scanners tương ứng cũng đã xóa.
+Mode Ctrl+Tab không còn gọi `LuaSelectTarget`/`GetNearbyEnemyIDs`; khi cần target, nó gửi đúng Ctrl+Tab rồi dùng selected skill. Mode AUTO không gọi Ctrl+Tab.
 
-## Build/static checks
+AUTO chỉ đánh giá lệch X/Y sau mỗi 5 phút kể từ lúc `StartAutoFight(Train)` được xác minh. Ctrl+Tab mode vẫn đánh giá tọa độ mỗi worker cycle. MapID vẫn guard liên tục ở cả hai.
+
+## Mount state-machine
+
+Đã kiểm tra thứ tự branch: `live.riding` được xử lý trước mọi branch dọn quái. Sau khi riding=true không có call-site Ctrl+Tab/skill/AutoTrain trong pha mount recovery; nếu raw `live.autoFight` vẫn ON thì Dừng được thử ngay trên scan đầu tiên thấy riding=true.
+
+Chu kỳ: mount → 4 s → fail #1 → combat cleanup 10 s → mount → fail #2 → walk 1 phút → reset. Nếu AUTO cleanup không dừng được sau retry, tool không thử mount và chuyển walking fallback.
+
+Mount request bị reject cũng vẫn được tính là một attempt sau đủ 4 s, không spam mỗi worker tick. AUTO cleanup chỉ thử StartAutoFight tối đa 2 lần trong cửa sổ 10 s.
+
+## Sell stability
+
+- Không latch selling trip khi persistent AUTO còn chạy và chưa dừng được.
+- `TrySellAtNpc()` kiểm tra AUTO lần nữa trước `OpenNpc`.
+- `ClickNPC` quiet 1.2 s.
+- GameDialog/NPCShop stable twice.
+- Shop control lookup root-scoped; global toggle scanner đã xóa.
+- server ACK polling 125 ms, tối đa ~3 s; sau ACK quiet 900 ms trước scan tiếp.
+
+## Static checks
 
 - `clang++ -std=c++17 -Wall -Wextra -Werror -fsyntax-only` với Win32 declaration stubs: PASS.
-- `src/remote_worker.S` assemble target `x86_64-pc-windows-msvc`: PASS, output COFF x86-64.
-- 62/62 byte signatures còn lại trong `Validate()` khớp đúng `GameAssembly(1).dll` của client được cung cấp.
-- Không còn namespace-scope RVA constexpr bị khai báo mà không dùng.
-- Source giảm từ 5626 dòng (v0.8.8 upload) xuống 4895 dòng trước bước tài liệu, chủ yếu do loại code chat/UIRect/dead path.
+- Clang Static Analyzer: 0 diagnostics.
+- `src/remote_worker.S` assemble `x86_64-pc-windows-msvc`: PASS, COFF x86-64.
+- 59/59 byte signatures trong `Validate()` khớp `GameAssembly.dll` SHA-256 `4c98c9934bc4260efa64f5492c58e0c5104c89359f0126e7cd402feb381fe3c7`.
+- rva/off constexpr không dùng: 0.
 
-## Lưu ý còn lại
+## Runtime caveat
 
-`PostMessageW` vẫn còn đúng một mục đích: Ctrl+Tab fallback của chế độ đánh bằng skill nếu `SelectTarget(RoleID)` nội bộ thất bại. Nó không thuộc các tính năng user yêu cầu xóa trong v0.8.9. Không còn mouse-message hay `WM_CHAR` trong source.
+Lua callbacks vẫn đi qua remote worker, nên runtime test trên client là bắt buộc. Nếu vẫn crash đúng tại Lua invoke thì vấn đề còn lại là thread affinity/main-thread hoặc cần chuyển Sell sang packet đã trace đủ context.

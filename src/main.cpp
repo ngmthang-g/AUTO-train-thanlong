@@ -24,7 +24,7 @@ extern "C" unsigned char RemoteWorkerStart[];
 extern "C" unsigned char RemoteWorkerEnd[];
 
 using Clock = std::chrono::steady_clock;
-constexpr wchar_t kTitle[] = L"Thần Long Mobile - Auto Train v0.8.9";
+constexpr wchar_t kTitle[] = L"Thần Long Mobile - Auto Train v0.9.0";
 constexpr wchar_t kModule[] = L"GameAssembly.dll";
 
 namespace rva {
@@ -65,8 +65,6 @@ constexpr std::uint64_t LuaCanUseSkill = 0x66A8E0;
 constexpr std::uint64_t LuaCheckSkillCondition = 0x66AD30;
 constexpr std::uint64_t LuaIsSkillCooldown = 0x6782D0;
 constexpr std::uint64_t LuaRequestUsingSkillWithTarget = 0x6791B0;
-constexpr std::uint64_t LuaGetNearbyEnemyIDs = 0x673620;
-constexpr std::uint64_t LuaSelectTarget = 0x6791D0;
 constexpr std::uint64_t LuaGetSelectedTarget = 0x67B610;
 constexpr std::uint64_t SelectedTargetGetRoleID = 0x526830;
 constexpr std::uint64_t LuaIsSelectTargetDie = 0x678260;
@@ -78,7 +76,6 @@ constexpr std::uint64_t UIObjectActiveInHierarchy = 0x52F7D0;
 constexpr std::uint64_t UIObjectCoreChildren = 0x52FB80;
 constexpr std::uint64_t UIButtonGetInteractable = 0x52E120;
 constexpr std::uint64_t UIButtonGetText = 0x52E230;
-constexpr std::uint64_t UIButtonGetClickHandler = 0x52DF50;
 constexpr std::uint64_t UIButtonHandleClick = 0x52D140;
 constexpr std::uint64_t UIToggleGetInteractable = 0x688580;
 constexpr std::uint64_t UIToggleGetSelected = 0x6885D0;
@@ -561,10 +558,10 @@ static std::int32_t BuiltinNpcMapID(const std::wstring& name) {
     return 0;
 }
 
-enum class TrainActivationMode { SelectedSkill = 1, AutoMenu = 2 };
+enum class TrainActivationMode { CtrlTabSkill = 1, AutoFight = 2 };
 
 struct TrainConfig {
-    TrainActivationMode activation = TrainActivationMode::AutoMenu;
+    TrainActivationMode activation = TrainActivationMode::AutoFight;
     int tolerance = 120;
     int retrySeconds = 12;
     int skillID = 0;
@@ -818,8 +815,8 @@ static std::wstring ProfileSection(std::int32_t roleID, DWORD pid) {
 static TrainConfig LoadConfig(const std::wstring& section = L"AutoTrain") {
     TrainConfig c;
     const int rawActivation = IniInt(section, L"TrainActivation", 2);
-    c.activation = rawActivation == static_cast<int>(TrainActivationMode::SelectedSkill)
-        ? TrainActivationMode::SelectedSkill : TrainActivationMode::AutoMenu;
+    c.activation = rawActivation == static_cast<int>(TrainActivationMode::CtrlTabSkill)
+        ? TrainActivationMode::CtrlTabSkill : TrainActivationMode::AutoFight;
     c.tolerance = std::clamp(IniInt(section, L"Tolerance", 120), 20, 2000);
     c.retrySeconds = std::clamp(IniInt(section, L"RetrySeconds", 12), 5, 60);
     c.skillID = std::max(IniInt(section, L"SkillID", 0), 0);
@@ -1056,8 +1053,6 @@ private:
             {rva::LuaCheckSkillCondition,{0x40,0x53,0x48,0x83,0xEC,0x20,0x80,0x3D,0x82,0xD2,0x15,0x03}},
             {rva::LuaIsSkillCooldown,   {0x40,0x53,0x48,0x83,0xEC,0x20,0x80,0x3D,0x74,0xFD,0x14,0x03}},
             {rva::LuaRequestUsingSkillWithTarget,{0x45,0x33,0xC0,0xE9,0xD8,0x47,0x05,0x00,0xCC,0xCC,0xCC,0xCC}},
-            {rva::LuaGetNearbyEnemyIDs, {0x45,0x33,0xC9,0xE9,0x88,0x8F,0xEA,0xFF,0xCC,0xCC,0xCC,0xCC}},
-            {rva::LuaSelectTarget,      {0x40,0x53,0x48,0x83,0xEC,0x20,0x80,0x3D,0xDD,0xED,0x14,0x03}},
             {rva::LuaGetSelectedTarget, {0x48,0x83,0xEC,0x28,0x80,0x3D,0x55,0xCA,0x14,0x03,0x00,0x75}},
             {rva::SelectedTargetGetRoleID,{0x48,0x83,0xEC,0x28,0x80,0x3D,0xD7,0x0C,0x2A,0x03,0x00,0x75}},
             {rva::LuaIsSelectTargetDie, {0x40,0x53,0x48,0x83,0xEC,0x20,0x80,0x3D,0x58,0xF3,0x14,0x03}},
@@ -1069,7 +1064,6 @@ private:
             {rva::UIObjectCoreChildren, {0x48,0x89,0x5C,0x24,0x10,0x56,0x57,0x41,0x54,0x41,0x56,0x41}},
             {rva::UIButtonGetInteractable,{0x48,0x83,0xEC,0x28,0x48,0x8B,0x81,0xE0,0x00,0x00,0x00,0x48}},
             {rva::UIButtonGetText,      {0x48,0x89,0x5C,0x24,0x08,0x57,0x48,0x83,0xEC,0x20,0x80,0x3D}},
-            {rva::UIButtonGetClickHandler,{0x48,0x8B,0x81,0x00,0x01,0x00,0x00,0xC3,0xCC,0xCC,0xCC,0xCC}},
             {rva::UIButtonHandleClick,  {0x40,0x53,0x48,0x83,0xEC,0x30,0x80,0x3D,0x4B,0xA4,0x29,0x03}},
             {rva::UIToggleGetInteractable,{0x48,0x83,0xEC,0x28,0x48,0x8B,0x89,0xE8,0x00,0x00,0x00,0x48}},
             {rva::UIToggleGetSelected,   {0x48,0x83,0xEC,0x28,0x48,0x8B,0x89,0xE8,0x00,0x00,0x00,0x48}},
@@ -1119,13 +1113,15 @@ private:
         il2cppGcHandleFree_ = process_.ResolveExport(module_, "il2cpp_gchandle_free");
         il2cppGetCorlib_ = process_.ResolveExport(module_, "il2cpp_get_corlib");
         il2cppArrayNew_ = process_.ResolveExport(module_, "il2cpp_array_new");
+        il2cppValueBox_ = process_.ResolveExport(module_, "il2cpp_value_box");
         scratchBuffer_ = process_.Allocate(1024);
         staticValueBuffer_ = process_.Allocate(sizeof(std::uint64_t));
         if (!il2cppDomainGet_ || !il2cppDomainAssemblyOpen_ || !il2cppAssemblyGetImage_ ||
             !il2cppClassFromName_ || !il2cppClassIsAssignableFrom_ ||
             !il2cppClassGetField_ || !il2cppFieldStaticGetValue_ ||
             !il2cppGcHandleNew_ || !il2cppGcHandleGetTarget_ || !il2cppGcHandleFree_ ||
-            !il2cppGetCorlib_ || !il2cppArrayNew_ || !scratchBuffer_ || !staticValueBuffer_) {
+            !il2cppGetCorlib_ || !il2cppArrayNew_ || !il2cppValueBox_ ||
+            !scratchBuffer_ || !staticValueBuffer_) {
             error = L"Thiếu API phản chiếu UI nội bộ của game";
             return false;
         }
@@ -1160,8 +1156,11 @@ private:
         if (!RemoteAbsolute(il2cppGetCorlib_, 0, 0, 0, 0, corlib, 1000) || !corlib ||
             !WriteScratch(0, "System") || !WriteScratch(128, "Object") ||
             !RemoteAbsolute(il2cppClassFromName_, corlib, scratchBuffer_, scratchBuffer_ + 128,
-                            0, systemObjectClass_, 1000) || !systemObjectClass_) {
-            error = L"Không định vị được System.Object để gọi callback Lua an toàn";
+                            0, systemObjectClass_, 1000) || !systemObjectClass_ ||
+            !WriteScratch(128, "Int32") ||
+            !RemoteAbsolute(il2cppClassFromName_, corlib, scratchBuffer_, scratchBuffer_ + 128,
+                            0, systemInt32Class_, 1000) || !systemInt32Class_) {
+            error = L"Không định vị được System.Object/System.Int32 để gọi callback Lua an toàn";
             return false;
         }
         return true;
@@ -1255,9 +1254,9 @@ private:
         il2cppClassFromName_ = il2cppClassIsAssignableFrom_ = 0;
         il2cppClassGetField_ = il2cppFieldStaticGetValue_ = 0;
         il2cppGcHandleNew_ = il2cppGcHandleGetTarget_ = il2cppGcHandleFree_ = 0;
-        il2cppGetCorlib_ = il2cppArrayNew_ = 0;
+        il2cppGetCorlib_ = il2cppArrayNew_ = il2cppValueBox_ = 0;
         assemblyImage_ = uiObjectClass_ = uiButtonClass_ = uiToggleClass_ =
-            uiInstancesField_ = systemObjectClass_ = 0;
+            uiInstancesField_ = systemObjectClass_ = systemInt32Class_ = 0;
         uiButtonClassCache_.clear();
         uiToggleClassCache_.clear();
     }
@@ -1334,6 +1333,31 @@ private:
         }
         return visited.size() < 2048;
     }
+    bool CollectTreeToggles(std::uint64_t root, std::vector<std::uint64_t>& toggles) {
+        toggles.clear();
+        if (!root) return true;
+        std::vector<std::uint64_t> pending{root};
+        std::set<std::uint64_t> visited;
+        while (!pending.empty() && visited.size() < 2048) {
+            const std::uint64_t current = pending.back();
+            pending.pop_back();
+            if (!current || !visited.insert(current).second) continue;
+            if (IsUiToggle(current)) toggles.push_back(current);
+            std::uint64_t array = 0;
+            if (!Remote(rva::UIObjectCoreChildren, current, 0, 0, 0, array, 900))
+                return false;
+            if (!array) continue;
+            std::uint64_t length = 0;
+            if (!process_.Read(array + off::ArrayLength, length) || length > 512) return false;
+            for (std::uint64_t i = 0; i < length; ++i) {
+                std::uint64_t child = 0;
+                if (!process_.Read(array + off::ArrayData + i * sizeof(std::uint64_t), child))
+                    return false;
+                if (child) pending.push_back(child);
+            }
+        }
+        return visited.size() < 2048;
+    }
     bool ReadAllUiButtons(std::vector<std::uint64_t>& buttons) {
         buttons.clear();
         const std::uint64_t zero = 0;
@@ -1356,30 +1380,6 @@ private:
         }
         return true;
     }
-    bool ReadAllUiToggles(std::vector<std::uint64_t>& toggles) {
-        toggles.clear();
-        const std::uint64_t zero = 0;
-        if (!process_.WriteBytes(staticValueBuffer_, &zero, sizeof(zero))) return false;
-        std::uint64_t ignored = 0;
-        if (!RemoteAbsolute(il2cppFieldStaticGetValue_, uiInstancesField_,
-                            staticValueBuffer_, 0, 0, ignored, 1000)) return false;
-        std::uint64_t dictionary = 0, entries = 0;
-        std::int32_t count = 0;
-        if (!process_.Read(staticValueBuffer_, dictionary) || !dictionary ||
-            !process_.Read(dictionary + off::DictionaryEntries, entries) || !entries ||
-            !process_.Read(dictionary + off::DictionaryCount, count) ||
-            count < 0 || count > 32768) return false;
-        for (std::int32_t i = 0; i < count; ++i) {
-            std::uint64_t object = 0;
-            const std::uint64_t entry = entries + off::ArrayData +
-                static_cast<std::uint64_t>(i) * off::EntrySize;
-            if (process_.Read(entry + off::EntryValue, object) && IsUiToggle(object))
-                toggles.push_back(object);
-        }
-        return true;
-    }
-
-
     bool InspectToggle(std::uint64_t toggle, std::wstring& name, std::wstring& text) {
         std::uint64_t active = 0, interactable = 0, pointer = 0;
         if (!Remote(rva::UIObjectActiveInHierarchy, toggle, 0, 0, 0, active, 700) ||
@@ -1418,8 +1418,7 @@ private:
         std::wstring allKey;
     };
     enum class ButtonRole {
-        DauThai, AutoRoot, Fight, Stop, ShopEntry, SellTab, QuickSell, EquipmentTab,
-        Treatment, TreatmentAck
+        DauThai, ShopEntry, SellTab, Treatment, TreatmentAck
     };
 
     void CollectDescendantLabels(std::uint64_t root, std::wstring& output) {
@@ -1504,18 +1503,6 @@ private:
         return true;
     }
 
-    bool ReadActiveToggleInfos(bool includeDescendants,
-                               std::vector<ButtonInfo>& output) {
-        output.clear();
-        std::vector<std::uint64_t> toggles;
-        if (!ReadAllUiToggles(toggles)) return false;
-        for (const std::uint64_t toggle : toggles) {
-            ButtonInfo info;
-            if (DescribeToggle(toggle, includeDescendants, info))
-                output.push_back(std::move(info));
-        }
-        return true;
-    }
     bool ReadActiveButtonInfos(bool includeDescendants,
                                std::vector<ButtonInfo>& output) {
         output.clear();
@@ -1530,9 +1517,6 @@ private:
     }
     static int ScoreButton(const ButtonInfo& info, ButtonRole role) {
         const std::wstring& key = info.allKey;
-        const bool unwantedMenuItem = ContainsCompact(
-            key, {L"phuban", L"nhiemvu", L"quest", L"thietlap", L"setting",
-                  L"dung", L"stop", L"cancel", L"close", L"thoat", L"pk"});
         switch (role) {
             case ButtonRole::DauThai: {
                 int score = 0;
@@ -1541,38 +1525,6 @@ private:
                 if (ContainsCompact(key, {L"cancel", L"close", L"huy", L"thoat"}))
                     score -= 1000;
                 return score;
-            }
-            case ButtonRole::Fight: {
-                if (CompactMatch(info.handler) == L"autotrainclick") return 980;
-                if (info.textKey == L"danhquai") return 650;
-                if (unwantedMenuItem) return -1000;
-                if (ContainsCompact(key, {L"danhquai"})) return 560;
-                if (ContainsCompact(key, {L"autofight", L"fightmonster", L"monsterfight",
-                                          L"autoattack", L"autobattle", L"rangerauto",
-                                          L"btnfightmonster"})) return 390;
-                return 0;
-            }
-            case ButtonRole::AutoRoot: {
-                if (CompactMatch(info.handler) == L"autofightclick" || info.nameKey == L"butautofight")
-                    return 980;
-                if (info.textKey == L"auto") return 650;
-                if (unwantedMenuItem || ContainsCompact(key, {L"danhquai", L"autotrainclick",
-                                                               L"autoattack", L"autobattle"}))
-                    return -1000;
-                if (info.nameKey == L"auto" || info.nameKey == L"btnauto" ||
-                    info.nameKey == L"buttonauto") return 560;
-                if (ContainsCompact(key, {L"openautomenu", L"automenu", L"btnopenauto",
-                                          L"mainauto", L"buttonauto"})) return 390;
-                return 0;
-            }
-            case ButtonRole::Stop: {
-                if (CompactMatch(info.handler) == L"autostopclick") return 980;
-                if (info.textKey == L"dung" || info.textKey == L"stop") return 650;
-                if (ContainsCompact(key, {L"stopauto", L"autostop", L"stopfight",
-                                          L"dungdanh", L"dungauto"})) return 500;
-                if (ContainsCompact(key, {L"danhquai", L"phuban", L"nhiemvu", L"quest",
-                                          L"thietlap", L"setting", L"pk"})) return -1000;
-                return 0;
             }
             case ButtonRole::ShopEntry: {
                 if (info.textKey == L"muathucuoi") return 760;
@@ -1586,19 +1538,6 @@ private:
                 if (ContainsCompact(key, {L"banvatphamnhanh", L"quicksell"})) return -1000;
                 if (ContainsCompact(key, {L"banvatpham", L"sellitem", L"itemsell",
                                           L"selltab", L"tabsell"})) return 520;
-                return 0;
-            }
-            case ButtonRole::QuickSell: {
-                if (info.textKey == L"banvatphamnhanh") return 720;
-                if (ContainsCompact(key, {L"banvatphamnhanh", L"quicksell",
-                                          L"fastsell", L"sellquick"})) return 560;
-                return 0;
-            }
-            case ButtonRole::EquipmentTab: {
-                if (info.textKey == L"trangbi") return 760;
-                if (ContainsCompact(key, {L"trangbi", L"equipmenttab", L"bagequipment",
-                                          L"equipequipment", L"tabquip", L"equiptab"})) return 570;
-                if (ContainsCompact(key, {L"muavatpham", L"buyitem", L"shopitem"})) return -1000;
                 return 0;
             }
             case ButtonRole::Treatment: {
@@ -1651,67 +1590,6 @@ private:
         selected = std::move(candidates[0].info);
         return true;
     }
-    bool ReadButtonClickHandler(std::uint64_t button, std::wstring& handler) {
-        handler.clear();
-        std::uint64_t pointer = 0;
-        if (!Remote(rva::UIButtonGetClickHandler, button, 0, 0, 0, pointer, 500) || !pointer)
-            return false;
-        handler = process_.ReadIl2CppString(pointer);
-        return !handler.empty();
-    }
-    bool ReadButtonsByExactHandler(const wchar_t* expectedHandler,
-                                   std::vector<ButtonInfo>& matches) {
-        matches.clear();
-        const std::wstring expected = CompactMatch(expectedHandler ? expectedHandler : L"");
-        if (expected.empty()) return false;
-        std::vector<std::uint64_t> rawButtons;
-        if (!ReadAllUiButtons(rawButtons)) return false;
-        for (const std::uint64_t button : rawButtons) {
-            std::uint64_t active = 0, interactable = 0;
-            if (!Remote(rva::UIObjectActiveInHierarchy, button, 0, 0, 0, active, 400) ||
-                (active & 0xFFu) == 0 ||
-                !Remote(rva::UIButtonGetInteractable, button, 0, 0, 0, interactable, 400) ||
-                (interactable & 0xFFu) == 0)
-                continue;
-            std::wstring handler;
-            if (!ReadButtonClickHandler(button, handler) || CompactMatch(handler) != expected)
-                continue;
-            ButtonInfo info;
-            if (!DescribeButton(button, false, info)) continue;
-            info.handler = std::move(handler);
-            if (!info.label.empty()) info.label += L" • ";
-            info.label += L"Lua=“" + info.handler + L"”";
-            matches.push_back(std::move(info));
-        }
-        return true;
-    }
-    bool FindButtonByExactHandler(const wchar_t* expectedHandler, ButtonInfo& selected,
-                                  std::wstring& reason) {
-        const std::wstring expected = CompactMatch(expectedHandler ? expectedHandler : L"");
-        std::vector<ButtonInfo> matches;
-        if (expected.empty() || !ReadButtonsByExactHandler(expectedHandler, matches)) {
-            reason = L"Không đọc được danh sách UIButton/handler";
-            return false;
-        }
-        if (matches.empty()) {
-            reason = L"Không có UIButton handler=" + std::wstring(expectedHandler);
-            return false;
-        }
-        if (matches.size() > 1) {
-            // Exact Lua handler is normally unique inside one active UI. Prefer ButAutoFight
-            // only for the root; otherwise refuse ambiguous actions instead of blind-clicking.
-            if (expected == L"autofightclick") {
-                for (const ButtonInfo& item : matches) {
-                    if (item.nameKey == L"butautofight") { selected = item; return true; }
-                }
-            }
-            reason = L"Có nhiều UIButton cùng handler=" + std::wstring(expectedHandler);
-            return false;
-        }
-        selected = std::move(matches.front());
-        return true;
-    }
-
     bool FindButton(ButtonRole role, ButtonInfo& selected, std::wstring& reason,
                     bool inspectDescendants) {
         std::vector<ButtonInfo> buttons;
@@ -1727,23 +1605,36 @@ private:
         }
         return ChooseButton(buttons, role, selected, reason);
     }
-    bool FindToggle(ButtonRole role, ButtonInfo& selected, std::wstring& reason,
-                    bool inspectDescendants) {
-        std::vector<ButtonInfo> toggles;
-        if (!ReadActiveToggleInfos(false, toggles)) {
-            reason = L"Không đọc được UIObject.instances/UIToggle";
+    bool FindButtonInTree(std::uint64_t root, ButtonRole role,
+                          ButtonInfo& selected, std::wstring& reason) {
+        std::vector<std::uint64_t> raw;
+        if (!CollectTreeButtons(root, raw)) {
+            reason = L"Không đọc được cây UIButton của Lua UI hiện tại";
             return false;
         }
-        if (ChooseButton(toggles, role, selected, reason)) return true;
-        if (!inspectDescendants) return false;
-        if (!ReadActiveToggleInfos(true, toggles)) {
-            reason = L"Không đọc được nhãn con của UIToggle";
+        std::vector<ButtonInfo> buttons;
+        buttons.reserve(raw.size());
+        for (const std::uint64_t button : raw) {
+            ButtonInfo info;
+            if (DescribeButton(button, false, info)) buttons.push_back(std::move(info));
+        }
+        return ChooseButton(buttons, role, selected, reason);
+    }
+    bool FindToggleInTree(std::uint64_t root, ButtonRole role,
+                          ButtonInfo& selected, std::wstring& reason) {
+        std::vector<std::uint64_t> raw;
+        if (!CollectTreeToggles(root, raw)) {
+            reason = L"Không đọc được cây UIToggle của Lua UI hiện tại";
             return false;
+        }
+        std::vector<ButtonInfo> toggles;
+        toggles.reserve(raw.size());
+        for (const std::uint64_t toggle : raw) {
+            ButtonInfo info;
+            if (DescribeToggle(toggle, false, info)) toggles.push_back(std::move(info));
         }
         return ChooseButton(toggles, role, selected, reason);
     }
-    enum class ActionKind { Button, Toggle };
-    struct ActionControl { ActionKind kind = ActionKind::Button; ButtonInfo info; };
     bool InvokeToggle(std::uint64_t toggle) {
         std::uint64_t selected = 0, ignored = 0;
         if (!Remote(rva::UIToggleGetSelected, toggle, 0, 0, 0, selected, 900)) return false;
@@ -1778,6 +1669,77 @@ private:
             return false;
         return true;
     }
+    bool CreateBoxedInt32(std::int32_t value, std::uint64_t& boxed,
+                          std::uint64_t& handle) {
+        boxed = handle = 0;
+        if (!systemInt32Class_ || !il2cppValueBox_ || !staticValueBuffer_ ||
+            !process_.WriteBytes(staticValueBuffer_, &value, sizeof(value)) ||
+            !RemoteAbsolute(il2cppValueBox_, systemInt32Class_, staticValueBuffer_, 0, 0,
+                            boxed, 1000) || !boxed ||
+            !RemoteAbsolute(il2cppGcHandleNew_, boxed, 0, 0, 0, handle, 900) || !handle)
+            return false;
+        return true;
+    }
+    bool InvokeUiScriptIntArg(const char* uiName, const char* functionName,
+                              std::int32_t value, std::wstring& detail) {
+        std::uint64_t boxed = 0, boxedHandle = 0;
+        if (!CreateBoxedInt32(value, boxed, boxedHandle)) {
+            detail = L"Không box được tham số số cho Lua action " + Wide(uiName) +
+                     L"." + Wide(functionName);
+            return false;
+        }
+        const bool called = InvokeUiScriptOneArg(uiName, functionName, boxed, detail);
+        std::uint64_t ignored = 0;
+        RemoteAbsolute(il2cppGcHandleFree_, boxedHandle, 0, 0, 0, ignored, 600);
+        return called;
+    }
+
+    bool WaitForLuaUi(const char* uiName, std::uint64_t& ui, std::wstring& detail,
+                      int attempts = 12, int sleepMs = 100, int stableRequired = 1) {
+        ui = 0;
+        stableRequired = std::max(1, stableRequired);
+        std::uint64_t nameObj = 0, nameHandle = 0;
+        if (!CreateManagedUtf8(uiName, nameObj, nameHandle)) {
+            detail = L"Không tạo được tên Lua UI " + Wide(uiName);
+            return false;
+        }
+        auto freeHandle = [&]() {
+            if (!nameHandle) return;
+            std::uint64_t ignored = 0;
+            RemoteAbsolute(il2cppGcHandleFree_, nameHandle, 0, 0, 0, ignored, 600);
+            nameHandle = 0;
+        };
+        std::uint64_t lastFound = 0;
+        int stableScans = 0;
+        for (int i = 0; i < attempts; ++i) {
+            if (i) Sleep(static_cast<DWORD>(sleepMs));
+            std::uint64_t found = 0;
+            const bool present =
+                (Remote(rva::LuaFindUI, nameObj, 0, 0, 0, found, 900) && found) ||
+                (Remote(rva::LuaMainFindUI, nameObj, 0, 0, 0, found, 900) && found);
+            if (!present) {
+                lastFound = 0;
+                stableScans = 0;
+                continue;
+            }
+            if (found == lastFound) ++stableScans;
+            else {
+                lastFound = found;
+                stableScans = 1;
+            }
+            if (stableScans >= stableRequired) {
+                ui = found;
+                freeHandle();
+                detail = L"Lua UI đã ổn định " + std::to_wstring(stableScans) +
+                         L" lần: " + Wide(uiName);
+                return true;
+            }
+        }
+        freeHandle();
+        detail = L"Lua UI chưa ổn định: " + Wide(uiName);
+        return false;
+    }
+
     bool InvokeMainUiScriptNoArgs(const char* uiName, const char* functionName,
                                   std::wstring& detail) {
         std::uint64_t uiNameObj = 0, uiNameHandle = 0, functionObj = 0, functionHandle = 0;
@@ -1897,144 +1859,75 @@ private:
             : L"UIButton.HandleClickEvent() của Đầu thai không phản hồi • " + dauThai.label;
         return sent;
     }
-    bool FindButtonOrToggle(ButtonRole role, ActionControl& selected,
-                            std::wstring& reason, bool inspectDescendants) {
-        ButtonInfo info;
-        std::wstring buttonReason;
-        if (FindButton(role, info, buttonReason, inspectDescendants)) {
-            selected = {ActionKind::Button, std::move(info)};
-            return true;
-        }
-        std::wstring toggleReason;
-        if (FindToggle(role, info, toggleReason, inspectDescendants)) {
-            selected = {ActionKind::Toggle, std::move(info)};
-            return true;
-        }
-        reason = L"UIButton: " + buttonReason + L" • UIToggle: " + toggleReason;
-        return false;
-    }
-    bool InvokeButtonOrToggle(const ActionControl& action) {
-        return action.kind == ActionKind::Toggle
-            ? InvokeToggle(action.info.object)
-            : action.kind == ActionKind::Button && InvokeButton(action.info.object);
-    }
     bool ClickInternalAutoFight(std::wstring& detail) {
-        // Interface.unity3d proves the physical control chain:
-        // ButAutoFight/AutoFightClick opens AutoFightGroup; the child button with
-        // ClickHandler=AutoTrainClick then calls StartAutoFight(C_AutoModel.Train).
-        // Replaying these two real UIButton callbacks is closer to the user's manual action
-        // than invoking the Lua function out of UI-event context.
-        ButtonInfo trainButton;
-        std::wstring reason;
-        if (!FindButtonByExactHandler(L"AutoTrainClick", trainButton, reason)) {
-            ButtonInfo root;
-            std::wstring rootReason;
-            if (!FindButtonByExactHandler(L"AutoFightClick", root, rootReason)) {
-                // Compatibility fallback for builds where ClickHandler getter is delayed.
-                if (!FindButton(ButtonRole::AutoRoot, root, rootReason, false) &&
-                    !FindButton(ButtonRole::AutoRoot, root, rootReason, true)) {
-                    detail = L"Không mở được AUTO • " + rootReason;
-                    return false;
-                }
-            }
-            if (!InvokeButton(root.object)) {
-                detail = L"Nút AUTO không phản hồi • " + root.label;
-                return false;
-            }
-            // AutoFightClick only changes one local Active flag. Poll quickly for the child;
-            // do not sleep hundreds of ms and do not scan another action in parallel.
-            bool foundTrain = false;
-            for (int i = 0; i < 18; ++i) {
-                if (i) Sleep(35);
-                if (FindButtonByExactHandler(L"AutoTrainClick", trainButton, reason)) {
-                    foundTrain = true;
-                    break;
-                }
-            }
-            if (!foundTrain) {
-                // Text fallback remains bounded to the now-open submenu.
-                ActionControl fight;
-                if (!FindButtonOrToggle(ButtonRole::Fight, fight, reason, true)) {
-                    detail = L"Đã mở AUTO nhưng chưa thấy Đánh quái/AutoTrainClick • " + reason;
-                    return false;
-                }
-                if (!InvokeButtonOrToggle(fight)) {
-                    detail = L"Control Đánh quái không phản hồi • " + fight.info.label;
-                    return false;
-                }
-            } else if (!InvokeButton(trainButton.object)) {
-                detail = L"UIButton AutoTrainClick không phản hồi • " + trainButton.label;
-                return false;
-            }
-        } else if (!InvokeButton(trainButton.object)) {
-            detail = L"UIButton AutoTrainClick không phản hồi • " + trainButton.label;
+        // Interface.unity3d: TopIcon.AutoTrainClick() is only a wrapper around
+        // GUI.FindUI("AutoFight_Main"):StartAutoFight(C_AutoModel.Train).
+        // Calling the wrapper from the remote worker previously proved unreliable, while opening
+        // AutoFightGroup and replaying its buttons was correlated with client crashes.  Resolve the
+        // persistent AutoFight_Main script directly and invoke the exact lower-level Lua action with
+        // C_AutoModel.Train = 1.  No transient AUTO menu is created/destroyed.
+        std::wstring callDetail;
+        if (!InvokeUiScriptIntArg("AutoFight_Main", "StartAutoFight", 1, callDetail)) {
+            detail = L"Không gọi được AutoFight_Main.StartAutoFight(Train) • " + callDetail;
             return false;
         }
-
-        // Lua StartAutoFight(Train) sets Game.EnableAutoF1=false. Poll at frame-scale;
-        // slower retries happen in the outer state machine, so this function never spams UI.
-        for (int i = 0; i < 20; ++i) {
-            if (i) Sleep(40);
+        Sleep(500);
+        for (int i = 0; i < 4; ++i) {
             std::uint64_t enableF1 = 1;
             if (Remote(rva::LuaGetAutoFightEnabled, 0, 0, 0, 0, enableF1, 700) &&
                 (enableF1 & 0xFFu) == 0) {
-                detail = L"AUTO → Đánh quái: AutoFightClick → AutoTrainClick • EnableAutoF1=OFF";
+                detail = L"AUTO → Đánh quái: StartAutoFight(Train) trực tiếp • EnableAutoF1=OFF";
                 return true;
             }
+            Sleep(250);
         }
-        detail = L"Đã bấm đúng AutoTrainClick nhưng EnableAutoF1 chưa OFF; không báo bật giả";
+        detail = L"Đã gọi StartAutoFight(Train) nhưng EnableAutoF1 chưa OFF; backoff, không mở menu AUTO";
         return false;
     }
     bool ClickInternalAutoStop(std::wstring& detail) {
-        ButtonInfo stopButton;
-        std::wstring reason;
-        if (!FindButtonByExactHandler(L"AutoStopClick", stopButton, reason)) {
-            ButtonInfo root;
-            std::wstring rootReason;
-            if (!FindButtonByExactHandler(L"AutoFightClick", root, rootReason) &&
-                !FindButton(ButtonRole::AutoRoot, root, rootReason, false) &&
-                !FindButton(ButtonRole::AutoRoot, root, rootReason, true)) {
-                detail = L"Không mở được AUTO để Dừng • " + rootReason;
-                return false;
-            }
-            if (!InvokeButton(root.object)) {
-                detail = L"Nút AUTO không phản hồi khi Dừng";
-                return false;
-            }
-            bool foundStop = false;
-            for (int i = 0; i < 18; ++i) {
-                if (i) Sleep(35);
-                if (FindButtonByExactHandler(L"AutoStopClick", stopButton, reason)) {
-                    foundStop = true;
-                    break;
-                }
-            }
-            if (!foundStop) {
-                ActionControl stop;
-                if (!FindButtonOrToggle(ButtonRole::Stop, stop, reason, true) ||
-                    !InvokeButtonOrToggle(stop)) {
-                    detail = L"Đã mở AUTO nhưng chưa gọi được Dừng • " + reason;
-                    return false;
-                }
-            } else if (!InvokeButton(stopButton.object)) {
-                detail = L"UIButton AutoStopClick không phản hồi";
-                return false;
-            }
-        } else if (!InvokeButton(stopButton.object)) {
-            detail = L"UIButton AutoStopClick không phản hồi";
+        // Same lower-level action used by TopIcon.AutoStopClick().  C_AutoModel.None = 0.
+        std::wstring callDetail;
+        if (!InvokeUiScriptIntArg("AutoFight_Main", "StartAutoFight", 0, callDetail)) {
+            detail = L"Không gọi được AutoFight_Main.StartAutoFight(None) • " + callDetail;
             return false;
         }
-        for (int i = 0; i < 24; ++i) {
-            if (i) Sleep(40);
+        Sleep(500);
+        for (int i = 0; i < 4; ++i) {
             std::uint64_t enableF1 = 0;
             if (Remote(rva::LuaGetAutoFightEnabled, 0, 0, 0, 0, enableF1, 700) &&
                 (enableF1 & 0xFFu) != 0) {
-                detail = L"AUTO → Dừng: AutoFightClick → AutoStopClick • EnableAutoF1=ON";
+                detail = L"AUTO → Dừng: StartAutoFight(None) trực tiếp • EnableAutoF1=ON";
                 return true;
             }
+            Sleep(250);
         }
-        detail = L"Đã bấm AutoStopClick nhưng game chưa xác nhận trạng thái Dừng";
+        detail = L"Đã gọi StartAutoFight(None) nhưng game chưa xác nhận Dừng";
         return false;
+    }
+    bool EnsureAutoStoppedForExclusive(std::wstring& detail) {
+        std::uint64_t enableF1 = 1;
+        if (!Remote(rva::LuaGetAutoFightEnabled, 0, 0, 0, 0, enableF1, 800)) {
+            detail = L"Không đọc được trạng thái AUTO trước thao tác độc quyền";
+            return false;
+        }
+        if ((enableF1 & 0xFFu) != 0) {
+            detail = L"AUTO đã dừng";
+            return true;
+        }
+        std::wstring stopDetail;
+        if (!ClickInternalAutoStop(stopDetail)) {
+            detail = L"AUTO còn chạy; không mở NPC để tránh race • " + stopDetail;
+            return false;
+        }
+        Sleep(900);
+        enableF1 = 0;
+        if (!Remote(rva::LuaGetAutoFightEnabled, 0, 0, 0, 0, enableF1, 800) ||
+            (enableF1 & 0xFFu) == 0) {
+            detail = L"Đã yêu cầu Dừng nhưng AUTO chưa ổn định; hoãn thao tác NPC";
+            return false;
+        }
+        detail = L"AUTO đã dừng ổn định trước thao tác NPC";
+        return true;
     }
     bool ReadFreeBagSpace(int& freeSpace) {
         freeSpace = -1;
@@ -2253,14 +2146,6 @@ private:
         }
         return false;
     }
-    bool WaitToggle(ButtonRole role, ButtonInfo& toggle, std::wstring& reason,
-                    int attempts = 10, int sleepMs = 160) {
-        for (int i = 0; i < attempts; ++i) {
-            if (i) Sleep(static_cast<DWORD>(sleepMs));
-            if (FindToggle(role, toggle, reason, i == attempts - 1)) return true;
-        }
-        return false;
-    }
     bool WaitLuaNoArgs(const char* uiName, const char* functionName,
                        std::wstring& detail, int attempts = 30, int sleepMs = 35) {
         std::wstring last;
@@ -2277,32 +2162,78 @@ private:
     bool OpenSellUi(std::wstring& detail) {
         if (!OpenNpc(sellNpc_, detail)) return false;
 
-        std::wstring reason;
-        ButtonInfo shopEntry;
-        // Interface.unity3d: GameDialog.FunctionButtonClicked(uiButton) sends the selected
-        // NPC-dialog action and destroys GameDialog. Resolve the live button on every attempt.
-        if (WaitButton(ButtonRole::ShopEntry, shopEntry, reason, 30, 35)) {
-            std::wstring luaDetail;
-            if (!InvokeUiScriptOneArg("GameDialog", "FunctionButtonClicked",
-                                      shopEntry.object, luaDetail)) {
-                detail = L"Đã mở NPC nhưng Lua GameDialog không chọn được ‘Mua thú cưỡi’ • " +
-                         luaDetail;
+        // ClickNPC changes target/task state and asks the server to create GameDialog.  The crash
+        // reports happen shortly after this edge, so keep the remote worker completely quiet for
+        // a full settle window before touching any UI object.
+        Sleep(1200);
+
+        std::uint64_t gameDialog = 0;
+        std::wstring uiDetail;
+        bool dialogReady = WaitForLuaUi("GameDialog", gameDialog, uiDetail, 16, 150, 2);
+        if (!dialogReady) {
+            // Some server scripts can jump directly into NPCShop.  Accept only a shop root that
+            // survives two consecutive reads; never globally scan UIObject.instances here.
+            std::uint64_t directShop = 0;
+            std::wstring shopProbe;
+            if (!WaitForLuaUi("NPCShop", directShop, shopProbe, 8, 150, 2)) {
+                detail = L"ClickNPC xong nhưng GameDialog/NPCShop chưa ổn định • " + uiDetail;
                 return false;
             }
         } else {
-            // If the server/UI already left us in NPCShop, accept the live sell-tab toggle.
-            ButtonInfo alreadySell;
-            std::wstring sellProbe;
-            if (!FindToggle(ButtonRole::SellTab, alreadySell, sellProbe, true)) {
-                detail = L"Đã ClickNPC nhưng chưa thấy GameDialog ‘Mua thú cưỡi’ hoặc NPCShop • " +
-                         reason;
+            // Resolve only controls below the stable GameDialog root.  The old global UI scan
+            // could make hundreds of Unity getter calls while unrelated panels were changing.
+            Sleep(300);
+            ButtonInfo shopEntry;
+            std::wstring reason;
+            bool foundEntry = FindButtonInTree(gameDialog, ButtonRole::ShopEntry,
+                                               shopEntry, reason);
+            if (!foundEntry) {
+                Sleep(350);
+                std::uint64_t freshDialog = 0;
+                if (WaitForLuaUi("GameDialog", freshDialog, uiDetail, 4, 150, 2)) {
+                    gameDialog = freshDialog;
+                    foundEntry = FindButtonInTree(gameDialog, ButtonRole::ShopEntry,
+                                                  shopEntry, reason);
+                }
+            }
+            if (!foundEntry) {
+                detail = L"GameDialog ổn định nhưng không xác định được ‘Mua thú cưỡi’ • " + reason;
                 return false;
             }
+            std::wstring luaDetail;
+            if (!InvokeUiScriptOneArg("GameDialog", "FunctionButtonClicked",
+                                      shopEntry.object, luaDetail)) {
+                detail = L"GameDialog.FunctionButtonClicked(Mua thú cưỡi) không phản hồi • " +
+                         luaDetail;
+                return false;
+            }
+
+            // FunctionButtonClicked destroys GameDialog and builds NPCShop.  Do not inspect the
+            // tree during that destruction/rebuild window.
+            Sleep(900);
         }
 
+        std::uint64_t shop = 0;
+        if (!WaitForLuaUi("NPCShop", shop, uiDetail, 16, 150, 2)) {
+            detail = L"Đã chọn shop nhưng NPCShop chưa ổn định • " + uiDetail;
+            return false;
+        }
+        Sleep(350);
+
+        // Keep the exact game tab action, but search only inside this stable NPCShop root.
         ButtonInfo sellTab;
-        if (!WaitToggle(ButtonRole::SellTab, sellTab, reason, 36, 35)) {
-            detail = L"Đã vào shop nhưng chưa định vị được UIToggle ‘Bán vật phẩm’ • " + reason;
+        std::wstring reason;
+        bool foundSell = FindToggleInTree(shop, ButtonRole::SellTab, sellTab, reason);
+        if (!foundSell) {
+            Sleep(350);
+            std::uint64_t freshShop = 0;
+            if (WaitForLuaUi("NPCShop", freshShop, uiDetail, 4, 150, 2)) {
+                shop = freshShop;
+                foundSell = FindToggleInTree(shop, ButtonRole::SellTab, sellTab, reason);
+            }
+        }
+        if (!foundSell) {
+            detail = L"NPCShop ổn định nhưng chưa định vị được ‘Bán vật phẩm’ • " + reason;
             return false;
         }
         std::wstring sellTabDetail;
@@ -2312,26 +2243,15 @@ private:
             return false;
         }
 
-        ButtonInfo quickSell;
-        if (!WaitToggle(ButtonRole::QuickSell, quickSell, reason, 28, 35)) {
-            detail = L"Đã vào Bán vật phẩm nhưng chưa thấy UIToggle ‘Bán vật phẩm nhanh’ • " + reason;
+        // Sell Engine v2 needs the actual sell-tab script but does not need QuickSell or the
+        // visual Equipment filter.  Wait until that script itself is stable before sending data.
+        Sleep(650);
+        std::uint64_t sellScript = 0;
+        if (!WaitForLuaUi("NPCShop_SellItemTab", sellScript, uiDetail, 10, 150, 2)) {
+            detail = L"Đã vào Bán vật phẩm nhưng NPCShop_SellItemTab chưa ổn định • " + uiDetail;
             return false;
         }
-        if (!InvokeToggle(quickSell.object)) {
-            detail = L"Không bật được UIToggle ‘Bán vật phẩm nhanh’ • " + quickSell.label;
-            return false;
-        }
-
-        ButtonInfo equipment;
-        if (!WaitToggle(ButtonRole::EquipmentTab, equipment, reason, 28, 35)) {
-            detail = L"Đã bật bán nhanh nhưng chưa thấy UIToggle tab ‘Trang bị’ • " + reason;
-            return false;
-        }
-        if (!InvokeToggle(equipment.object)) {
-            detail = L"Không chuyển được sang UIToggle tab ‘Trang bị’ • " + equipment.label;
-            return false;
-        }
-        detail = L"Lua GameDialog → NPCShop.ToggleTabHeaderSelected → Bán nhanh → Trang bị";
+        detail = L"NPCShop ổn định → Bán vật phẩm • Sell Engine data sẵn sàng";
         return true;
     }
     struct BagSellItem {
@@ -2516,8 +2436,8 @@ private:
         if (dbID <= 0) return false;
         // Do not guess a fixed server delay. The Lua BagItemsGrid itself waits for
         // RemoveItem/UpdateItemsList; mirror that by polling the authoritative item API.
-        constexpr int kPolls = 40;
-        constexpr DWORD kPollMs = 60;
+        constexpr int kPolls = 24;
+        constexpr DWORD kPollMs = 125;
         for (int i = 0; i < kPolls; ++i) {
             std::uint64_t item = 0;
             if (!Remote(rva::LuaGetItemData, static_cast<std::uint32_t>(dbID),
@@ -2536,11 +2456,11 @@ private:
     }
     void CloseSellUiAfterQuiet(std::wstring& detail) {
         // Never destroy the shop in the same instant as the final sell response.
-        Sleep(350);
+        Sleep(800);
         std::wstring closeDetail;
         if (InvokeMainUiScriptNoArgs("NPCShop", "ButtonCloseClicked", closeDetail)) {
             detail += L" • đóng NPCShop bằng Lua action";
-            Sleep(250);
+            Sleep(500);
             return;
         }
         if (!closeDetail.empty())
@@ -2548,6 +2468,11 @@ private:
     }
     bool TrySellAtNpc(int& freeAfter, std::wstring& detail) {
         freeAfter = -1;
+        std::wstring autoStopDetail;
+        if (!EnsureAutoStoppedForExclusive(autoStopDetail)) {
+            detail = L"Không bắt đầu bán đồ • " + autoStopDetail;
+            return false;
+        }
         int freeBefore = -1;
         ReadFreeBagSpace(freeBefore);
         if (!OpenSellUi(detail)) return false;
@@ -2602,7 +2527,7 @@ private:
             std::uint64_t freshItem = 0;
             if (!Remote(rva::LuaGetItemData, static_cast<std::uint32_t>(candidate->dbID),
                         0, 0, 0, freshItem, 900) || !freshItem) {
-                Sleep(80);
+                Sleep(150);
                 continue;
             }
 
@@ -2616,7 +2541,7 @@ private:
                     ++skippedCount;
                 }
                 // A failed Lua invoke must not be followed by another action immediately.
-                Sleep(250);
+                Sleep(800);
                 continue;
             }
 
@@ -2624,8 +2549,10 @@ private:
             if (WaitItemRemoved(candidate->dbID, ackDetail)) {
                 ++confirmed;
                 failures.erase(candidate->dbID);
-                // No fixed 1-second sleep: the ACK itself is the state transition.
-                Sleep(80);
+                // Keep the user's one-second sell cadence.  ACK already proves the item is gone;
+                // this additional quiet window lets BagItemsGrid finish Clear/DoFilter/RebuildLayout
+                // before the next RequestSellItem.
+                Sleep(900);
                 continue;
             }
 
@@ -2634,8 +2561,8 @@ private:
                 skipped.insert(candidate->dbID);
                 ++skippedCount;
             }
-            // If an ACK was missed, give any late response a quiet window before rescan/retry.
-            Sleep(400);
+            // If an ACK was missed, give any late response a full quiet window before rescan/retry.
+            Sleep(1000);
         }
 
         int value = -1;
@@ -2763,48 +2690,44 @@ private:
         roleID = static_cast<std::int32_t>(value);
         return true;
     }
-    bool SelectNearestEnemy(std::int32_t& roleID) {
+    bool EnsureCtrlTabTarget(std::int32_t& roleID, std::wstring& detail) {
         roleID = 0;
-        std::uint64_t array = 0;
-        if (!Remote(rva::LuaGetNearbyEnemyIDs, 1, 1, 1, 0, array, 1000) || !array) return false;
-        std::uint64_t length = 0;
-        if (!process_.Read(array + off::ArrayLength, length) || length == 0 || length > 1024 ||
-            !process_.Read(array + off::ArrayData, roleID) || roleID <= 0) return false;
-        std::uint64_t ignored = 0;
-        return Remote(rva::LuaSelectTarget, static_cast<std::uint32_t>(roleID),
-                      0, 0, 0, ignored, 900);
-    }
-    bool EnsureSkillTarget(std::int32_t& roleID, std::wstring& detail) {
         bool selectedRead = ReadSelectedTargetRoleID(roleID);
         bool targetDead = false;
         if (selectedRead && roleID > 0) {
             std::uint64_t dead = 0;
             if (Remote(rva::LuaIsSelectTargetDie, static_cast<std::uint32_t>(roleID),
-                       0, 0, 0, dead, 800)) targetDead = (dead & 0xFFu) != 0;
+                       0, 0, 0, dead, 800))
+                targetDead = (dead & 0xFFu) != 0;
         }
+
+        // Ctrl+Tab mode is deliberately separate from AUTO → Đánh quái.
+        // If there is no live target, use the game's real Ctrl+Tab target-selection command.
+        // Do not silently switch to internal target-selection APIs; that would blend two
+        // different combat modes and can retarget while the mount/navigation state owns the PID.
         if (!selectedRead || roleID <= 0 || targetDead) {
-            if (SelectNearestEnemy(roleID)) {
-                Sleep(120);
-                return true;
-            }
-            // Equivalent to the user's Ctrl+Tab operation, delivered only to the
-            // selected game window and without foreground activation.
             PressGameKey(game_.window, VK_TAB, true);
             Sleep(180);
             if (!ReadSelectedTargetRoleID(roleID) || roleID <= 0) {
-                detail = L"Chưa tìm thấy mục tiêu địch quanh nhân vật";
+                detail = L"Ctrl+Tab chưa chọn được mục tiêu";
+                return false;
+            }
+            std::uint64_t dead = 0;
+            if (Remote(rva::LuaIsSelectTargetDie, static_cast<std::uint32_t>(roleID),
+                       0, 0, 0, dead, 800) && (dead & 0xFFu) != 0) {
+                detail = L"Ctrl+Tab đang trỏ vào mục tiêu đã chết";
                 return false;
             }
         }
         return true;
     }
-    bool TriggerSelectedSkill(std::wstring& detail) {
+    bool TriggerCtrlTabSkill(std::wstring& detail) {
         if (config_.skillID <= 0) {
             detail = L"Chưa chọn skill";
             return false;
         }
         std::int32_t targetRoleID = 0;
-        if (!EnsureSkillTarget(targetRoleID, detail)) return false;
+        if (!EnsureCtrlTabTarget(targetRoleID, detail)) return false;
         std::uint64_t value = 0;
         if (!Remote(rva::LuaHasSkill, static_cast<std::uint32_t>(config_.skillID),
                     0, 0, 0, value, 900) || (value & 0xFFu) == 0) {
@@ -2945,6 +2868,11 @@ private:
     }
 
     bool TryTreatmentAtNpc(std::wstring& detail) {
+        std::wstring autoStopDetail;
+        if (!EnsureAutoStoppedForExclusive(autoStopDetail)) {
+            detail = L"Không bắt đầu trị liệu • " + autoStopDetail;
+            return false;
+        }
         if (!OpenNpc(healNpc_, detail)) return false;
 
         std::wstring reason;
@@ -2989,7 +2917,7 @@ private:
         return true;
     }
 
-    bool TriggerAutoMenu(std::wstring& detail) {
+    bool TriggerAutoFight(std::wstring& detail) {
         // Do not replace the real menu action with set_AutoFight.  Static
         // analysis shows that setter only writes PlayZone+0x20; the game's
         // Auto -> Đánh quái callbacks perform additional setup.
@@ -3073,8 +3001,15 @@ private:
         auto nextRideDecision = Clock::time_point{};
         auto mountFightUntil = Clock::time_point{};
         auto nextMountFightAction = Clock::now();
+        auto walkFallbackUntil = Clock::time_point{};
+        bool mountCleanupAutoConfirmed = false;
+        int mountCleanupAutoStartAttempts = 0;
+        int mountCleanupStopFailures = 0;
+        int mountFailureCount = 0;
         bool awaitingRideCheck = false;
         auto nextTrainAction = Clock::now();
+        auto nextAutoPositionCheck = Clock::now();
+        bool autoPositionLatched = false;
         auto dauThaiRetryAfter = Clock::time_point{};
         auto transitionDeadline = Clock::time_point{};
         auto nextBagCheck = Clock::now();
@@ -3090,7 +3025,7 @@ private:
         auto npcUiQuietUntil = Clock::time_point{};
         std::wstring npcUiQuietPhase;
         std::wstring npcUiQuietDetail;
-        bool trainTriggered = false;
+        bool ctrlTabCombatActive = false;
         bool autoCombatConfirmed = false;
         int autoActivationFailures = 0;
         bool sellingTrip = false;
@@ -3138,7 +3073,7 @@ private:
                 } else if (windowHung) {
                     recovering = true;
                     healthyScans = 0;
-                    trainTriggered = false;
+                    ctrlTabCombatActive = false;
                     autoCombatConfirmed = false;
                     UpdateLive(true, L"TẠM DỪNG AN TOÀN",
                                L"Windows báo cửa sổ game đang treo • không gửi thêm lệnh");
@@ -3149,7 +3084,7 @@ private:
                     } else {
                         recovering = true;
                         healthyScans = 0;
-                        trainTriggered = false;
+                        ctrlTabCombatActive = false;
                         autoCombatConfirmed = false;
                         UpdateLive(true, L"TẠM DỪNG AN TOÀN",
                                    error + (executor_->Idle()
@@ -3159,6 +3094,30 @@ private:
                 } else {
                     LiveState live = State();
                     const auto now = Clock::now();
+
+                    // The two combat modes deliberately have different coordinate policies.
+                    // Ctrl+Tab mode reacts to X/Y every worker cycle.  AUTO → Đánh quái checks
+                    // X/Y continuously only until the first verified arrival; once AUTO is active,
+                    // the current spot is trusted for five minutes at a time.  MapID is still
+                    // guarded continuously so an unexpected map transition is never ignored.
+                    bool atTrainingTarget = false;
+                    if (config_.activation == TrainActivationMode::CtrlTabSkill) {
+                        atTrainingTarget = AtTarget(live);
+                    } else if (live.mapID == target_.mapID) {
+                        if (autoCombatConfirmed && autoPositionLatched &&
+                            now < nextAutoPositionCheck) {
+                            atTrainingTarget = true;
+                        } else {
+                            atTrainingTarget = AtTarget(live);
+                            if (autoCombatConfirmed && autoPositionLatched &&
+                                now >= nextAutoPositionCheck) {
+                                if (atTrainingTarget)
+                                    nextAutoPositionCheck = now + std::chrono::minutes(5);
+                                else
+                                    autoPositionLatched = false;
+                            }
+                        }
+                    }
                     if (!recovering && live.mapReady && !live.waitingChangeMap && !live.dead &&
                         config_.autoSell && !sellingTrip && !healingTrip && now >= nextBagCheck) {
                         int probedFree = -1;
@@ -3204,9 +3163,15 @@ private:
                         if (live.mapID > 0) lastObservedMap = live.mapID;
 
                         if (!live.mapReady || live.waitingChangeMap) {
-                            trainTriggered = false;
+                            ctrlTabCombatActive = false;
                             awaitingRideCheck = false;
                             mountFightUntil = Clock::time_point{};
+                            walkFallbackUntil = Clock::time_point{};
+                            mountCleanupAutoConfirmed = false;
+                            mountCleanupAutoStartAttempts = 0;
+                            mountCleanupStopFailures = 0;
+                            mountFailureCount = 0;
+                            autoPositionLatched = false;
                             mapGuard = true;
                             readyScans = 0;
                             transitionSeen = true;
@@ -3236,9 +3201,15 @@ private:
                                 nextNavigate = now;
                             }
                         } else if (live.dead) {
-                            trainTriggered = false;
+                            ctrlTabCombatActive = false;
                             awaitingRideCheck = false;
                             mountFightUntil = Clock::time_point{};
+                            walkFallbackUntil = Clock::time_point{};
+                            mountCleanupAutoConfirmed = false;
+                            mountCleanupAutoStartAttempts = 0;
+                            mountCleanupStopFailures = 0;
+                            mountFailureCount = 0;
+                            autoPositionLatched = false;
                             aliveAfterDeathScans = 0;
                             if (!deathLatched) {
                                 // Critical repeated-PK guard: do NOT open AUTO/other UI on the death edge.
@@ -3308,11 +3279,41 @@ private:
                                    now >= nextBagCheck && live.freeBagSpace == 0 &&
                                    sellNpc_.roleID > 0) {
                             DisableActions();
-                            trainTriggered = false;
+                            ctrlTabCombatActive = false;
+                            // Selling owns this PID, but do not even latch the selling trip while
+                            // persistent AUTO combat is still active.  Opening an NPC while AUTO can
+                            // retarget was one concrete race behind the crash reports.
+                            if (live.autoFight) {
+                                std::wstring stopDetail;
+                                const bool stopped = ClickInternalAutoStop(stopDetail);
+                                autoCombatConfirmed = false;
+                                autoPositionLatched = false;
+                                if (!stopped) {
+                                    nextBagCheck = now + std::chrono::seconds(3);
+                                    const auto quietUntil =
+                                        Clock::now() + std::chrono::milliseconds(900);
+                                    actionBarrierUntil = std::max(actionBarrierUntil, quietUntil);
+                                    UpdateLive(true, L"CHỜ DỪNG AUTO TRƯỚC KHI BÁN",
+                                               stopDetail + L" • chưa đi NPC/chưa mở shop");
+                                    continue;
+                                }
+                                const auto quietUntil =
+                                    Clock::now() + std::chrono::milliseconds(900);
+                                actionBarrierUntil = std::max(actionBarrierUntil, quietUntil);
+                                nextNavigate = quietUntil;
+                                nextRideDecision = quietUntil;
+                            }
+                            autoCombatConfirmed = false;
+                            autoPositionLatched = false;
                             sellingTrip = true;
                             outsideTarget = false;
                             awaitingRideCheck = false;
                             mountFightUntil = Clock::time_point{};
+                            walkFallbackUntil = Clock::time_point{};
+                            mountCleanupAutoConfirmed = false;
+                            mountCleanupAutoStartAttempts = 0;
+                            mountCleanupStopFailures = 0;
+                            mountFailureCount = 0;
                             bestDistance = LLONG_MAX;
                             lastProgress = now;
                             nextNavigate = now;
@@ -3324,6 +3325,11 @@ private:
                                                     healNpc_.x, healNpc_.y})) {
                             awaitingRideCheck = false;
                             mountFightUntil = Clock::time_point{};
+                            walkFallbackUntil = Clock::time_point{};
+                            mountCleanupAutoConfirmed = false;
+                            mountCleanupAutoStartAttempts = 0;
+                            mountCleanupStopFailures = 0;
+                            mountFailureCount = 0;
                             if (live.autoPathing) {
                                 std::uint64_t ignored = 0;
                                 Remote(rva::AutoPathStop, autoPathManager_, 0, 0, 0, ignored);
@@ -3340,7 +3346,7 @@ private:
                                 // EXCLUSIVE NPC MODE: from this point until TryTreatmentAtNpc has
                                 // closed its UI, this worker performs no navigation/mount/AUTO action.
                                 StopPathOnly();
-                                trainTriggered = false;
+                                ctrlTabCombatActive = false;
                                 buffCycle = false;
                                 awaitingRideCheck = false;
                                 mountFightUntil = Clock::time_point{};
@@ -3388,6 +3394,11 @@ private:
                                                     sellNpc_.x, sellNpc_.y})) {
                             awaitingRideCheck = false;
                             mountFightUntil = Clock::time_point{};
+                            walkFallbackUntil = Clock::time_point{};
+                            mountCleanupAutoConfirmed = false;
+                            mountCleanupAutoStartAttempts = 0;
+                            mountCleanupStopFailures = 0;
+                            mountFailureCount = 0;
                             if (live.autoPathing) {
                                 std::uint64_t ignored = 0;
                                 Remote(rva::AutoPathStop, autoPathManager_, 0, 0, 0, ignored);
@@ -3405,7 +3416,7 @@ private:
                                 // shop/bag UI has been closed. No mount/map/AUTO/AutoPath request may
                                 // be emitted in parallel with item clicks or server inventory updates.
                                 StopPathOnly();
-                                trainTriggered = false;
+                                ctrlTabCombatActive = false;
                                 buffCycle = false;
                                 awaitingRideCheck = false;
                                 mountFightUntil = Clock::time_point{};
@@ -3470,17 +3481,22 @@ private:
                             } else {
                                 UpdateLive(true, L"ĐÃ TỚI NPC", L"Đang chờ thử lại chuỗi bán an toàn");
                             }
-                        } else if (!sellingTrip && !healingTrip && AtTarget(live)) {
+                        } else if (!sellingTrip && !healingTrip && atTrainingTarget) {
                             outsideTarget = false;
                             awaitingRideCheck = false;
                             mountFightUntil = Clock::time_point{};
+                            walkFallbackUntil = Clock::time_point{};
+                            mountCleanupAutoConfirmed = false;
+                            mountCleanupAutoStartAttempts = 0;
+                            mountCleanupStopFailures = 0;
+                            mountFailureCount = 0;
                             bestDistance = 0;
                             if (live.autoPathing) {
                                 std::uint64_t ignored = 0;
                                 Remote(rva::AutoPathStop, autoPathManager_, 0, 0, 0, ignored);
                             }
                             if (live.riding) {
-                                // Keep arrival identical to SelectedSkill: down-mount first.  Never open
+                                // Keep arrival identical to CtrlTabSkill: down-mount first.  Never open
                                 // or scan the AUTO menu while the mount transition owns the session.
                                 // Any stale AutoFight state is cleaned only after the fresh scan says
                                 // riding=false, so AUTO cannot delay or race the 4-second mount check.
@@ -3498,7 +3514,7 @@ private:
                                 nextRideDecision = Clock::time_point{};
                                 const bool wantsBuff = config_.autoBuff && !config_.buffSkillIDs.empty();
                                 if (wantsBuff && (buffCycle || now >= nextBuffCheck)) {
-                                    if (!buffCycle && config_.activation == TrainActivationMode::AutoMenu &&
+                                    if (!buffCycle && config_.activation == TrainActivationMode::AutoFight &&
                                         autoCombatConfirmed && live.autoFight) {
                                         // Only stop AUTO that this session itself successfully activated.
                                         // Never loop on a raw/stale AutoFight flag: repeated UI scans here were
@@ -3510,7 +3526,7 @@ private:
                                         buffCycle = true;
                                         buffIndex = 0;
                                         nextBuffAction = now + std::chrono::milliseconds(350);
-                                        trainTriggered = false;
+                                        ctrlTabCombatActive = false;
                                         UpdateLive(true, L"CHUẨN BỊ BUFF",
                                                    stopped ? L"Đã AUTO → Dừng một lần trước chu kỳ buff"
                                                            : L"Không định vị được Dừng; không retry UI liên tục, chuyển sang buff");
@@ -3519,7 +3535,7 @@ private:
                                             buffCycle = true;
                                             buffIndex = 0;
                                             nextBuffAction = now;
-                                            trainTriggered = false;
+                                            ctrlTabCombatActive = false;
                                         }
                                         if (buffIndex >= config_.buffSkillIDs.size()) {
                                             buffCycle = false;
@@ -3552,12 +3568,12 @@ private:
                                     bool sent = false;
                                     std::wstring detail;
                                     switch (config_.activation) {
-                                        case TrainActivationMode::SelectedSkill:
-                                            sent = TriggerSelectedSkill(detail);
+                                        case TrainActivationMode::CtrlTabSkill:
+                                            sent = TriggerCtrlTabSkill(detail);
                                             nextTrainAction = now +
                                                 std::chrono::milliseconds(sent ? 900 : 700);
                                             break;
-                                        case TrainActivationMode::AutoMenu:
+                                        case TrainActivationMode::AutoFight:
                                             if (autoCombatConfirmed && live.autoFight) {
                                                 sent = true;
                                                 detail = L"AUTO → Đánh quái đã được xác minh sau khi tới bãi";
@@ -3566,10 +3582,13 @@ private:
                                                 // the character is doing nothing. Do not require AUTO → Dừng before
                                                 // navigation/activation. The only proof accepted here is a fresh
                                                 // AUTO → Đánh quái action issued after arrival + down-mount.
-                                                sent = TriggerAutoMenu(detail);
+                                                sent = TriggerAutoFight(detail);
                                                 if (sent) {
                                                     autoCombatConfirmed = true;
                                                     autoActivationFailures = 0;
+                                                    autoPositionLatched = true;
+                                                    nextAutoPositionCheck =
+                                                        now + std::chrono::minutes(5);
                                                 } else {
                                                     autoCombatConfirmed = false;
                                                     ++autoActivationFailures;
@@ -3579,23 +3598,24 @@ private:
                                             }
                                             break;
                                     }
-                                    trainTriggered = trainTriggered || sent;
+                                    if (config_.activation == TrainActivationMode::CtrlTabSkill && sent)
+                                        ctrlTabCombatActive = true;
                                     const bool confirmed =
-                                        config_.activation == TrainActivationMode::SelectedSkill
-                                            ? trainTriggered
+                                        config_.activation == TrainActivationMode::CtrlTabSkill
+                                            ? ctrlTabCombatActive
                                             : autoCombatConfirmed && live.autoFight;
                                     UpdateLive(true, confirmed ? L"ĐANG TRAIN"
                                                                : L"Đang xác nhận train",
                                                target_.name + L" • " + detail);
                                 } else {
-                                    if (config_.activation == TrainActivationMode::AutoMenu &&
+                                    if (config_.activation == TrainActivationMode::AutoFight &&
                                         autoCombatConfirmed && !live.autoFight) {
                                         autoCombatConfirmed = false;
                                         nextTrainAction = now;
                                     }
                                     const bool confirmed =
-                                        config_.activation == TrainActivationMode::SelectedSkill
-                                            ? trainTriggered
+                                        config_.activation == TrainActivationMode::CtrlTabSkill
+                                            ? ctrlTabCombatActive
                                             : autoCombatConfirmed && live.autoFight;
                                     UpdateLive(true, confirmed ? L"ĐANG TRAIN"
                                                                : L"Đang xác nhận train",
@@ -3605,6 +3625,7 @@ private:
                         } else {
                             const bool wasAutoConfirmed = autoCombatConfirmed;
                             autoCombatConfirmed = false;
+                            autoPositionLatched = false;
                             const Spot finalDestination = healingTrip
                                 ? Spot{healNpc_.name, healNpc_.mapID, healNpc_.x, healNpc_.y}
                                 : sellingTrip
@@ -3619,7 +3640,7 @@ private:
                                                          crossServerRoute);
                             if (usingCrossServerPortal) destination = crossServerPortal;
 
-                            trainTriggered = false;
+                            ctrlTabCombatActive = false;
                             buffCycle = false;
                             nextTrainAction = now;
                             if (!outsideTarget) {
@@ -3628,7 +3649,12 @@ private:
                                 // previously confirmed AUTO at the train spot, request AUTO → Dừng once
                                 // as best effort, but movement proceeds even if the UI cannot be resolved.
                                 StopPathOnly();
-                                if (config_.activation == TrainActivationMode::AutoMenu &&
+                                mountFailureCount = 0;
+                                walkFallbackUntil = Clock::time_point{};
+                                mountCleanupAutoConfirmed = false;
+                                mountCleanupAutoStartAttempts = 0;
+                                mountCleanupStopFailures = 0;
+                                if (config_.activation == TrainActivationMode::AutoFight &&
                                     wasAutoConfirmed && live.mapReady && !live.waitingChangeMap) {
                                     std::wstring stopDetail;
                                     ClickInternalAutoStop(stopDetail);
@@ -3679,73 +3705,246 @@ private:
                                     transitionDeadline = now + std::chrono::seconds(12);
                                 }
                                 UpdateLive(true, L"ĐANG QUA CỔNG", detail);
+                            } else if (live.riding) {
+                                // Mount success owns the next transition.  Once riding=true, never
+                                // select/attack another target in this recovery cycle; doing so can
+                                // make the game dismount again immediately.
+                                awaitingRideCheck = false;
+                                mountFightUntil = Clock::time_point{};
+                                walkFallbackUntil = Clock::time_point{};
+                                mountFailureCount = 0;
+                                if (config_.activation == TrainActivationMode::AutoFight &&
+                                    (mountCleanupAutoConfirmed || live.autoFight)) {
+                                    // A delayed mount can complete while the 10-second AUTO cleanup
+                                    // is still active. riding=true has absolute priority: cancel AUTO
+                                    // immediately on the first scan that sees the mount, rather than
+                                    // waiting for the old 10-second cleanup timer. Waiting here let the
+                                    // game's own AUTO acquire another mob and pull the character back
+                                    // off the mount even though this tool itself no longer targeted.
+                                    if (mountCleanupStopFailures == 0 || now >= nextMountFightAction) {
+                                        std::wstring stopDetail;
+                                        const bool stopped = ClickInternalAutoStop(stopDetail);
+                                        if (stopped) {
+                                            mountCleanupAutoConfirmed = false;
+                                            mountCleanupAutoStartAttempts = 0;
+                                            mountCleanupStopFailures = 0;
+                                            const auto quietUntil =
+                                                Clock::now() + std::chrono::milliseconds(700);
+                                            actionBarrierUntil = std::max(actionBarrierUntil, quietUntil);
+                                            nextNavigate = quietUntil;
+                                            nextRideDecision = quietUntil;
+                                            nextMountFightAction = quietUntil;
+                                            UpdateLive(true, L"ĐÃ LÊN NGỰA",
+                                                       L"riding=true • dừng AUTO ngay lập tức • tuyệt đối không retarget");
+                                        } else {
+                                            ++mountCleanupStopFailures;
+                                            nextMountFightAction = now + std::chrono::seconds(2);
+                                            // Do not start any target/skill action while mounted.  On the next
+                                            // eligible scan only retry Stop; movement stays paused until AUTO
+                                            // is actually verified OFF.
+                                            UpdateLive(true, L"ĐÃ LÊN NGỰA • CHỜ DỪNG AUTO",
+                                                       stopDetail + L" • không target/skill/AutoPath khi AUTO còn chưa dừng");
+                                        }
+                                    } else {
+                                        UpdateLive(true, L"ĐÃ LÊN NGỰA • CHỜ DỪNG AUTO",
+                                                   L"Không target/skill/AutoPath • retry Dừng sau 2 giây");
+                                    }
+                                } else if (now >= nextNavigate) {
+                                    mountCleanupAutoStartAttempts = 0;
+                                    mountCleanupStopFailures = 0;
+                                    nextRideDecision = Clock::time_point{};
+                                    const bool sent = StartPathTo(destination);
+                                    UpdateLive(true, L"Đang ra bãi",
+                                               sent ? L"Đã lên ngựa • gửi AutoPath trực tiếp"
+                                                    : L"Đã lên ngựa nhưng gửi AutoPath thất bại; sẽ thử lại");
+                                    nextNavigate = now +
+                                        std::chrono::seconds(config_.retrySeconds);
+                                }
+                            } else if (walkFallbackUntil > now) {
+                                // After two failed mount attempts, walk for one minute.  No combat
+                                // targeting is allowed in this window; AutoPath alone owns movement.
+                                awaitingRideCheck = false;
+                                mountFightUntil = Clock::time_point{};
+                                mountCleanupAutoConfirmed = false;
+                                if (!live.autoPathing || now >= nextNavigate) {
+                                    const bool sent = StartPathTo(destination);
+                                    nextNavigate = now + std::chrono::seconds(config_.retrySeconds);
+                                    (void)sent;
+                                }
+                                const auto remain = std::chrono::duration_cast<std::chrono::seconds>(
+                                    walkFallbackUntil - now).count();
+                                UpdateLive(true, L"CHẠY BỘ TẠM THỜI",
+                                           L"2 lần lên ngựa thất bại • chạy bộ còn " +
+                                           std::to_wstring(std::max<long long>(1, remain)) +
+                                           L" giây; không target/đánh quái");
+                            } else if (walkFallbackUntil != Clock::time_point{}) {
+                                // One-minute walk window is over.  Stop the current foot path and
+                                // restart the mount sequence from attempt #1.
+                                walkFallbackUntil = Clock::time_point{};
+                                mountFailureCount = 0;
+                                StopPathOnly();
+                                nextRideDecision = now;
+                                nextNavigate = now;
+                                UpdateLive(true, L"THỬ LÊN NGỰA LẠI",
+                                           L"Đã chạy bộ 1 phút • bắt đầu lại chu kỳ lên ngựa");
                             } else if (mountFightUntil > now) {
                                 std::wstring fightDetail;
-                                if (now >= nextMountFightAction) {
-                                    // Navigation/mount recovery must never open the AUTO menu.  Reuse the
-                                    // proven selected-skill cleanup path when a skill is configured; AUTO
-                                    // activation is reserved strictly for the final train spot.
-                                    bool sent = false;
-                                    if (config_.skillID > 0)
-                                        sent = TriggerSelectedSkill(fightDetail);
-                                    else
-                                        fightDetail = L"Không có skill dọn quái; chỉ chờ rồi thử ngựa lại";
-                                    nextMountFightAction = now +
-                                        std::chrono::milliseconds(sent ? 900 : 700);
+                                if (config_.activation == TrainActivationMode::CtrlTabSkill) {
+                                    if (now >= nextMountFightAction) {
+                                        const bool sent = TriggerCtrlTabSkill(fightDetail);
+                                        nextMountFightAction = now +
+                                            std::chrono::milliseconds(sent ? 900 : 700);
+                                    }
+                                } else {
+                                    // AUTO mode: at most two StartAutoFight attempts in the whole
+                                    // 10-second cleanup window. Repeated Lua invokes every worker tick
+                                    // were an unnecessary crash amplifier when AUTO failed to confirm.
+                                    if (!mountCleanupAutoConfirmed && now >= nextMountFightAction &&
+                                        mountCleanupAutoStartAttempts < 2) {
+                                        ++mountCleanupAutoStartAttempts;
+                                        const bool sent = TriggerAutoFight(fightDetail);
+                                        mountCleanupAutoConfirmed = sent;
+                                        nextMountFightAction = sent
+                                            ? mountFightUntil
+                                            : (mountCleanupAutoStartAttempts < 2
+                                                ? now + std::chrono::seconds(3)
+                                                : mountFightUntil);
+                                    } else if (mountCleanupAutoConfirmed) {
+                                        fightDetail = L"AUTO → Đánh quái đang dọn quái";
+                                    } else if (mountCleanupAutoStartAttempts >= 2) {
+                                        fightDetail = L"AUTO chưa xác nhận sau 2 lần • không gọi lặp trong pha dọn quái";
+                                    }
                                 }
                                 const auto remain = std::chrono::duration_cast<std::chrono::seconds>(
                                     mountFightUntil - now).count();
                                 UpdateLive(true, L"DỌN QUÁI TRƯỚC KHI LÊN NGỰA",
-                                           L"Sau 4 giây vẫn chưa lên ngựa • tiếp tục khoảng " +
+                                           L"Sau 4 giây vẫn chưa lên ngựa • đánh thêm khoảng " +
                                            std::to_wstring(std::max<long long>(1, remain)) +
                                            L" giây rồi thử lại" +
                                            (fightDetail.empty() ? L"" : L" • " + fightDetail));
                             } else if (mountFightUntil != Clock::time_point{}) {
-                                mountFightUntil = Clock::time_point{};
-                                nextRideDecision = now;
-                                nextNavigate = now;
-                                UpdateLive(true, L"Đang ra bãi",
-                                           L"Kết thúc pha dọn quái • chuẩn bị thử lên ngựa lại");
+                                // Cleanup window has ended.  AUTO mode must be fully stopped before
+                                // another mount request; otherwise an enemy target can immediately
+                                // pull the character off the mount.
+                                if (config_.activation == TrainActivationMode::AutoFight &&
+                                    (mountCleanupAutoConfirmed || live.autoFight)) {
+                                    std::wstring stopDetail;
+                                    const bool stopped = ClickInternalAutoStop(stopDetail);
+                                    if (!stopped && ++mountCleanupStopFailures < 2) {
+                                        mountFightUntil = now + std::chrono::seconds(2);
+                                        nextMountFightAction = mountFightUntil;
+                                        UpdateLive(true, L"CHỜ DỪNG AUTO",
+                                                   stopDetail + L" • chưa gọi ngựa cho tới khi AUTO dừng");
+                                    } else if (stopped) {
+                                        mountCleanupAutoConfirmed = false;
+                                        mountCleanupAutoStartAttempts = 0;
+                                        mountCleanupStopFailures = 0;
+                                        mountFightUntil = Clock::time_point{};
+                                        const auto quietUntil =
+                                            Clock::now() + std::chrono::milliseconds(700);
+                                        actionBarrierUntil = std::max(actionBarrierUntil, quietUntil);
+                                        nextRideDecision = quietUntil;
+                                        nextNavigate = quietUntil;
+                                        UpdateLive(true, L"Đang ra bãi",
+                                                   L"Đã dừng AUTO sau 10 giây dọn quái • chuẩn bị thử ngựa");
+                                    } else {
+                                        // Never mount while AUTO is still unverified: that is exactly
+                                        // the condition that can retarget a nearby mob and pull the
+                                        // character off the mount.  Fall back to walking for one minute,
+                                        // then restart a clean mount cycle.
+                                        mountCleanupAutoConfirmed = false;
+                                        mountCleanupAutoStartAttempts = 0;
+                                        mountCleanupStopFailures = 0;
+                                        mountFightUntil = Clock::time_point{};
+                                        mountFailureCount = 0;
+                                        walkFallbackUntil = now + std::chrono::minutes(1);
+                                        const bool sent = StartPathTo(destination);
+                                        nextNavigate = now + std::chrono::seconds(config_.retrySeconds);
+                                        nextRideDecision = Clock::time_point{};
+                                        UpdateLive(true, L"CHẠY BỘ 1 PHÚT",
+                                                   stopDetail +
+                                                   (sent
+                                                       ? L" • AUTO chưa dừng chắc chắn nên không gọi ngựa; chạy bộ 1 phút"
+                                                       : L" • AUTO chưa dừng chắc chắn; hoãn ngựa và retry AutoPath chạy bộ"));
+                                    }
+                                } else {
+                                    mountFightUntil = Clock::time_point{};
+                                    nextRideDecision = now;
+                                    nextNavigate = now;
+                                    UpdateLive(true, L"Đang ra bãi",
+                                               L"Kết thúc 10 giây dọn quái • chuẩn bị thử lên ngựa lại");
+                                }
                             } else if (awaitingRideCheck && now < nextRideDecision) {
                                 UpdateLive(true, L"Đang ra bãi",
-                                           L"Đã gọi ngựa • chờ 4 giây kiểm tra lại");
+                                           L"Đã gọi ngựa • chờ đủ 4 giây kiểm tra lại");
+                            } else if (!awaitingRideCheck &&
+                                       nextRideDecision != Clock::time_point{} &&
+                                       now < nextRideDecision) {
+                                // A rejected/failed ToggleRide call must still respect the same
+                                // four-second retry cadence.  Never spam mount requests every worker tick.
+                                UpdateLive(true, L"Đang ra bãi",
+                                           L"Lệnh ngựa chưa được nhận • chờ đủ 4 giây rồi thử lại");
                             } else if (!live.riding) {
                                 if (awaitingRideCheck) {
                                     awaitingRideCheck = false;
-                                    mountFightUntil = now + std::chrono::seconds(10);
-                                    nextMountFightAction = now;
-                                    nextRideDecision = mountFightUntil;
-                                    nextNavigate = nextRideDecision;
-                                    std::wstring fightDetail;
-                                    bool cleanupSent = false;
-                                    if (config_.skillID > 0)
-                                        cleanupSent = TriggerSelectedSkill(fightDetail);
-                                    else
-                                        fightDetail = L"Không có skill dọn quái; không mở AUTO khi đang đi map";
-                                    nextMountFightAction = now +
-                                        std::chrono::milliseconds(cleanupSent ? 900 : 700);
-                                    UpdateLive(true, L"Đang ra bãi",
-                                               L"Sau 4 giây vẫn chưa lên ngựa • dọn/chờ 10 giây rồi thử lại" +
-                                               (fightDetail.empty() ? L"" : L" • " + fightDetail));
+                                    ++mountFailureCount;
+                                    if (mountFailureCount >= 2) {
+                                        // Exactly two failed mount attempts: walk for one minute,
+                                        // then reset the counter and retry the whole mount cycle.
+                                        mountFailureCount = 0;
+                                        mountFightUntil = Clock::time_point{};
+                                        mountCleanupAutoConfirmed = false;
+                                        mountCleanupAutoStartAttempts = 0;
+                                        mountCleanupStopFailures = 0;
+                                        walkFallbackUntil = now + std::chrono::minutes(1);
+                                        const bool sent = StartPathTo(destination);
+                                        nextNavigate = now + std::chrono::seconds(config_.retrySeconds);
+                                        nextRideDecision = Clock::time_point{};
+                                        UpdateLive(true, L"CHẠY BỘ 1 PHÚT",
+                                                   sent
+                                                       ? L"Lên ngựa thất bại lần 2/2 • chạy bộ 1 phút rồi thử ngựa lại"
+                                                       : L"Lên ngựa thất bại lần 2/2 • bắt đầu pha chạy bộ, AutoPath sẽ retry");
+                                    } else {
+                                        mountFightUntil = now + std::chrono::seconds(10);
+                                        nextMountFightAction = now;
+                                        nextRideDecision = mountFightUntil;
+                                        nextNavigate = mountFightUntil;
+                                        std::wstring fightDetail;
+                                        if (config_.activation == TrainActivationMode::CtrlTabSkill) {
+                                            const bool sent = TriggerCtrlTabSkill(fightDetail);
+                                            nextMountFightAction = now +
+                                                std::chrono::milliseconds(sent ? 900 : 700);
+                                        } else {
+                                            mountCleanupAutoStartAttempts = 1;
+                                            const bool sent = TriggerAutoFight(fightDetail);
+                                            mountCleanupAutoConfirmed = sent;
+                                            nextMountFightAction = sent
+                                                ? mountFightUntil
+                                                : now + std::chrono::seconds(3);
+                                        }
+                                        UpdateLive(true, L"DỌN QUÁI 10 GIÂY",
+                                                   L"Lên ngựa thất bại lần " +
+                                                   std::to_wstring(mountFailureCount) +
+                                                   L"/2 • đánh thêm 10 giây rồi thử lại" +
+                                                   (fightDetail.empty() ? L"" : L" • " + fightDetail));
+                                    }
                                 } else {
+                                    StopPathOnly();
                                     const bool sent = ToggleRide(true);
-                                    awaitingRideCheck = sent;
+                                    // The four-second attempt timer is authoritative even when the
+                                    // immediate remote call reports failure. Otherwise a rejected mount
+                                    // command can retry forever without ever reaching the 2-attempt walk fallback.
+                                    awaitingRideCheck = true;
                                     nextRideDecision = now + std::chrono::seconds(4);
                                     nextNavigate = nextRideDecision;
                                     mountFightUntil = Clock::time_point{};
+                                    mountCleanupAutoConfirmed = false;
+                                    mountCleanupAutoStartAttempts = 0;
+                                    mountCleanupStopFailures = 0;
                                     UpdateLive(true, L"Đang ra bãi",
                                                sent ? L"Đã gọi ngựa • chờ 4 giây"
                                                     : L"Gọi ngựa thất bại • thử lại sau 4 giây");
                                 }
-                            } else if (now >= nextNavigate) {
-                                awaitingRideCheck = false;
-                                nextRideDecision = Clock::time_point{};
-                                const bool sent = StartPathTo(destination);
-                                UpdateLive(true, L"Đang ra bãi",
-                                           sent ? L"Đã gửi AutoPath trực tiếp"
-                                                : L"Gửi lệnh đi bãi thất bại; sẽ thử lại");
-                                nextNavigate = now +
-                                    std::chrono::seconds(config_.retrySeconds);
                             } else {
                                 UpdateLive(true, L"Đang ra bãi",
                                            (healingTrip ? L"NPC trị liệu " : sellingTrip ? L"NPC bán đồ " : L"Đích ") + destination.name +
@@ -3761,7 +3960,7 @@ private:
         }
         // If this session itself proved AUTO combat was activated at the train spot,
         // request the normal AUTO → Dừng once before detach. Never loop/retry on shutdown.
-        if (config_.activation == TrainActivationMode::AutoMenu && autoCombatConfirmed) {
+        if (config_.activation == TrainActivationMode::AutoFight && autoCombatConfirmed) {
             std::wstring stopDetail;
             ClickInternalAutoStop(stopDetail);
         }
@@ -3795,12 +3994,14 @@ private:
     std::uint64_t il2cppGcHandleFree_ = 0;
     std::uint64_t il2cppGetCorlib_ = 0;
     std::uint64_t il2cppArrayNew_ = 0;
+    std::uint64_t il2cppValueBox_ = 0;
     std::uint64_t assemblyImage_ = 0;
     std::uint64_t uiObjectClass_ = 0;
     std::uint64_t uiButtonClass_ = 0;
     std::uint64_t uiToggleClass_ = 0;
     std::uint64_t uiInstancesField_ = 0;
     std::uint64_t systemObjectClass_ = 0;
+    std::uint64_t systemInt32Class_ = 0;
     std::map<std::uint64_t, bool> uiButtonClassCache_;
     std::map<std::uint64_t, bool> uiToggleClassCache_;
     // Item template classification is immutable for this client build.  Cache it so a sell
@@ -3967,7 +4168,7 @@ private:
                                  CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                                  DEFAULT_PITCH, L"Segoe UI");
 
-        Label(L"THẦN LONG MOBILE • AUTO TRAIN v0.8.9", 16, 5, 650, 31, titleFont_);
+        Label(L"THẦN LONG MOBILE • AUTO TRAIN v0.9.0", 16, 5, 650, 31, titleFont_);
         Button(L"↻  QUÉT CỬA SỔ GAME", 855, 10, 189, 34, V5_REFRESH);
 
         tab_ = Make(WC_TABCONTROLW, L"", TCS_TABS | TCS_SINGLELINE | WS_TABSTOP,
@@ -4035,14 +4236,14 @@ private:
                                 122, 501, 260, 160, V5_ACTIVATION);
         int activationItem = static_cast<int>(SendMessageW(
             activationCombo_, CB_ADDSTRING, 0,
-            reinterpret_cast<LPARAM>(L"Dùng skill đã chọn")));
+            reinterpret_cast<LPARAM>(L"Ctrl+Tab → skill đã chọn")));
         SendMessageW(activationCombo_, CB_SETITEMDATA, activationItem,
-                     static_cast<LPARAM>(TrainActivationMode::SelectedSkill));
+                     static_cast<LPARAM>(TrainActivationMode::CtrlTabSkill));
         activationItem = static_cast<int>(SendMessageW(
             activationCombo_, CB_ADDSTRING, 0,
             reinterpret_cast<LPARAM>(L"AUTO → Đánh quái")));
         SendMessageW(activationCombo_, CB_SETITEMDATA, activationItem,
-                     static_cast<LPARAM>(TrainActivationMode::AutoMenu));
+                     static_cast<LPARAM>(TrainActivationMode::AutoFight));
         skillCombo_ = Make(WC_COMBOBOXW, L"",
                            CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP,
                            393, 501, 390, 220, V5_SKILL);
@@ -4082,7 +4283,7 @@ private:
              150, 145, 780, 46, 0, titleFont_);
         Make(L"STATIC", L"Phần mềm được thiết kế bởi Thắng Nguyễn - ĐỒ LONG",
              SS_CENTER | SS_CENTERIMAGE, 150, 205, 780, 48, 0, boldFont_);
-        Make(L"STATIC", L"Phiên bản 0.8.9",
+        Make(L"STATIC", L"Phiên bản 0.9.0",
              SS_CENTER | SS_CENTERIMAGE, 150, 270, 780, 35, 0, smallFont_);
         buildingPage_ = 0;
         SelectPage(0);
@@ -4310,8 +4511,8 @@ private:
         const LRESULT activationData = activationIndex == CB_ERR ? CB_ERR
             : SendMessageW(activationCombo_, CB_GETITEMDATA, activationIndex, 0);
         runtime.config.activation =
-            activationData == static_cast<LRESULT>(TrainActivationMode::SelectedSkill)
-                ? TrainActivationMode::SelectedSkill : TrainActivationMode::AutoMenu;
+            activationData == static_cast<LRESULT>(TrainActivationMode::CtrlTabSkill)
+                ? TrainActivationMode::CtrlTabSkill : TrainActivationMode::AutoFight;
         const int skillIndex = static_cast<int>(SendMessageW(
             skillCombo_, CB_GETCURSEL, 0, 0));
         const LRESULT skillData = skillIndex == CB_ERR ? 0
@@ -4664,7 +4865,7 @@ private:
             error = L"PID " + std::to_wstring(runtime.game.pid) + L": chưa chọn bãi";
             return false;
         }
-        if (runtime.config.activation == TrainActivationMode::SelectedSkill &&
+        if (runtime.config.activation == TrainActivationMode::CtrlTabSkill &&
             runtime.config.skillID <= 0) {
             error = L"PID " + std::to_wstring(runtime.game.pid) + L": chưa chọn skill";
             return false;
