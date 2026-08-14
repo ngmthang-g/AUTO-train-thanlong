@@ -99,7 +99,6 @@ constexpr std::uint64_t DictionaryCount = 0x20;
 constexpr std::uint64_t ArrayLength = 0x18;
 constexpr std::uint64_t ArrayData = 0x20;
 constexpr std::uint64_t EntrySize = 0x18;
-constexpr std::uint64_t EntryKey = 0x08;
 constexpr std::uint64_t EntryValue = 0x10;
 constexpr std::uint64_t GSpriteRoleID = 0x30;
 constexpr std::uint64_t GNPCResID = 0xC0;
