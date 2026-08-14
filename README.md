@@ -1,33 +1,62 @@
-# Thần Long Mobile - Auto Train v0.8.1
+# Thần Long Mobile - Auto Train v0.8.2
 
-Bản này tiếp tục trực tiếp từ v0.8.0 và tập trung vào bốn lỗi runtime được phản hồi: Auto chat chưa hoạt động, NPC bán đồ/trị liệu dùng chung dữ liệu, Auto buff thử lặp quá nhiều, và AUTO → Đánh quái bị hồi quy/treo game.
+Bản này sửa hai lỗi runtime lớn của v0.8.1: NPC đã tới đúng tọa độ nhưng game báo **“Không tìm thấy NPC tương ứng!”**, và chế độ `AUTO → Đánh quái` can thiệp vào lúc đi map/ngựa khiến luồng chậm, treo hoặc dễ diss hơn chế độ `Dùng skill đã chọn`.
 
-## Thay đổi chính
+## Sửa NPC bán đồ / trị liệu
 
-- Auto chat không còn dùng `UIFactory.SendDefaultChat()` làm đường chính. Tool thao tác đúng cây UI nội bộ của game: mở Chat → tìm `UIInput` → `UIInput.set_Text()` → gọi `Gửi tin nhắn` → gọi nút đóng Chat. Không đưa cửa sổ game lên trước và không dùng chuột thật.
-- Trị liệu theo đúng chuỗi: mở NPC → `Trị liệu` → `Xác nhận` → `Ta biết rồi` → đóng UI.
-- Auto buff: mỗi skill chỉ cast đúng **1 lần trong mỗi lượt kiểm tra 5 phút**. Nếu không xác minh được buff sau lần cast đó thì bỏ qua skill và chuyển tiếp.
-- NPC bán đồ và NPC trị liệu đã tách hẳn thành hai kho dữ liệu:
-  - `ThanLongAutoTrain.sell_npcs.txt`
-  - `ThanLongAutoTrain.heal_npcs.txt`
-  File `ThanLongAutoTrain.npcs.txt` cũ chỉ được dùng một lần làm dữ liệu tương thích cho danh sách bán đồ; danh sách trị liệu không còn lấy chung.
-- AUTO → Đánh quái: phục hồi cách mở nút AUTO ổn định của bản cũ (`UIButton.HandleClickEvent()`), sau đó chỉ tìm `Đánh quái` bằng `UIButton/UIToggle`. **Không quét/call UIRect-Lua trong luồng AUTO** để tránh quét nặng/call nhầm control gây treo hoặc diss.
-- AUTO chỉ báo thành công khi đọc lại `get_EnableAutoF1() = ON`; thất bại sẽ giãn retry 3 giây thay vì spam mỗi 1 giây.
-- AUTO → Dừng dùng cùng nguyên tắc Button/Toggle và phải xác minh `AutoFight=OFF`.
-- Toàn bộ di chuyển, qua map, Đầu thai, lên/xuống ngựa giữ nguyên state machine đang dùng tốt ở chế độ `Dùng skill đã chọn`; chế độ AUTO chỉ thay đúng đoạn kích hoạt/tắt combat.
+Phân tích native của đúng `GameAssembly.dll` xác nhận `LuaSystemAPI_Game.ClickNPC(int npcID)` **không nhận RoleID**. Predicate bên trong `ClickNPC` so tham số với `GNPC.ResID` (`candidate + 0xC0`), đúng cùng offset mà `GNPC.get_ResID()` trả về.
+
+v0.8.2 vì vậy đổi đường NPC thành:
+
+1. `GetNearestNPC()` lấy object gần nhất và RoleID/Name để nhận diện nhanh.
+2. Tìm object GNPC/GMovingNPC tương ứng trong `SessionData.NPCs` / `SessionData.MovingNPCs` bằng RoleID.
+3. Lấy và xác minh **ResID thật** qua `GNPC.get_ResID()`.
+4. Lưu `Name + ResID + RoleID + MapID + X + Y`.
+5. Khi mở NPC, xác minh `GetNearestNPC(ResID)` còn thấy đúng loại NPC trong phạm vi tương tác.
+6. Gọi `ClickNPC(ResID)` — không còn truyền RoleID.
+
+File NPC cũ chưa có ResID vẫn được hỗ trợ: khi đứng gần NPC, tool tự resolve RoleID → ResID hiện tại trước khi mở. NPC bán đồ và NPC trị liệu vẫn dùng hai file độc lập.
+
+## Sửa AUTO → Đánh quái / đi map
+
+Từ v0.8.2, navigation có quyền điều khiển độc quyền khi nhân vật chưa ở bãi. AUTO UI không được mở/quét trong lúc:
+
+- AutoPath đang đi;
+- lên/xuống ngựa;
+- chờ qua cổng / map đang load;
+- hồi phục sau treo / death UI đang dựng lại;
+- pha 10 giây dọn quái trước khi thử lên ngựa lại.
+
+Pha dọn quái khi chưa lên được ngựa sử dụng đường `Dùng skill đã chọn` nếu có skill cấu hình; **không mở AUTO**. Vì vậy phần đi map/ngựa của hai chế độ dùng chung state machine và không còn gửi callback AUTO song song với AutoPath/ngựa.
+
+Nếu AutoFight vẫn ON khi cần rời bãi, tool dừng path trước, chạy `AUTO → Dừng`, chờ một scan mới xác nhận OFF rồi mới cho navigation tiếp tục. Không gửi AutoPath và callback AUTO trong cùng một pha.
+
+Ở lúc vừa tới đúng bãi, AUTO mode giờ **xuống ngựa trước đúng cùng nhánh với `Dùng skill đã chọn` và chờ 4 giây**, không mở/quét `AUTO` để dọn state trong lúc mount transition còn hoạt động. Chỉ ở scan kế tiếp khi `riding=false` thì mới được xét AUTO combat.
+
+Ở đúng bãi + đã xuống ngựa, `AUTO → Đánh quái` chạy theo chuỗi xác định:
+
+`UIButton AUTO → chờ submenu → UIButton/UIToggle Đánh quái → xác minh get_EnableAutoF1() = ON`
+
+Không quét/call UIRect-Lua trong production path của AUTO. Sau 3 lần thất bại, retry được giãn 15 giây để tránh spam UI và diss.
+
+## Một kết luận tĩnh quan trọng
+
+`LuaSystemAPI_Game.AutoSetFlag(int RangerAuto)` **không phải API chọn “Đánh quái”**. Disassembly cho thấy tham số được truyền vào `MapRenderer.DrawCicleAutoFight(64, range, range-5, position)`, tức là bán kính/vòng hiển thị auto. v0.8.2 không dùng API này để bật combat và không đoán một flag sai.
 
 ## Build
 
-Chạy `build.cmd` trên Windows hoặc dùng `.github/workflows/build-windows.yml`.
+Chạy `build.cmd` trên Windows hoặc `.github/workflows/build-windows.yml`.
+
 Output:
 
-`dist\ThanLongAutoTrain_v0.8.1.exe`
+`dist\ThanLongAutoTrain_v0.8.2.exe`
 
 Workflow dùng wildcard `ThanLongAutoTrain_v*.exe`, không hardcode version.
 
 ## Runtime test cần thực hiện
 
-1. Auto chat: xác nhận bảng chat mở, text được điền, tin được gửi và bảng đóng.
-2. Trị liệu: test đủ ba nút `Trị liệu → Xác nhận → Ta biết rồi`.
-3. AUTO → Đánh quái: test 10–15 lần Start/Stop và ít nhất 3 lần đổi map để xem còn treo/diss không.
-4. Nếu AUTO mở được nhưng không nhận diện `Đánh quái`, không bật fallback Rect-Lua ngay. Dùng log/runtime inspection để xác định class/handler của đúng control rồi mới thêm đường gọi riêng.
+1. Lưu lại một NPC bán đồ và một NPC trị liệu bằng v0.8.2; kiểm tra file có ResID > 0.
+2. Đi full túi tới NPC và xác nhận không còn popup “Không tìm thấy NPC tương ứng!”.
+3. Test trị liệu đủ `Trị liệu → Xác nhận → Ta biết rồi`.
+4. Chọn AUTO → Đánh quái, đi khác map ít nhất 3 lần; so tốc độ map/ngựa với `Dùng skill đã chọn`.
+5. Nếu AUTO mở root nhưng vẫn không chọn được `Đánh quái`, cần bắt runtime đúng class/name/handler của control con một lần; không nên bật lại quét UIRect toàn cục.
