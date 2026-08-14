@@ -1,0 +1,18 @@
+# Build output
+dist/
+*.exe
+*.obj
+*.o
+*.res
+
+# Local runtime configuration / data
+ThanLongAutoTrain.ini
+ThanLongAutoTrain.spots.txt
+ThanLongAutoTrain.npcs.txt
+
+# Editor / OS files
+.vs/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
