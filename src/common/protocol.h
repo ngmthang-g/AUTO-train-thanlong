@@ -6,7 +6,7 @@
 namespace tlcore {
 
 constexpr std::uint32_t kMagic = 0x544C4E43u; // TLNC
-constexpr std::uint32_t kProtocolVersion = 0x00010004u;
+constexpr std::uint32_t kProtocolVersion = 0x00010005u;
 constexpr UINT kWakeMessage = WM_APP + 0x4A1;
 constexpr wchar_t kMappingPrefix[] = L"Local\\ThanLongNewCore_";
 

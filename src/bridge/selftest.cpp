@@ -1,25 +1,32 @@
 #include <windows.h>
-#include <cstdio>
+#include <stdio.h>
 
 int wmain(int argc, wchar_t** argv) {
-    if (argc < 2) return 2;
+    if (argc < 2) {
+        fprintf(stderr, "BRIDGE SELFTEST FAIL: missing DLL path\n");
+        return 2;
+    }
+
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX);
-    HMODULE m = LoadLibraryW(argv[1]);
-    if (!m) {
-        const DWORD e = GetLastError();
-        wchar_t msg[512]{};
-        FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, e,
-                       MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), msg, _countof(msg), nullptr);
-        std::fwprintf(stderr, L"BRIDGE SELFTEST FAIL: LoadLibrary Win32=%lu: %ls\n", e, msg);
+    SetLastError(ERROR_SUCCESS);
+    HMODULE module = LoadLibraryW(argv[1]);
+    if (!module) {
+        const DWORD error = GetLastError();
+        fprintf(stderr, "BRIDGE SELFTEST FAIL: LoadLibrary Win32=%lu\n",
+                static_cast<unsigned long>(error));
         return 10;
     }
-    FARPROC p = GetProcAddress(m, "TlGetMessageHook");
-    if (!p) {
-        std::fwprintf(stderr, L"BRIDGE SELFTEST FAIL: missing TlGetMessageHook export\n");
-        FreeLibrary(m);
+
+    FARPROC hookExport = GetProcAddress(module, "TlGetMessageHook");
+    if (!hookExport) {
+        const DWORD error = GetLastError();
+        fprintf(stderr, "BRIDGE SELFTEST FAIL: missing TlGetMessageHook export; Win32=%lu\n",
+                static_cast<unsigned long>(error));
+        FreeLibrary(module);
         return 11;
     }
-    std::fwprintf(stdout, L"BRIDGE SELFTEST PASS\n");
-    FreeLibrary(m);
+
+    fprintf(stdout, "BRIDGE SELFTEST PASS\n");
+    FreeLibrary(module);
     return 0;
 }

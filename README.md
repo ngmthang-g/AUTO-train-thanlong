@@ -1,4 +1,4 @@
-# Than Long Auto - NewCore v1.0.4 Foundation Validator
+# Than Long Auto - NewCore v1.0.5 Foundation Validator
 
 Muc tieu ban nay chi la qua cua nen an toan. CHUA co action game.
 
@@ -10,14 +10,14 @@ Muc tieu ban nay chi la qua cua nen an toan. CHUA co action game.
 - `build.cmd` tu build `BridgeSelfTest.exe` va goi `LoadLibraryW` vao DLL vua tao.
   Neu DLL khong load duoc tren chinh Windows dang build, build DUNG ngay va khong package DLL loi.
 - Controller chan popup Bad Image va log Win32 error cu the neu LoadLibrary van that bai.
-- Protocol v1.0.4; khong dung lan DLL/EXE cua v1.0.3.
+- Protocol v1.0.5; khong dung lan DLL/EXE cua v1.0.3.
 
 ## Test
 
 1. Giai nen vao folder moi.
 2. Chay `build.cmd`.
 3. Chi tiep tuc neu thay `BRIDGE SELFTEST PASS` va `BUILD + LOADLIBRARY SELFTEST THANH CONG`.
-4. Chay `dist\\ThanLongAutoTrain_NewCore_v1.0.4.exe` cung voi `dist\\ThanLongNewCoreBridge.dll` trong cung folder.
+4. Chay `dist\\ThanLongAutoTrain_NewCore_v1.0.5.exe` cung voi `dist\\ThanLongNewCoreBridge.dll` trong cung folder.
 5. Tick client -> `Kiem tra nen`.
 6. Gui lai log Validator.
 

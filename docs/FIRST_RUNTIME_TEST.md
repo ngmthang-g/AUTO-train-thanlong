@@ -1,4 +1,4 @@
-# FIRST RUNTIME TEST - v1.0.4
+# FIRST RUNTIME TEST - v1.0.5
 
 Bản này KHÔNG gọi game action.
 

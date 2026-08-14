@@ -13,7 +13,7 @@ echo Zig: %ZIG_VERSION%
 
 if not exist dist mkdir dist
 del /q dist\*.exe dist\*.dll dist\*.res dist\*.lib dist\*.a >nul 2>nul
-del /q ThanLongNewCoreBridge.dll BridgeSelfTest.exe ThanLongAutoTrain_NewCore_v1.0.4.exe app.res >nul 2>nul
+del /q ThanLongNewCoreBridge.dll BridgeSelfTest.exe ThanLongAutoTrain_NewCore_v1.0.5.exe app.res >nul 2>nul
 
 echo [1/5] Resource...
 pushd resources
@@ -32,6 +32,7 @@ if errorlevel 1 goto :fail
 if not exist ThanLongNewCoreBridge.dll goto :fail
 
 echo [3/5] Bridge LoadLibrary self-test...
+rem Self-test intentionally uses C stdio only; avoid C++ wide-stdio namespace differences across Zig/MinGW.
 zig c++ -target x86_64-windows-gnu -O2 -std=c++17 -DUNICODE -D_UNICODE ^
   -Wall -Wextra -Werror -municode -static ^
   src\bridge\selftest.cpp -lkernel32 -o BridgeSelfTest.exe
@@ -48,18 +49,18 @@ echo [4/5] Controller EXE...
 zig c++ -target x86_64-windows-gnu -O2 -std=c++17 -DUNICODE -D_UNICODE -Wall -Wextra -Werror -municode -static ^
   src\controller\main.cpp app.res ^
   -Wl,--subsystem,windows -lcomctl32 -luser32 -lkernel32 -lgdi32 ^
-  -o ThanLongAutoTrain_NewCore_v1.0.4.exe
+  -o ThanLongAutoTrain_NewCore_v1.0.5.exe
 if errorlevel 1 goto :fail
 
 echo [5/5] Package...
 move /y ThanLongNewCoreBridge.dll dist\ThanLongNewCoreBridge.dll >nul
-move /y ThanLongAutoTrain_NewCore_v1.0.4.exe dist\ThanLongAutoTrain_NewCore_v1.0.4.exe >nul
+move /y ThanLongAutoTrain_NewCore_v1.0.5.exe dist\ThanLongAutoTrain_NewCore_v1.0.5.exe >nul
 move /y app.res dist\app.res >nul
 del /q BridgeSelfTest.exe >nul 2>nul
 
 echo.
 echo BUILD + LOADLIBRARY SELFTEST THANH CONG:
-echo   dist\ThanLongAutoTrain_NewCore_v1.0.4.exe
+echo   dist\ThanLongAutoTrain_NewCore_v1.0.5.exe
 echo   dist\ThanLongNewCoreBridge.dll
 exit /b 0
 
