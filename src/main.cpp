@@ -24,7 +24,7 @@ extern "C" unsigned char RemoteWorkerStart[];
 extern "C" unsigned char RemoteWorkerEnd[];
 
 using Clock = std::chrono::steady_clock;
-constexpr wchar_t kTitle[] = L"Thần Long Mobile - Auto Train v0.8.4";
+constexpr wchar_t kTitle[] = L"Thần Long Mobile - Auto Train v0.8.5";
 constexpr wchar_t kModule[] = L"GameAssembly.dll";
 
 namespace rva {
@@ -74,6 +74,7 @@ constexpr std::uint64_t UIObjectActiveInHierarchy = 0x52F7D0;
 constexpr std::uint64_t UIObjectCoreChildren = 0x52FB80;
 constexpr std::uint64_t UIButtonGetInteractable = 0x52E120;
 constexpr std::uint64_t UIButtonGetText = 0x52E230;
+constexpr std::uint64_t UIButtonGetClickHandler = 0x52DF50;
 constexpr std::uint64_t UIButtonHandleClick = 0x52D140;
 constexpr std::uint64_t UIToggleGetInteractable = 0x688580;
 constexpr std::uint64_t UIToggleGetSelected = 0x6885D0;
@@ -1153,6 +1154,7 @@ private:
             {rva::UIObjectCoreChildren, {0x48,0x89,0x5C,0x24,0x10,0x56,0x57,0x41,0x54,0x41,0x56,0x41}},
             {rva::UIButtonGetInteractable,{0x48,0x83,0xEC,0x28,0x48,0x8B,0x81,0xE0,0x00,0x00,0x00,0x48}},
             {rva::UIButtonGetText,      {0x48,0x89,0x5C,0x24,0x08,0x57,0x48,0x83,0xEC,0x20,0x80,0x3D}},
+            {rva::UIButtonGetClickHandler,{0x48,0x8B,0x81,0x00,0x01,0x00,0x00,0xC3,0xCC,0xCC,0xCC,0xCC}},
             {rva::UIButtonHandleClick,  {0x40,0x53,0x48,0x83,0xEC,0x30,0x80,0x3D,0x4B,0xA4,0x29,0x03}},
             {rva::UIToggleGetInteractable,{0x48,0x83,0xEC,0x28,0x48,0x8B,0x89,0xE8,0x00,0x00,0x00,0x48}},
             {rva::UIToggleGetSelected,   {0x48,0x83,0xEC,0x28,0x48,0x8B,0x89,0xE8,0x00,0x00,0x00,0x48}},
@@ -1751,6 +1753,7 @@ private:
                 return score;
             }
             case ButtonRole::Fight: {
+                if (CompactMatch(info.handler) == L"autotrainclick") return 980;
                 if (info.textKey == L"danhquai") return 650;
                 if (unwantedMenuItem) return -1000;
                 if (ContainsCompact(key, {L"danhquai"})) return 560;
@@ -1760,8 +1763,10 @@ private:
                 return 0;
             }
             case ButtonRole::AutoRoot: {
+                if (CompactMatch(info.handler) == L"autofightclick" || info.nameKey == L"butautofight")
+                    return 980;
                 if (info.textKey == L"auto") return 650;
-                if (unwantedMenuItem || ContainsCompact(key, {L"danhquai", L"autofight",
+                if (unwantedMenuItem || ContainsCompact(key, {L"danhquai", L"autotrainclick",
                                                                L"autoattack", L"autobattle"}))
                     return -1000;
                 if (info.nameKey == L"auto" || info.nameKey == L"btnauto" ||
@@ -1771,6 +1776,7 @@ private:
                 return 0;
             }
             case ButtonRole::Stop: {
+                if (CompactMatch(info.handler) == L"autostopclick") return 980;
                 if (info.textKey == L"dung" || info.textKey == L"stop") return 650;
                 if (ContainsCompact(key, {L"stopauto", L"autostop", L"stopfight",
                                           L"dungdanh", L"dungauto"})) return 500;
@@ -1884,6 +1890,67 @@ private:
         selected = std::move(candidates[0].info);
         return true;
     }
+    bool ReadButtonClickHandler(std::uint64_t button, std::wstring& handler) {
+        handler.clear();
+        std::uint64_t pointer = 0;
+        if (!Remote(rva::UIButtonGetClickHandler, button, 0, 0, 0, pointer, 500) || !pointer)
+            return false;
+        handler = process_.ReadIl2CppString(pointer);
+        return !handler.empty();
+    }
+    bool ReadButtonsByExactHandler(const wchar_t* expectedHandler,
+                                   std::vector<ButtonInfo>& matches) {
+        matches.clear();
+        const std::wstring expected = CompactMatch(expectedHandler ? expectedHandler : L"");
+        if (expected.empty()) return false;
+        std::vector<std::uint64_t> rawButtons;
+        if (!ReadAllUiButtons(rawButtons)) return false;
+        for (const std::uint64_t button : rawButtons) {
+            std::uint64_t active = 0, interactable = 0;
+            if (!Remote(rva::UIObjectActiveInHierarchy, button, 0, 0, 0, active, 400) ||
+                (active & 0xFFu) == 0 ||
+                !Remote(rva::UIButtonGetInteractable, button, 0, 0, 0, interactable, 400) ||
+                (interactable & 0xFFu) == 0)
+                continue;
+            std::wstring handler;
+            if (!ReadButtonClickHandler(button, handler) || CompactMatch(handler) != expected)
+                continue;
+            ButtonInfo info;
+            if (!DescribeButton(button, false, info)) continue;
+            info.handler = std::move(handler);
+            if (!info.label.empty()) info.label += L" • ";
+            info.label += L"Lua=“" + info.handler + L"”";
+            matches.push_back(std::move(info));
+        }
+        return true;
+    }
+    bool FindButtonByExactHandler(const wchar_t* expectedHandler, ButtonInfo& selected,
+                                  std::wstring& reason) {
+        const std::wstring expected = CompactMatch(expectedHandler ? expectedHandler : L"");
+        std::vector<ButtonInfo> matches;
+        if (expected.empty() || !ReadButtonsByExactHandler(expectedHandler, matches)) {
+            reason = L"Không đọc được danh sách UIButton/handler";
+            return false;
+        }
+        if (matches.empty()) {
+            reason = L"Không có UIButton handler=" + std::wstring(expectedHandler);
+            return false;
+        }
+        if (matches.size() > 1) {
+            // Exact Lua handler is normally unique inside one active UI. Prefer ButAutoFight
+            // only for the root; otherwise refuse ambiguous actions instead of blind-clicking.
+            if (expected == L"autofightclick") {
+                for (const ButtonInfo& item : matches) {
+                    if (item.nameKey == L"butautofight") { selected = item; return true; }
+                }
+            }
+            reason = L"Có nhiều UIButton cùng handler=" + std::wstring(expectedHandler);
+            return false;
+        }
+        selected = std::move(matches.front());
+        return true;
+    }
+
     bool FindButton(ButtonRole role, ButtonInfo& selected, std::wstring& reason,
                     bool inspectDescendants) {
         std::vector<ButtonInfo> buttons;
@@ -2181,48 +2248,122 @@ private:
         return true;
     }
     bool ClickInternalAutoFight(std::wstring& detail) {
-        // Interface.unity3d proves the exact quick-action path:
-        // TopIcon.AutoTrainClick() -> AutoFight_Main.StartAutoFight(C_AutoModel.Train).
-        // Calling that Lua action directly avoids opening/scanning the transient AUTO submenu.
-        std::wstring callDetail;
-        if (!InvokeMainUiScriptNoArgs("TopIcon", "AutoTrainClick", callDetail)) {
-            detail = L"Không gọi được AUTO → Đánh quái trực tiếp • " + callDetail;
+        // Interface.unity3d proves the physical control chain:
+        // ButAutoFight/AutoFightClick opens AutoFightGroup; the child button with
+        // ClickHandler=AutoTrainClick then calls StartAutoFight(C_AutoModel.Train).
+        // Replaying these two real UIButton callbacks is closer to the user's manual action
+        // than invoking the Lua function out of UI-event context.
+        ButtonInfo trainButton;
+        std::wstring reason;
+        if (!FindButtonByExactHandler(L"AutoTrainClick", trainButton, reason)) {
+            ButtonInfo root;
+            std::wstring rootReason;
+            if (!FindButtonByExactHandler(L"AutoFightClick", root, rootReason)) {
+                // Compatibility fallback for builds where ClickHandler getter is delayed.
+                if (!FindButton(ButtonRole::AutoRoot, root, rootReason, false) &&
+                    !FindButton(ButtonRole::AutoRoot, root, rootReason, true)) {
+                    detail = L"Không mở được AUTO • " + rootReason;
+                    return false;
+                }
+            }
+            if (!InvokeButton(root.object)) {
+                detail = L"Nút AUTO không phản hồi • " + root.label;
+                return false;
+            }
+            // AutoFightClick only changes one local Active flag. Poll quickly for the child;
+            // do not sleep hundreds of ms and do not scan another action in parallel.
+            bool foundTrain = false;
+            for (int i = 0; i < 18; ++i) {
+                if (i) Sleep(35);
+                if (FindButtonByExactHandler(L"AutoTrainClick", trainButton, reason)) {
+                    foundTrain = true;
+                    break;
+                }
+            }
+            if (!foundTrain) {
+                // Text fallback remains bounded to the now-open submenu.
+                ActionControl fight;
+                if (!FindButtonOrToggle(ButtonRole::Fight, fight, reason, true)) {
+                    detail = L"Đã mở AUTO nhưng chưa thấy Đánh quái/AutoTrainClick • " + reason;
+                    return false;
+                }
+                if (!InvokeButtonOrToggle(fight)) {
+                    detail = L"Control Đánh quái không phản hồi • " + fight.info.label;
+                    return false;
+                }
+            } else if (!InvokeButton(trainButton.object)) {
+                detail = L"UIButton AutoTrainClick không phản hồi • " + trainButton.label;
+                return false;
+            }
+        } else if (!InvokeButton(trainButton.object)) {
+            detail = L"UIButton AutoTrainClick không phản hồi • " + trainButton.label;
             return false;
         }
-        // The Lua source sets Game.EnableAutoF1=false when Train starts. Older builds treated
-        // ON as proof of training, which was backwards and caused false "đã bật" reports.
-        bool running = false;
-        for (int i = 0; i < 8 && !running; ++i) {
-            Sleep(180);
+
+        // Lua StartAutoFight(Train) sets Game.EnableAutoF1=false. Poll at frame-scale;
+        // slower retries happen in the outer state machine, so this function never spams UI.
+        for (int i = 0; i < 20; ++i) {
+            if (i) Sleep(40);
             std::uint64_t enableF1 = 1;
-            running = Remote(rva::LuaGetAutoFightEnabled, 0, 0, 0, 0, enableF1, 900) &&
-                      (enableF1 & 0xFFu) == 0;
+            if (Remote(rva::LuaGetAutoFightEnabled, 0, 0, 0, 0, enableF1, 700) &&
+                (enableF1 & 0xFFu) == 0) {
+                detail = L"AUTO → Đánh quái: AutoFightClick → AutoTrainClick • EnableAutoF1=OFF";
+                return true;
+            }
         }
-        detail = running
-            ? L"Đã gọi TopIcon.AutoTrainClick → StartAutoFight(Train) • EnableAutoF1=OFF đúng Lua gốc"
-            : L"Đã gọi AutoTrainClick nhưng EnableAutoF1 chưa chuyển OFF; không coi là đã bật";
-        return running;
+        detail = L"Đã bấm đúng AutoTrainClick nhưng EnableAutoF1 chưa OFF; không báo bật giả";
+        return false;
     }
     bool ClickInternalAutoStop(std::wstring& detail) {
-        // Exact client action from Interface.unity3d: TopIcon.AutoStopClick() ->
-        // AutoFight_Main.StartAutoFight(C_AutoModel.None). The auto loop then restores
-        // Game.EnableAutoF1=true through StopAllCurrentTask().
-        std::wstring callDetail;
-        if (!InvokeMainUiScriptNoArgs("TopIcon", "AutoStopClick", callDetail)) {
-            detail = L"Không gọi được AUTO → Dừng trực tiếp • " + callDetail;
+        ButtonInfo stopButton;
+        std::wstring reason;
+        if (!FindButtonByExactHandler(L"AutoStopClick", stopButton, reason)) {
+            ButtonInfo root;
+            std::wstring rootReason;
+            if (!FindButtonByExactHandler(L"AutoFightClick", root, rootReason) &&
+                !FindButton(ButtonRole::AutoRoot, root, rootReason, false) &&
+                !FindButton(ButtonRole::AutoRoot, root, rootReason, true)) {
+                detail = L"Không mở được AUTO để Dừng • " + rootReason;
+                return false;
+            }
+            if (!InvokeButton(root.object)) {
+                detail = L"Nút AUTO không phản hồi khi Dừng";
+                return false;
+            }
+            bool foundStop = false;
+            for (int i = 0; i < 18; ++i) {
+                if (i) Sleep(35);
+                if (FindButtonByExactHandler(L"AutoStopClick", stopButton, reason)) {
+                    foundStop = true;
+                    break;
+                }
+            }
+            if (!foundStop) {
+                ActionControl stop;
+                if (!FindButtonOrToggle(ButtonRole::Stop, stop, reason, true) ||
+                    !InvokeButtonOrToggle(stop)) {
+                    detail = L"Đã mở AUTO nhưng chưa gọi được Dừng • " + reason;
+                    return false;
+                }
+            } else if (!InvokeButton(stopButton.object)) {
+                detail = L"UIButton AutoStopClick không phản hồi";
+                return false;
+            }
+        } else if (!InvokeButton(stopButton.object)) {
+            detail = L"UIButton AutoStopClick không phản hồi";
             return false;
         }
-        bool stopped = false;
-        for (int i = 0; i < 12 && !stopped; ++i) {
-            Sleep(180);
+        for (int i = 0; i < 24; ++i) {
+            if (i) Sleep(40);
             std::uint64_t enableF1 = 0;
-            stopped = Remote(rva::LuaGetAutoFightEnabled, 0, 0, 0, 0, enableF1, 900) &&
-                      (enableF1 & 0xFFu) != 0;
+            if (Remote(rva::LuaGetAutoFightEnabled, 0, 0, 0, 0, enableF1, 700) &&
+                (enableF1 & 0xFFu) != 0) {
+                detail = L"AUTO → Dừng: AutoFightClick → AutoStopClick • EnableAutoF1=ON";
+                return true;
+            }
         }
-        detail = stopped
-            ? L"Đã gọi TopIcon.AutoStopClick → StartAutoFight(None) • EnableAutoF1=ON"
-            : L"Đã gọi AutoStopClick nhưng game chưa ổn định về trạng thái dừng";
-        return stopped;
+        detail = L"Đã bấm AutoStopClick nhưng game chưa xác nhận trạng thái Dừng";
+        return false;
     }
     bool ReadAncestorKey(std::uint64_t object, std::wstring& key) {
         key.clear();
@@ -2255,16 +2396,29 @@ private:
         return !key.empty();
     }
     bool IsSafeBagItemButton(const ButtonInfo& info) {
-        // Only click an item control when both the control name and its parent path
-        // say it belongs to the player's bag. Never infer a slot from screen position.
+        std::wstring parentKey;
+        if (!ReadAncestorKey(info.object, parentKey)) return false;
+        const std::wstring handlerKey = CompactMatch(info.handler);
+
+        // Exact client prefab recovered from Interface.unity3d:
+        // ItemBox_Layout -> Button ClickHandler="ButtonItemClicked".
+        // In NPCShop_SellItemTab the player's BagItemsGrid sits inside SellItemTab, while the
+        // left buy-back list uses ButtonItemIconClicked/ButtonBuyBackItemClicked. This gives
+        // a much stronger discriminator than guessing slot names generated at runtime.
+        if (handlerKey == L"buttonitemclicked") {
+            if (!ContainsCompact(parentKey, {L"sellitemtab"})) return false;
+            if (ContainsCompact(parentKey, {L"buyitemtab", L"buttonitemprefab", L"itemlist"}))
+                return false;
+            return true;
+        }
+
+        // Compatibility fallback for an older prefab variant.
         if (!ContainsCompact(info.nameKey,
                 {L"item", L"slot", L"cell", L"griditem", L"bagitem", L"packitem"}))
             return false;
-        std::wstring parentKey;
-        if (!ReadAncestorKey(info.object, parentKey)) return false;
         if (!ContainsCompact(parentKey,
                 {L"bag", L"inventory", L"package", L"itempack", L"packitem",
-                 L"bagitem", L"itemgrid", L"itemlist"}))
+                 L"bagitem", L"itemgrid", L"itemsgrid", L"sellitemtab"}))
             return false;
         if (ContainsCompact(info.nameKey + parentKey,
                 {L"buyitem", L"productitem", L"shoplistitem", L"npcitem"}))
@@ -2510,12 +2664,12 @@ private:
         // The NPC dialog in this client exposes "Mua thú cưỡi" before the shop page.
         // If the shop is already open (e.g. server/UI remembers the previous page), accept
         // a visible SellTab instead of blindly clicking an unrelated control.
-        if (WaitAction(ButtonRole::ShopEntry, shopEntry, reason, 8, 150)) {
+        if (WaitAction(ButtonRole::ShopEntry, shopEntry, reason, 30, 35)) {
             if (!InvokeAction(shopEntry)) {
                 detail = L"Đã mở NPC nhưng ‘Mua thú cưỡi’ không phản hồi • " + shopEntry.info.label;
                 return false;
             }
-            Sleep(260);
+            Sleep(35);
         } else {
             ActionControl alreadySell;
             std::wstring sellProbe;
@@ -2526,7 +2680,7 @@ private:
         }
 
         ActionControl sellTab;
-        if (!WaitAction(ButtonRole::SellTab, sellTab, reason, 12, 150)) {
+        if (!WaitAction(ButtonRole::SellTab, sellTab, reason, 36, 35)) {
             detail = L"Đã vào shop nhưng chưa định vị được ‘Bán vật phẩm’ • " + reason;
             return false;
         }
@@ -2534,10 +2688,10 @@ private:
             detail = L"Control ‘Bán vật phẩm’ không phản hồi • " + sellTab.info.label;
             return false;
         }
-        Sleep(220);
+        Sleep(40);
 
         ActionControl quickSell;
-        if (!WaitAction(ButtonRole::QuickSell, quickSell, reason, 8, 140)) {
+        if (!WaitAction(ButtonRole::QuickSell, quickSell, reason, 28, 35)) {
             detail = L"Đã vào Bán vật phẩm nhưng chưa thấy ‘Bán vật phẩm nhanh’ • " + reason;
             return false;
         }
@@ -2545,10 +2699,10 @@ private:
             detail = L"Không bật được ‘Bán vật phẩm nhanh’ • " + quickSell.info.label;
             return false;
         }
-        Sleep(180);
+        Sleep(40);
 
         ActionControl equipment;
-        if (!WaitAction(ButtonRole::EquipmentTab, equipment, reason, 8, 140)) {
+        if (!WaitAction(ButtonRole::EquipmentTab, equipment, reason, 28, 35)) {
             detail = L"Đã bật bán nhanh nhưng chưa thấy tab ‘Trang bị’ trong tay nải • " + reason;
             return false;
         }
@@ -2556,7 +2710,7 @@ private:
             detail = L"Không chuyển được sang tab ‘Trang bị’ • " + equipment.info.label;
             return false;
         }
-        Sleep(220);
+        Sleep(40);
         detail = L"NPC → Mua thú cưỡi → Bán vật phẩm → Bán nhanh → Trang bị";
         return true;
     }
@@ -2606,23 +2760,30 @@ private:
             std::wstring label;
             if (!CloseOneTradeOrBagUi(label)) break;
             ++closed;
-            Sleep(140);
+            Sleep(35);
         }
         if (closed > 0) detail += L" • đã đóng " + std::to_wstring(closed) + L" cửa sổ shop/tay nải";
     }
-    static std::wstring ItemAttemptKey(const ActionControl& item) {
-        return std::to_wstring(item.info.object) + L"|" + item.info.nameKey + L"|" +
-               CompactMatch(item.info.handler) + L"|" + item.info.textKey;
-    }
     bool CollectSafeBagItems(std::vector<ActionControl>& candidates) {
         candidates.clear();
-        std::vector<ButtonInfo> buttons;
-        if (ReadActiveButtonInfos(false, buttons)) {
-            for (const ButtonInfo& info : buttons)
+        // Fast path: exact ItemBox prefab handler recovered from Interface.unity3d.
+        std::vector<ButtonInfo> itemButtons;
+        if (ReadButtonsByExactHandler(L"ButtonItemClicked", itemButtons)) {
+            for (const ButtonInfo& info : itemButtons)
                 if (IsSafeBagItemButton(info)) candidates.push_back({ActionKind::Button, info});
         }
+        // Compatibility fallback only when the exact client handler produced no bag candidates.
+        if (candidates.empty()) {
+            std::vector<ButtonInfo> buttons;
+            if (ReadActiveButtonInfos(false, buttons)) {
+                for (ButtonInfo info : buttons) {
+                    ReadButtonClickHandler(info.object, info.handler);
+                    if (IsSafeBagItemButton(info)) candidates.push_back({ActionKind::Button, info});
+                }
+            }
+        }
         std::vector<ButtonInfo> rects;
-        if (ReadActiveRectInfos(false, rects)) {
+        if (candidates.empty() && ReadActiveRectInfos(false, rects)) {
             for (const ButtonInfo& info : rects)
                 if (IsSafeBagItemRect(info)) candidates.push_back({ActionKind::RectLua, info});
         }
@@ -2641,67 +2802,57 @@ private:
         }
         if (!OpenSellUi(detail)) return false;
 
-        std::map<std::wstring, int> failedAttempts;
-        std::set<std::wstring> permanentlySkipped;
-        int bestFree = freeBefore;
+        // BagItemsGrid creates a fixed pool of 100 ItemBox controls and reuses them. Under
+        // Equipment filter a successfully sold item becomes inactive; an unsellable item stays
+        // active. Three fast passes therefore naturally implement “món nào 3 lần không bán được
+        // thì bỏ qua”, while avoiding a full UI scan + RAM probe after every single click.
         int callbacks = 0;
-        int soldItems = 0;
-        int skippedItems = 0;
-        while (callbacks < 90) {
+        int passes = 0;
+        int visibleCandidates = 0;
+        for (int pass = 0; pass < 3 && callbacks < 90; ++pass) {
             std::vector<ActionControl> candidates;
             CollectSafeBagItems(candidates);
             if (candidates.empty()) break;
-
-            const ActionControl* chosen = nullptr;
-            std::wstring chosenKey;
+            ++passes;
+            visibleCandidates = std::max(visibleCandidates, static_cast<int>(candidates.size()));
             for (const ActionControl& item : candidates) {
-                const std::wstring key = ItemAttemptKey(item);
-                if (!permanentlySkipped.count(key)) {
-                    chosen = &item;
-                    chosenKey = key;
-                    break;
-                }
-            }
-            if (!chosen) break;  // every visible equipment slot has already failed 3 times.
-
-            if (!InvokeAction(*chosen)) {
-                const int failures = ++failedAttempts[chosenKey];
+                if (callbacks >= 90) break;
+                // Always resolve active candidates fresh once per pass; never keep them across UI
+                // page changes. ItemBox objects themselves persist inside BagItemsGrid.
+                InvokeAction(item);
                 ++callbacks;
-                if (failures >= 3 && permanentlySkipped.insert(chosenKey).second) ++skippedItems;
-                Sleep(100);
-                continue;
+                Sleep(45);  // 4x faster than the old 180 ms cadence, still strictly sequential.
             }
-            ++callbacks;
-            Sleep(180);
-            int currentFree = -1;
-            if (ReadFreeBagSpace(currentFree) && currentFree > bestFree) {
-                bestFree = currentFree;
-                ++soldItems;
-                failedAttempts.erase(chosenKey);
-                // Sold cells can be recycled/reordered by the UI; rescan from scratch next loop.
-                Sleep(80);
-                continue;
-            }
-            const int failures = ++failedAttempts[chosenKey];
-            if (failures >= 3 && permanentlySkipped.insert(chosenKey).second) ++skippedItems;
+            // Give server RemoveItem/UpdateItemsList a small quiet window, then the next pass
+            // rescans active controls and automatically drops slots already removed.
+            Sleep(70);
         }
 
-        int finalFree = bestFree;
-        int readFinal = -1;
-        if (ReadFreeBagSpace(readFinal)) finalFree = std::max(finalFree, readFinal);
+        int finalFree = freeBefore;
+        // Server inventory updates are authoritative. Poll a few short times instead of probing
+        // after every click, which was one of the heaviest parts of the old loop.
+        for (int i = 0; i < 8; ++i) {
+            if (i) Sleep(45);
+            int value = -1;
+            if (ReadFreeBagSpace(value)) finalFree = std::max(finalFree, value);
+        }
         freeAfter = finalFree;
         std::wstring closeDetail;
         CloseTradeAndBagUi(closeDetail);
 
-        if (soldItems <= 0 && finalFree <= freeBefore) {
-            detail = L"Không bán được trang bị nào • đã thử " + std::to_wstring(callbacks) +
-                     L" callback • bỏ qua " + std::to_wstring(skippedItems) +
-                     L" món sau 3 lần thất bại" + closeDetail;
+        if (callbacks == 0) {
+            detail = L"Đã tới tab Trang bị nhưng không nhận diện được ItemBox/handler ButtonItemClicked" +
+                     closeDetail;
             return false;
         }
-        detail = L"Đã bán " + std::to_wstring(soldItems) + L" món trang bị • " +
-                 std::to_wstring(callbacks) + L" callback • bỏ qua " +
-                 std::to_wstring(skippedItems) + L" món lỗi 3 lần • tay nải " +
+        if (finalFree <= freeBefore) {
+            detail = L"Đã click " + std::to_wstring(callbacks) + L" ô trang bị qua " +
+                     std::to_wstring(passes) + L" lượt nhưng số ô trống chưa tăng • ItemBox thấy " +
+                     std::to_wstring(visibleCandidates) + closeDetail;
+            return false;
+        }
+        detail = L"Đã bán nhanh: " + std::to_wstring(callbacks) + L" click / " +
+                 std::to_wstring(passes) + L" lượt • tay nải " +
                  std::to_wstring(freeBefore) + L" → " + std::to_wstring(finalFree) +
                  L" ô trống" + closeDetail;
         return true;
@@ -3149,7 +3300,7 @@ private:
 
         ActionControl treatment;
         std::wstring reason;
-        if (!WaitAction(ButtonRole::Treatment, treatment, reason, 12, 150) ||
+        if (!WaitAction(ButtonRole::Treatment, treatment, reason, 36, 35) ||
             !InvokeAction(treatment)) {
             detail = L"Đã mở NPC trị liệu nhưng không gọi được Trị liệu • " + reason;
             CloseTradeAndBagUi(detail);
@@ -3158,7 +3309,7 @@ private:
 
         ActionControl confirm;
         reason.clear();
-        if (!WaitAction(ButtonRole::TreatmentConfirm, confirm, reason, 12, 150) ||
+        if (!WaitAction(ButtonRole::TreatmentConfirm, confirm, reason, 36, 35) ||
             !InvokeAction(confirm)) {
             detail = L"Đã bấm Trị liệu nhưng chưa gọi được Xác nhận • " + reason;
             CloseTradeAndBagUi(detail);
@@ -3167,14 +3318,14 @@ private:
 
         ActionControl ack;
         reason.clear();
-        if (!WaitAction(ButtonRole::TreatmentAck, ack, reason, 12, 150) ||
+        if (!WaitAction(ButtonRole::TreatmentAck, ack, reason, 36, 35) ||
             !InvokeAction(ack)) {
             detail = L"Đã Xác nhận trị liệu nhưng chưa gọi được Ta biết rồi • " + reason;
             CloseTradeAndBagUi(detail);
             return false;
         }
 
-        Sleep(180);
+        Sleep(35);
         detail = L"Đã hoàn tất NPC trị liệu: Trị liệu → Xác nhận → Ta biết rồi • " + healNpc_.name;
         CloseTradeAndBagUi(detail);
         return true;
@@ -4102,7 +4253,7 @@ private:
                                  CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                                  DEFAULT_PITCH, L"Segoe UI");
 
-        Label(L"THẦN LONG MOBILE • AUTO TRAIN v0.8.4", 16, 5, 650, 31, titleFont_);
+        Label(L"THẦN LONG MOBILE • AUTO TRAIN v0.8.5", 16, 5, 650, 31, titleFont_);
         Button(L"↻  QUÉT CỬA SỔ GAME", 855, 10, 189, 34, V5_REFRESH);
 
         tab_ = Make(WC_TABCONTROLW, L"", TCS_TABS | TCS_SINGLELINE | WS_TABSTOP,
@@ -4233,7 +4384,7 @@ private:
              150, 145, 780, 46, 0, titleFont_);
         Make(L"STATIC", L"Phần mềm được thiết kế bởi Thắng Nguyễn - ĐỒ LONG",
              SS_CENTER | SS_CENTERIMAGE, 150, 205, 780, 48, 0, boldFont_);
-        Make(L"STATIC", L"Phiên bản 0.8.4",
+        Make(L"STATIC", L"Phiên bản 0.8.5",
              SS_CENTER | SS_CENTERIMAGE, 150, 270, 780, 35, 0, smallFont_);
         buildingPage_ = 0;
         SelectPage(0);

@@ -1,68 +1,67 @@
-# Thần Long Mobile - Auto Train v0.8.4
+# Thần Long Mobile - Auto Train v0.8.5
 
-Bản này sửa trực tiếp ba lỗi runtime được xác nhận từ v0.8.3 bằng dữ liệu lấy từ chính asset client đã giải mã: NPC ID thật, action Lua thật của AUTO và action mở ChatBox thật.
+Bản này tập trung vào ba lỗi runtime đã test được ở v0.8.4: chuỗi trị liệu/shop quá chậm, shop đã tới tab Trang bị nhưng chưa bán, và AUTO đã tới bãi nhưng `AutoTrainClick` gọi trực tiếp không tạo trạng thái đánh quái.
 
-## 1. NPC bán đồ / trị liệu: bỏ suy RoleID -> ResID đối với hai NPC chuẩn
+## 1. Trị liệu nhanh hơn nhưng vẫn tuần tự
 
-Từ `Config.unity3d` của chính client:
+Không gửi các action song song. Chuỗi vẫn là:
 
-- `Mã Kiêu Minh`: NPC/ResID **373**, `NPCData MapID=5`.
-- `Đỗ Thanh Đằng`: NPC/ResID **339**, `NPCData MapID=5`.
+`ClickNPC -> Trị liệu -> Xác nhận -> Ta biết rồi -> đóng UI`
 
-RoleID runtime như `1000000378` không phải `1,000,000,000 + ResID`; phép suy cũ là sai. v0.8.4 có database built-in theo tên và tự sửa ResID của entry cũ khi load. Khi bấm Lưu NPC, tool vẫn lấy Map/X/Y realtime của nhân vật đang đứng sát NPC, nhưng ResID lấy từ config client thay vì quét Dictionary mong manh.
+Điểm thay đổi là polling UI từ 140–150 ms xuống 35 ms và bỏ các khoảng chờ cố định 180–260 ms không cần thiết. Mỗi bước chỉ được gọi sau khi control của bước đó thực sự xuất hiện. Vì vậy phản hồi bình thường nhanh khoảng 4 lần nhưng không đổi thành macro spam.
 
-Khi mở NPC, tool đọc NPC gần nhất và bắt buộc tên phải đúng với entry đã chọn rồi mới `ClickNPC(373/339)`. Không dùng RoleID làm tham số `ClickNPC`.
+## 2. Bán đồ: dùng đúng ItemBox của BagItemsGrid
 
-## 2. AUTO -> Đánh quái: gọi đúng Lua action, không quét menu con
+Từ `Interface.unity3d`:
 
-`Interface.unity3d` cho thấy chính xác:
+- `NPCShop_SellItemTab` đặt `CustomClickOnItemBox` cho `BagItemsGrid`.
+- Khi `ToggleQuickSell.Selected=true`, click một ItemBox gọi `RequestSellItem(dbItemData)`.
+- `ItemBox_Layout` dùng `UIButton ClickHandler="ButtonItemClicked"`.
+- Danh sách mua lại bên trái dùng các handler khác (`ButtonItemIconClicked`, `ButtonBuyBackItemClicked`).
 
-- `TopIcon:AutoTrainClick()` -> `AutoFight_Main:StartAutoFight(C_AutoModel.Train)`.
-- `TopIcon:AutoStopClick()` -> `AutoFight_Main:StartAutoFight(C_AutoModel.None)`.
-- `C_AutoModel.Train = 1`, `None = 0`.
+v0.8.5 đọc thêm `UIButton.get_ClickHandler()` (RVA `0x52DF50`) và chỉ nhận ItemBox có handler `ButtonItemClicked` nằm dưới `SellItemTab`. Không còn phụ thuộc tên slot/item do runtime sinh ra.
 
-Vì vậy v0.8.4 không còn phụ thuộc mở popup AUTO rồi dò label `Đánh quái`. Tool gọi trực tiếp action Lua của `TopIcon` qua `MonoBehaviourExecutor.ExecuteScriptFunction` với `object[0]` thật.
+Sau khi vào `Trang bị`, tool chạy tối đa ba lượt trên các ItemBox còn active, tổng tối đa 90 click. Nhịp click là 45 ms (bản cũ 180 ms). Món bán thành công bị BagItemsGrid làm inactive; món không bán được còn lại và được thử lại tối đa ba lượt. Sau đó tool đóng shop/tay nải và quay lại state train.
 
-Một lỗi logic quan trọng cũng được sửa: Lua gốc **set `Game.EnableAutoF1=false` khi bắt đầu Train**, còn `StopAllCurrentTask()` khôi phục **true** khi dừng. Các version cũ kiểm tra ngược nên có thể báo “AUTO đã bật” giả khi nhân vật vẫn đứng im. `LiveState.autoFight` và verify Start/Stop đã đảo lại đúng semantics này.
+## 3. AUTO -> Đánh quái: replay đúng hai UIButton thật
 
-Navigation vẫn có ưu tiên tuyệt đối: action AUTO chỉ được gửi khi đã tới bãi, map ổn định và xuống ngựa xong.
+Asset client cho thấy:
 
-## 3. Auto Chat
+- nút gốc `ButAutoFight`, handler `AutoFightClick`, chỉ mở/đóng `AutoFightGroup`;
+- nút con `Đánh quái`, handler `AutoTrainClick`;
+- `AutoTrainClick` mới gọi `AutoFight_Main:StartAutoFight(C_AutoModel.Train)`.
 
-Asset client cho thấy `BottomIcon:ButtonOpenChatBoxClicked()` tự gọi `GUI.CallUI("ChatBox")` nếu bảng chat chưa tồn tại. v0.8.4 dùng action này để mở chat, set `UIInput.Text`, rồi gọi trực tiếp đúng hai callback Lua `ChatBox:ButtonSendMessageClicked()` và `ChatBox:ButtonCloseClicked()`. Không giữ UIButton Chat cũ qua các bước.
+v0.8.4 gọi `TopIcon.AutoTrainClick` trực tiếp bằng executor; runtime test cho thấy callback được gửi nhưng `EnableAutoF1` không đổi. v0.8.5 bỏ đường đó khỏi production AUTO và replay đúng event chain của game:
 
-Auto Chat chỉ chạy khi nhân vật đã ở đúng bãi, không AutoPath, không đang di chuyển và không cưỡi ngựa. Sau chat có **1 giây action barrier**: không gửi AutoPath/ngựa/AUTO/NPC trong cùng lượt worker. Sau barrier state machine train tiếp tục bình thường.
+`UIButton(AutoFightClick) -> chờ AutoFightGroup active -> UIButton(AutoTrainClick) -> verify EnableAutoF1=OFF`.
 
-## 4. Train Liên Server
+`AUTO -> Dừng` tương tự dùng `AutoFightClick -> AutoStopClick -> verify EnableAutoF1=ON`.
 
-Từ MapID 10000:
+Tool đọc ClickHandler thật của UIButton nên không còn phải đoán nút AUTO/Đánh quái chỉ từ chữ hiển thị. Text matching chỉ là fallback nếu handler chưa đọc được.
 
-- Thanh Liên Trại `10005`: cổng `15600,8250`.
-- Khô Vinh Đạo `10007`: cổng `8195,1190`.
-- Phàm Liên Trại `10004`: cổng `1215,8475`.
+Navigation vẫn có ưu tiên tuyệt đối: AUTO combat chỉ chạy sau khi đúng map, đúng tọa độ và đã xuống ngựa; không chạy song song với AutoPath/ngựa/cổng.
 
-Nhận diện cả bằng MapID lẫn tên bãi. Sau xác nhận cổng phải chờ map transition + MapReady ổn định rồi mới đi tọa độ train.
+## 4. NPC và Liên Server giữ nguyên từ v0.8.4
 
-## 5. Ổn định / chống lệnh chồng
+Built-in client config:
 
-- Không Auto Chat trong lúc navigation.
-- Sau Chat khóa action 1 giây.
-- Khi rời bãi, nếu tool vừa gửi `AUTO -> Dừng`, khóa AutoPath/ngựa/xác nhận cổng thêm 700 ms để Lua/UI hoàn tất trước lệnh navigation tiếp theo.
-- AUTO combat không quét menu transient nữa.
-- NPC built-in không quét `SessionData.NPCs/MovingNPCs` để suy ID.
-- Map transition vẫn bắt buộc hai lần đọc ổn định.
-- Remote worker vẫn chống ghi đè khi packet cũ chưa xong.
+- Mã Kiêu Minh: ResID 373.
+- Đỗ Thanh Đằng: ResID 339.
+
+Liên Server từ Map 10000:
+
+- Thanh Liên Trại 10005: `15600,8250`.
+- Khô Vinh Đạo 10007: `8195,1190`.
+- Phàm Liên Trại 10004: `1215,8475`.
 
 ## Build
 
 Chạy `build.cmd` trên Windows hoặc workflow GitHub.
 
-Output: `dist\ThanLongAutoTrain_v0.8.4.exe`
+Output: `dist\ThanLongAutoTrain_v0.8.5.exe`
 
 ## Test ưu tiên
 
-1. Đứng cạnh Mã Kiêu Minh -> `LƯU NPC BÁN ĐỒ GẦN NHẤT`: status phải hiện ResID 373.
-2. Đứng cạnh Đỗ Thanh Đằng -> `LƯU NPC TRỊ LIỆU GẦN NHẤT`: status phải hiện ResID 339.
-3. Test AUTO mode tại bãi: không cần popup AUTO mở; log phải nói `TopIcon.AutoTrainClick` và `EnableAutoF1=OFF`.
-4. Test Auto Chat khi đang ở bãi; gửi xong phải quay lại state train sau action barrier.
-5. Test KVD 10007 và PLT 10004 từ Map 10000.
+1. Trị liệu: so tốc độ từng bước với v0.8.4.
+2. Full túi: xác nhận status thấy `ButtonItemClicked`, có click/bán và đóng shop sau tối đa 90 click.
+3. AUTO tại bãi: phải thấy popup AUTO được mở rồi mục Đánh quái được gọi; thành công chỉ khi `EnableAutoF1=OFF`.

@@ -1,11 +1,13 @@
-# AUDIT v0.8.4
+# AUDIT v0.8.5
 
-- Built-in NPC IDs are sourced from client Config, not inferred from RoleID.
-- AUTO start/stop use exact TopIcon Lua actions from Interface asset.
-- `EnableAutoF1` verification semantics corrected: Train => false, stopped => true.
-- Auto chat opens through exact BottomIcon Lua action and is gated to stable train position.
-- AUTO-stop -> navigation has a 700 ms quiet barrier so Lua/UI and AutoPath/mount/portal commands are not issued in the same worker turn.
-- Cross-server target IDs: 10005 / 10007 / 10004.
-- C++17 `-Wall -Wextra -Werror` syntax check: PASS in validation environment.
-- Clang Static Analyzer: 0 diagnostics.
-- `remote_worker.S` x86-64 Windows COFF assembly: PASS.
+- Added `UIButton.get_ClickHandler()` RVA `0x52DF50`; binary signature is a direct `[this+0x100]` string getter.
+- AUTO production path no longer invokes `TopIcon.AutoTrainClick` out of button-event context. It replays `AutoFightClick -> AutoTrainClick` using fresh active UIButton instances.
+- Stop path replays `AutoFightClick -> AutoStopClick`.
+- AUTO navigation remains isolated from combat callbacks.
+- NPC treatment/shop waits use 35 ms state polling instead of 140–150 ms polling plus long blind sleeps.
+- Shop `ButtonItemClicked` identification is grounded in extracted `ItemBox_Layout` and constrained to `SellItemTab` ancestry.
+- Selling uses three fresh active-control passes, 45 ms sequential cadence, at most 90 clicks; inventory is probed after a batch instead of after every click.
+- Built-in NPC IDs remain Mã Kiêu Minh=373 and Đỗ Thanh Đằng=339.
+- Cross-server target IDs remain 10005 / 10007 / 10004.
+- `remote_worker.S` assembles as x86-64 Windows COFF; arg5 remains at Win64 stack slot `[rsp+0x20]`.
+- Full Windows C++ link must be executed by `build.cmd`/GitHub Actions because this Linux container has no Zig Windows SDK/linker.

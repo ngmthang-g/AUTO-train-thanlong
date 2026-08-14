@@ -1,0 +1,12 @@
+ThanLongAutoTrain v0.8.5
+
+Local validation available in this environment:
+- source version/resource/build output names updated to 0.8.5
+- GameAssembly signature for UIButton.get_ClickHandler (RVA 0x52DF50) verified against supplied binary
+- remote_worker.S assembled successfully to x86-64 Windows COFF
+- Win64 arg5 placement remains [rsp+0x20]
+
+Not available in this Linux container:
+- full Windows C++/resource link (Zig Windows SDK/linker is not installed)
+
+Run build.cmd or the included GitHub Actions workflow for the final -Wall -Wextra -Werror Windows build.
