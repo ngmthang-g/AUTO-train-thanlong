@@ -1,67 +1,55 @@
-# Rà soát kỹ thuật - Auto Train v0.7.0
+# Rà soát kỹ thuật - Auto Train v0.7.1
 
 Ngày rà soát: 14-08-2026.
 
-## Bản game khóa cứng
+## Game build khóa cứng
 
 - PE timestamp: `0x6A410C14`
 - `SizeOfImage`: `0x03DCB000`
 - Image base tĩnh: `0x180000000`
-- Tool kiểm tra chữ ký machine-code trước khi gửi lệnh IL2CPP.
+- Runtime kiểm tra prefix machine-code trước khi gửi lệnh IL2CPP.
 
-## API IL2CPP mới
+## Các lỗi nhánh build dở được nhập lại
 
-| Method | RVA | Mục đích |
-|---|---:|---|
-| `GetFreeBagSpace()` | `0x6716F0` | số ô trống |
-| `GetNearestNPC()` | `0x673A90` | NPC gần nhất |
-| `ClickNPC(int)` | `0x66ADC0` | mở NPC bằng ID thật |
-| `LuaMapObjectData.get_RoleID()` | `0x41F000` | NPC ID |
-| `LuaMapObjectData.get_Name()` | `0x41F3F0` | NPC name |
-| `UIObject.get_Parent()` | `0x530270` | xác minh cây bag |
-| `UIToggle.get_Interactable()` | `0x688580` | resolver toggle |
-| `UIToggle.get_Selected()` | `0x6885D0` | tránh bật/tắt lặp |
-| `UIToggle.get_Text()` | `0x688710` | nhận diện nhãn |
-| `UIToggle.set_Selected(bool)` | `0x6888E0` | kích hoạt toggle thật |
+1. **ABI 5 args**: `MonoBehaviourExecutor.ExecuteScriptFunction(UIObject,string,object[])` là instance method có 3 managed args; native call cần `RCX=this`, `RDX=uiObject`, `R8=functionName`, `R9=args`, và hidden `MethodInfo*` ở stack. Remote packet/worker v0.7.1 có `arg5` và đặt tại `[rsp+0x20]`.
+2. **Không thành công ảo**: AUTO chỉ trả success khi `get_EnableAutoF1()` thật sự ON; Dừng chỉ success khi OFF.
+3. **UIToggle readback**: `set_Selected(true)` phải đọc lại `get_Selected()`, fallback `HandleSelectEvent(true)` nếu state chưa đổi.
+4. **UIRect/Lua**: không gọi `HandlePointerClick(null)`. Đọc handler string và gọi `ExecuteScriptFunction` bằng managed object array thật.
+5. **NPC ResID**: lưu ResID + RoleID. Lúc bán dùng `GetNearestNPC(ResID)` lấy RoleID instance hiện tại rồi mới `ClickNPC`.
+6. **CoreParents**: dùng một call `get_CoreParents()` để giảm chuỗi getter parent; có fallback cũ.
 
-Prefix machine-code của các RVA trên đã được đối chiếu trực tiếp với `GameAssembly(1).dll`.
+## RVA mới v0.7.1
 
-## AUTO → Đánh quái
+| Method | Token/RID | RVA |
+|---|---:|---:|
+| `LuaSystemAPI_Game.GetNearestNPC(int)` | `0x06000891` | `0x673AA0` |
+| `LuaMapSpriteData.get_ResID()` | `0x06000294` | `0x425870` |
+| `UIObject.get_CoreParents()` | `0x060003A3` | `0x52FF10` |
+| `UIToggle.HandleSelectEvent(bool)` | `0x060006CA` | `0x687450` |
+| `UIRectTransform.get_OnPointerClickHandler()` | `0x060005AF` | `0x644B50` |
+| `MonoBehaviourExecutor.get_Instance()` | `0x0600035B` | `0x523CE0` |
+| `MonoBehaviourExecutor.ExecuteScriptFunction(UIObject,string,object[])` | `0x06000372` | `0x521B20` |
 
-v0.7.0 dùng `FindAction()` thống nhất: UIButton trước, UIToggle sau; chỉ chọn match có điểm duy nhất. UIButton gọi `HandleClickEvent()`, UIToggle đọc `Selected` rồi gọi `set_Selected(true)`. `get_EnableAutoF1()` vẫn là state xác nhận, không phải action thay thế.
+Method pointer table của `Assembly-CSharp.dll` được đối chiếu với các RVA đã biết (UIButton/UIToggle) trước khi lấy các RID trên. Prefix 12-byte của từng RVA mới tiếp tục được khóa trong `Validate()`.
 
-`UIRectTransform.HandlePointerClick` không được gọi với event null/fake vì đường này dereference PointerEventData. Đây là guard chủ động chống crash/disconnect.
+## UIRect callback
+
+Disassembly của wrapper `UIRectTransform.HandlePointerClick` cho thấy game gọi `MonoBehaviourExecutor.ExecuteScriptFunction` với `object[3]`. v0.7.1 tạo `System.Object[3]` bằng `il2cpp_array_new`, root array bằng GCHandle, đặt UIObject ở index 0 và để hai pointer-only args còn lại null. Không tạo `PointerEventData` giả.
 
 ## Tự bán đồ
 
-- `LiveState.freeBagSpace` giữ kết quả probe gần nhất từ `GetFreeBagSpace()`; probe đầu tiên chạy khi Start và lần sau theo đúng chu kỳ cấu hình, không spam mỗi vòng worker.
-- Probe tay nải bị khóa khi game treo/chết/đang chuyển map.
-- `SellNpc` lưu name/roleID/mapID/x/y.
-- `ProbeNearestNpc()` lấy NPC ID + tên thật, không hardcode.
-- Setting `AutoSell`, `BagCheckMinutes`, `SellNpcName` lưu theo profile.
-- Full túi: `DisableActions()` → đi NPC → xuống ngựa → `ClickNPC(id)` → `Bán vật phẩm` → `Bán vật phẩm nhanh`.
-- Item cell chỉ được gọi nếu là UIButton và parent path chứng minh thuộc bag/inventory/package/itempack.
-- Nếu cây item không chứng minh được hoặc nhận dạng là UIRectTransform, state dừng bán an toàn.
-- Tối đa 90 lần gọi item cell; số ô trống được theo dõi xuyên suốt, không dừng ngay sau món đầu tiên. Sau khi đã bán được, tool thử đóng đúng UIButton Close thuộc cây shop rồi quay lại bãi.
+- `GetFreeBagSpace()` là bằng chứng tay nải thật.
+- NPC file v2 lưu `Name, ResID, RoleID, MapID, X, Y`; loader vẫn nhận v1.
+- Item cell có thể là UIButton hoặc UIRect có Lua handler; cả hai phải nằm trong parent path bag/inventory và không khớp vùng buy/product/NPC item.
+- Tối đa 90 callback trong một chuỗi bán.
+- Không tăng free space hoặc callback thất bại lặp 3 lần → dừng riêng PID.
 
-## Multi-window / crash guard
+## Kiểm tra build tĩnh
 
-Mỗi PID giữ session/worker riêng; spots/NPC dùng chung; setting riêng RoleID. Logic map-ready, WaitingChangeMap, IsDeath, hung-window, remote packet busy và sai tọa độ của v0.5/v0.6 vẫn giữ nguyên.
-
-## UI
-
-- Bỏ hai nút test nội bộ.
-- Thêm `Tự bán đồ`, phút kiểm tra, NPC combo, `LƯU NPC GẦN NHẤT`.
-- Hiển thị `Túi trống` theo lần probe gần nhất.
-- Header/about/resource/build target đổi sang `0.7.0`.
-
-## Kiểm tra source
-
-- `main.cpp`: `clang++ -std=c++17 -fsyntax-only` PASS bằng stub Win32 để kiểm tra C++ độc lập SDK.
-- `-Wall -Wextra -Werror` PASS trong cùng vòng kiểm tra (bỏ warning tham số của stub).
-- Không có byte NUL lạc trong source.
-- Không có RVA constexpr mới bị bỏ không dùng.
+- `clang++ -std=c++17 -Wall -Wextra -Werror -fsyntax-only`: PASS.
+- `clang -target x86_64-w64-windows-gnu -c src/remote_worker.S`: PASS; output là x86-64 COFF.
+- Worker disassembly xác nhận arg5 được lấy từ packet offset `0x30` và ghi vào `[rsp+0x20]`; result ở packet offset `0x38`.
 
 ## Chưa xác nhận runtime
 
-Không có client/server game đang chạy trong môi trường hiện tại. Layout shop Lua động, đặc biệt kiểu control của item cell, phải test trên client thật. Nếu item cell là UIRectTransform, v0.7 sẽ dừng an toàn thay vì tạo PointerEventData giả.
+Không có client/server đang chạy trong môi trường này. Đặc biệt UIRect-Lua cần test trên UI server thật. State thật (`EnableAutoF1`, `GetFreeBagSpace`) vẫn là điều kiện xác minh sau callback; tool không coi “đã gửi call” là bằng chứng hành động thành công.

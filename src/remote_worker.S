@@ -1,7 +1,7 @@
 .intel_syntax noprefix
 .text
 
-// Worker IL2CPP phục vụ tối đa bốn tham số theo Win64 ABI.
+// Worker IL2CPP phục vụ năm tham số native theo Win64 ABI (tham số 5 ở stack).
 .global RemoteWorkerStart
 .global RemoteWorkerEnd
 
@@ -13,12 +13,12 @@ RemoteWorkerStart:
     sub rsp, 0x28
     mov rbx, rcx
 
-    mov rax, qword ptr [rbx + 56]
+    mov rax, qword ptr [rbx + 64]
     call rax
     test rax, rax
     je RemoteWorkerExit
     mov rcx, rax
-    mov rax, qword ptr [rbx + 64]
+    mov rax, qword ptr [rbx + 72]
     call rax
     test rax, rax
     je RemoteWorkerExit
@@ -34,7 +34,7 @@ RemoteWorkerLoop:
     cmp eax, 1
     je RemoteWorkerCall
     mov ecx, 1
-    mov rax, qword ptr [rbx + 80]
+    mov rax, qword ptr [rbx + 88]
     call rax
     jmp RemoteWorkerLoop
 
@@ -44,14 +44,16 @@ RemoteWorkerCall:
     mov rdx, qword ptr [rbx + 24]
     mov r8,  qword ptr [rbx + 32]
     mov r9,  qword ptr [rbx + 40]
+    mov r10, qword ptr [rbx + 48]
+    mov qword ptr [rsp + 0x20], r10
     call rax
-    mov qword ptr [rbx + 48], rax
+    mov qword ptr [rbx + 56], rax
     mov dword ptr [rbx], 0
     jmp RemoteWorkerLoop
 
 RemoteWorkerStop:
     mov rcx, r12
-    mov rax, qword ptr [rbx + 72]
+    mov rax, qword ptr [rbx + 80]
     call rax
 
 RemoteWorkerExit:

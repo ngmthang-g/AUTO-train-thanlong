@@ -24,7 +24,7 @@ extern "C" unsigned char RemoteWorkerStart[];
 extern "C" unsigned char RemoteWorkerEnd[];
 
 using Clock = std::chrono::steady_clock;
-constexpr wchar_t kTitle[] = L"Thần Long Mobile - Auto Train v0.7.0";
+constexpr wchar_t kTitle[] = L"Thần Long Mobile - Auto Train v0.7.1";
 constexpr wchar_t kModule[] = L"GameAssembly.dll";
 
 namespace rva {
@@ -38,9 +38,11 @@ constexpr std::uint64_t LuaToggleRide = 0x679760;
 constexpr std::uint64_t LuaGetAutoF1 = 0x67B440;
 constexpr std::uint64_t LuaGetFreeBagSpace = 0x6716F0;
 constexpr std::uint64_t LuaGetNearestNPC = 0x673A90;
+constexpr std::uint64_t LuaGetNearestNPCByResID = 0x673AA0;
 constexpr std::uint64_t LuaClickNPC = 0x66ADC0;
 constexpr std::uint64_t LuaMapObjectGetRoleID = 0x41F000;
 constexpr std::uint64_t LuaMapObjectGetName = 0x41F3F0;
+constexpr std::uint64_t LuaMapSpriteGetResID = 0x425870;
 constexpr std::uint64_t LuaSetAutoF1 = 0x67B7F0;
 constexpr std::uint64_t LuaIsMoving = 0x677F60;
 constexpr std::uint64_t LuaGetSkills = 0x675160;
@@ -59,6 +61,7 @@ constexpr std::uint64_t LuaIsMapReady = 0x677E60;
 constexpr std::uint64_t LuaMainFindUI = 0x6A5F90;
 constexpr std::uint64_t UIObjectGetName = 0x530240;
 constexpr std::uint64_t UIObjectGetParent = 0x530270;
+constexpr std::uint64_t UIObjectCoreParents = 0x52FF10;
 constexpr std::uint64_t UIObjectActiveInHierarchy = 0x52F7D0;
 constexpr std::uint64_t UIObjectCoreChildren = 0x52FB80;
 constexpr std::uint64_t UIButtonGetInteractable = 0x52E120;
@@ -68,6 +71,10 @@ constexpr std::uint64_t UIToggleGetInteractable = 0x688580;
 constexpr std::uint64_t UIToggleGetSelected = 0x6885D0;
 constexpr std::uint64_t UIToggleGetText = 0x688710;
 constexpr std::uint64_t UIToggleSetSelected = 0x6888E0;
+constexpr std::uint64_t UIToggleHandleSelectEvent = 0x687450;
+constexpr std::uint64_t UIRectGetPointerClickHandler = 0x644B50;
+constexpr std::uint64_t MonoBehaviourExecutorGetInstance = 0x523CE0;
+constexpr std::uint64_t MonoBehaviourExecutorExecuteUiObject = 0x521B20;
 constexpr std::uint64_t SessionWaitingChangeMap = 0x6F4390;
 constexpr std::uint64_t AutoPathGetInstance = 0x615980;
 constexpr std::uint64_t AutoPathStart = 0x615510;
@@ -317,6 +324,7 @@ struct RemotePacket {
     std::uint64_t arg2 = 0;
     std::uint64_t arg3 = 0;
     std::uint64_t arg4 = 0;
+    std::uint64_t arg5 = 0;
     std::uint64_t result = 0;
     std::uint64_t domainGet = 0;
     std::uint64_t threadAttach = 0;
@@ -325,8 +333,9 @@ struct RemotePacket {
 };
 #pragma pack(pop)
 
-static_assert(offsetof(RemotePacket, result) == 48);
-static_assert(offsetof(RemotePacket, sleep) == 80);
+static_assert(offsetof(RemotePacket, arg5) == 48);
+static_assert(offsetof(RemotePacket, result) == 56);
+static_assert(offsetof(RemotePacket, sleep) == 88);
 static_assert(offsetof(RemotePacket, reserved) == 4);
 
 class RemoteExecutor {
@@ -373,17 +382,17 @@ public:
         }
         return true;
     }
-    bool Call(std::uint64_t function, std::uint64_t a1, std::uint64_t a2,
-              std::uint64_t a3, std::uint64_t a4, std::uint64_t& result,
-              DWORD timeout = 1500) {
+    bool Call5(std::uint64_t function, std::uint64_t a1, std::uint64_t a2,
+               std::uint64_t a3, std::uint64_t a4, std::uint64_t a5,
+               std::uint64_t& result, DWORD timeout = 1500) {
         std::lock_guard<std::mutex> guard(lock_);
         if (!thread_ || WaitForSingleObject(thread_, 0) != WAIT_TIMEOUT) return false;
         // A timed-out IL2CPP call may still be executing inside the game. Never
         // overwrite its packet: that race was one possible source of crashes.
         std::uint64_t current = 0;
         if (!remotePacket_ || !process_.Read(remotePacket_, current) || current != 0) return false;
-        struct Fields { std::uint64_t fn, a1, a2, a3, a4, result; } fields{
-            function, a1, a2, a3, a4, 0};
+        struct Fields { std::uint64_t fn, a1, a2, a3, a4, a5, result; } fields{
+            function, a1, a2, a3, a4, a5, 0};
         if (!process_.WriteBytes(remotePacket_ + 8, &fields, sizeof(fields))) return false;
         const std::uint32_t run = 1;
         if (!process_.WriteBytes(remotePacket_, &run, 4)) return false;
@@ -391,11 +400,16 @@ public:
         while (GetTickCount64() - begin < timeout) {
             std::uint32_t command = 0;
             if (!process_.Read(remotePacket_, command)) return false;
-            if (!command) return process_.Read(remotePacket_ + 48, result);
+            if (!command) return process_.Read(remotePacket_ + 56, result);
             if (WaitForSingleObject(thread_, 0) != WAIT_TIMEOUT) return false;
             Sleep(1);
         }
         return false;
+    }
+    bool Call(std::uint64_t function, std::uint64_t a1, std::uint64_t a2,
+              std::uint64_t a3, std::uint64_t a4, std::uint64_t& result,
+              DWORD timeout = 1500) {
+        return Call5(function, a1, a2, a3, a4, 0, result, timeout);
     }
     bool Alive() {
         std::lock_guard<std::mutex> guard(lock_);
@@ -504,6 +518,7 @@ struct SkillOption {
 
 struct SellNpc {
     std::wstring name;
+    std::int32_t resID = 0;
     std::int32_t roleID = 0;
     std::int32_t mapID = 0;
     std::int32_t x = 0;
@@ -631,9 +646,17 @@ static std::vector<SellNpc> LoadNpcs() {
     auto parse = [&](const std::wstring& value) {
         if (value.empty() || value[0] == L'#') return;
         const auto parts = SplitTabs(value);
-        if (parts.size() != 5) return;
-        SellNpc npc{Trim(parts[0]), _wtoi(parts[1].c_str()), _wtoi(parts[2].c_str()),
-                    _wtoi(parts[3].c_str()), _wtoi(parts[4].c_str())};
+        SellNpc npc;
+        if (parts.size() == 6) {
+            npc = SellNpc{Trim(parts[0]), _wtoi(parts[1].c_str()), _wtoi(parts[2].c_str()),
+                          _wtoi(parts[3].c_str()), _wtoi(parts[4].c_str()),
+                          _wtoi(parts[5].c_str())};
+        } else if (parts.size() == 5) {
+            // v1 compatibility: Name, RoleID, MapID, X, Y (no stable ResID yet).
+            npc = SellNpc{Trim(parts[0]), 0, _wtoi(parts[1].c_str()),
+                          _wtoi(parts[2].c_str()), _wtoi(parts[3].c_str()),
+                          _wtoi(parts[4].c_str())};
+        } else return;
         if (!npc.name.empty() && npc.roleID > 0 && npc.mapID > 0) result.push_back(std::move(npc));
     };
     for (wchar_t c : text) {
@@ -646,12 +669,12 @@ static std::vector<SellNpc> LoadNpcs() {
 }
 
 static bool SaveNpcs(const std::vector<SellNpc>& npcs) {
-    std::wstring text = L"# ThanLongAutoTrain sell NPCs v1\r\n# Ten NPC<TAB>RoleID<TAB>MapID<TAB>X<TAB>Y\r\n";
+    std::wstring text = L"# ThanLongAutoTrain sell NPCs v2\r\n# Ten NPC<TAB>ResID<TAB>RoleID<TAB>MapID<TAB>X<TAB>Y\r\n";
     for (SellNpc npc : npcs) {
         for (wchar_t& c : npc.name) if (c == L'\t' || c == L'\r' || c == L'\n') c = L' ';
-        text += npc.name + L"\t" + std::to_wstring(npc.roleID) + L"\t" +
-                std::to_wstring(npc.mapID) + L"\t" + std::to_wstring(npc.x) + L"\t" +
-                std::to_wstring(npc.y) + L"\r\n";
+        text += npc.name + L"\t" + std::to_wstring(npc.resID) + L"\t" +
+                std::to_wstring(npc.roleID) + L"\t" + std::to_wstring(npc.mapID) + L"\t" +
+                std::to_wstring(npc.x) + L"\t" + std::to_wstring(npc.y) + L"\r\n";
     }
     const std::string body = "\xEF\xBB\xBF" + Utf8(text);
     HANDLE file = CreateFileW(NpcsPath().c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr,
@@ -880,15 +903,17 @@ public:
             return false;
         }
         const LiveState live = State();
-        std::uint64_t npc = 0, role = 0, namePointer = 0;
+        std::uint64_t npc = 0, role = 0, res = 0, namePointer = 0;
         const bool ok = Remote(rva::LuaGetNearestNPC, 0, 0, 0, 0, npc, 1000) && npc &&
                         Remote(rva::LuaMapObjectGetRoleID, npc, 0, 0, 0, role, 900) && role > 0 &&
+                        Remote(rva::LuaMapSpriteGetResID, npc, 0, 0, 0, res, 900) && res > 0 &&
                         Remote(rva::LuaMapObjectGetName, npc, 0, 0, 0, namePointer, 900);
         if (!ok) {
             error = L"Không tìm thấy NPC gần nhân vật. Hãy đứng sát NPC cần bán rồi lưu lại.";
             if (temporary) Cleanup();
             return false;
         }
+        output.resID = static_cast<std::int32_t>(res);
         output.roleID = static_cast<std::int32_t>(role);
         output.name = process_.ReadIl2CppString(namePointer);
         if (output.name.empty()) output.name = L"NPC " + std::to_wstring(output.roleID);
@@ -992,6 +1017,12 @@ private:
                 DWORD timeout = 1500) {
         return executor_ && executor_->Call(module_.base + method, a1, a2, a3, a4, result, timeout);
     }
+    bool Remote5(std::uint64_t method, std::uint64_t a1, std::uint64_t a2,
+                 std::uint64_t a3, std::uint64_t a4, std::uint64_t a5,
+                 std::uint64_t& result, DWORD timeout = 1500) {
+        return executor_ && executor_->Call5(module_.base + method, a1, a2, a3, a4, a5,
+                                              result, timeout);
+    }
     bool RemoteAbsolute(std::uint64_t function, std::uint64_t a1, std::uint64_t a2,
                         std::uint64_t a3, std::uint64_t a4, std::uint64_t& result,
                         DWORD timeout = 1500) {
@@ -1023,9 +1054,11 @@ private:
             {rva::LuaGetAutoF1,         {0x40,0x53,0x48,0x83,0xEC,0x20,0x80,0x3D,0x5E,0xCB,0x14,0x03}},
             {rva::LuaGetFreeBagSpace,    {0x48,0x83,0xEC,0x28,0x80,0x3D,0xB2,0x68,0x15,0x03,0x00,0x75}},
             {rva::LuaGetNearestNPC,      {0x33,0xD2,0xB9,0xFF,0xFF,0xFF,0xFF,0xE9,0x94,0xBF,0xEA,0xFF}},
+            {rva::LuaGetNearestNPCByResID,{0x40,0x57,0x48,0x83,0xEC,0x20,0x80,0x3D,0x73,0x45,0x15,0x03}},
             {rva::LuaClickNPC,           {0x48,0x89,0x5C,0x24,0x10,0x57,0x48,0x83,0xEC,0x30,0x80,0x3D}},
             {rva::LuaMapObjectGetRoleID, {0x8B,0x41,0x10,0xC3,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC}},
             {rva::LuaMapObjectGetName,   {0x48,0x8B,0x41,0x18,0xC3,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC}},
+            {rva::LuaMapSpriteGetResID,   {0x8B,0x41,0x30,0xC3,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC}},
             {rva::LuaSetAutoF1,         {0x48,0x89,0x5C,0x24,0x08,0x57,0x48,0x83,0xEC,0x20,0x80,0x3D}},
             {rva::LuaIsMoving,          {0x48,0x83,0xEC,0x28,0x80,0x3D,0x4A,0x00,0x15,0x03,0x00,0x75}},
             {rva::LuaGetSkills,         {0x48,0x83,0xEC,0x28,0x80,0x3D,0xDA,0x2E,0x15,0x03,0x00,0x0F}},
@@ -1044,6 +1077,7 @@ private:
             {rva::LuaMainFindUI,        {0x40,0x53,0x48,0x83,0xEC,0x20,0x80,0x3D,0x1F,0x16,0x12,0x03}},
             {rva::UIObjectGetName,      {0x48,0x83,0xEC,0x28,0x48,0x8B,0x49,0x30,0x48,0x85,0xC9,0x74}},
             {rva::UIObjectGetParent,    {0x40,0x53,0x48,0x83,0xEC,0x20,0x80,0x3D,0x09,0x73,0x29,0x03}},
+            {rva::UIObjectCoreParents,   {0x48,0x89,0x5C,0x24,0x08,0x57,0x48,0x83,0xEC,0x20,0x80,0x3D}},
             {rva::UIObjectActiveInHierarchy,{0x48,0x83,0xEC,0x28,0x48,0x8B,0x49,0x30,0x48,0x85,0xC9,0x74}},
             {rva::UIObjectCoreChildren, {0x48,0x89,0x5C,0x24,0x10,0x56,0x57,0x41,0x54,0x41,0x56,0x41}},
             {rva::UIButtonGetInteractable,{0x48,0x83,0xEC,0x28,0x48,0x8B,0x81,0xE0,0x00,0x00,0x00,0x48}},
@@ -1053,6 +1087,10 @@ private:
             {rva::UIToggleGetSelected,   {0x48,0x83,0xEC,0x28,0x48,0x8B,0x89,0xE8,0x00,0x00,0x00,0x48}},
             {rva::UIToggleGetText,       {0x48,0x83,0xEC,0x28,0x48,0x8B,0x89,0xE8,0x00,0x00,0x00,0x48}},
             {rva::UIToggleSetSelected,   {0x48,0x83,0xEC,0x28,0x48,0x8B,0x89,0xE8,0x00,0x00,0x00,0x48}},
+            {rva::UIToggleHandleSelectEvent,{0x48,0x89,0x5C,0x24,0x10,0x48,0x89,0x4C,0x24,0x08,0x56,0x57}},
+            {rva::UIRectGetPointerClickHandler,{0x48,0x8B,0x81,0x90,0x00,0x00,0x00,0xC3,0xCC,0xCC,0xCC,0xCC}},
+            {rva::MonoBehaviourExecutorGetInstance,{0x48,0x83,0xEC,0x28,0x80,0x3D,0x7C,0x38,0x2A,0x03,0x00,0x75}},
+            {rva::MonoBehaviourExecutorExecuteUiObject,{0x40,0x53,0x55,0x56,0x57,0x48,0x83,0xEC,0x38,0x80,0x3D,0x4D}},
             {rva::SessionWaitingChangeMap,{0x48,0x83,0xEC,0x28,0x80,0x3D,0xF7,0x3F,0x0D,0x03,0x00,0x75}},
             {rva::AutoPathGetInstance,  {0x48,0x83,0xEC,0x28,0x80,0x3D,0x1D,0x23,0x1B,0x03,0x00,0x75}},
             {rva::AutoPathStart,        {0x40,0x53,0x55,0x56,0x57,0x48,0x83,0xEC,0x48,0x80,0x3D,0x8A}},
@@ -1092,13 +1130,15 @@ private:
         il2cppGcHandleNew_ = process_.ResolveExport(module_, "il2cpp_gchandle_new");
         il2cppGcHandleGetTarget_ = process_.ResolveExport(module_, "il2cpp_gchandle_get_target");
         il2cppGcHandleFree_ = process_.ResolveExport(module_, "il2cpp_gchandle_free");
+        il2cppGetCorlib_ = process_.ResolveExport(module_, "il2cpp_get_corlib");
+        il2cppArrayNew_ = process_.ResolveExport(module_, "il2cpp_array_new");
         scratchBuffer_ = process_.Allocate(1024);
         staticValueBuffer_ = process_.Allocate(sizeof(std::uint64_t));
         if (!il2cppDomainGet_ || !il2cppDomainAssemblyOpen_ || !il2cppAssemblyGetImage_ ||
             !il2cppClassFromName_ || !il2cppClassIsAssignableFrom_ ||
             !il2cppClassGetField_ || !il2cppFieldStaticGetValue_ ||
             !il2cppGcHandleNew_ || !il2cppGcHandleGetTarget_ || !il2cppGcHandleFree_ ||
-            !scratchBuffer_ || !staticValueBuffer_) {
+            !il2cppGetCorlib_ || !il2cppArrayNew_ || !scratchBuffer_ || !staticValueBuffer_) {
             error = L"Thiếu API phản chiếu UI nội bộ của game";
             return false;
         }
@@ -1128,6 +1168,14 @@ private:
             !RemoteAbsolute(il2cppClassGetField_, uiObjectClass_, scratchBuffer_ + 768,
                             0, 0, uiInstancesField_, 1000) || !uiInstancesField_) {
             error = L"Không định vị được UI control/instances trong game";
+            return false;
+        }
+        std::uint64_t corlib = 0;
+        if (!RemoteAbsolute(il2cppGetCorlib_, 0, 0, 0, 0, corlib, 1000) || !corlib ||
+            !WriteScratch(0, "System") || !WriteScratch(128, "Object") ||
+            !RemoteAbsolute(il2cppClassFromName_, corlib, scratchBuffer_, scratchBuffer_ + 128,
+                            0, systemObjectClass_, 1000) || !systemObjectClass_) {
+            error = L"Không định vị được System.Object để gọi callback Lua an toàn";
             return false;
         }
         return true;
@@ -1221,8 +1269,9 @@ private:
         il2cppClassFromName_ = il2cppClassIsAssignableFrom_ = 0;
         il2cppClassGetField_ = il2cppFieldStaticGetValue_ = 0;
         il2cppGcHandleNew_ = il2cppGcHandleGetTarget_ = il2cppGcHandleFree_ = 0;
+        il2cppGetCorlib_ = il2cppArrayNew_ = 0;
         assemblyImage_ = uiObjectClass_ = uiButtonClass_ = uiToggleClass_ = uiRectTransformClass_ =
-            uiInstancesField_ = 0;
+            uiInstancesField_ = systemObjectClass_ = 0;
         uiButtonClassCache_.clear();
         uiToggleClassCache_.clear();
         uiRectClassCache_.clear();
@@ -1347,6 +1396,29 @@ private:
         }
         return true;
     }
+    bool ReadAllUiRects(std::vector<std::uint64_t>& rects) {
+        rects.clear();
+        const std::uint64_t zero = 0;
+        if (!process_.WriteBytes(staticValueBuffer_, &zero, sizeof(zero))) return false;
+        std::uint64_t ignored = 0;
+        if (!RemoteAbsolute(il2cppFieldStaticGetValue_, uiInstancesField_,
+                            staticValueBuffer_, 0, 0, ignored, 1000)) return false;
+        std::uint64_t dictionary = 0, entries = 0;
+        std::int32_t count = 0;
+        if (!process_.Read(staticValueBuffer_, dictionary) || !dictionary ||
+            !process_.Read(dictionary + off::DictionaryEntries, entries) || !entries ||
+            !process_.Read(dictionary + off::DictionaryCount, count) ||
+            count < 0 || count > 32768) return false;
+        for (std::int32_t i = 0; i < count; ++i) {
+            std::uint64_t object = 0;
+            const std::uint64_t entry = entries + off::ArrayData +
+                static_cast<std::uint64_t>(i) * off::EntrySize;
+            if (process_.Read(entry + off::EntryValue, object) && IsUiRect(object))
+                rects.push_back(object);
+        }
+        return true;
+    }
+
     bool HasLikelyBagUiRect() {
         const std::uint64_t zero = 0;
         if (!process_.WriteBytes(staticValueBuffer_, &zero, sizeof(zero))) return false;
@@ -1408,6 +1480,7 @@ private:
         std::uint64_t object = 0;
         std::wstring name;
         std::wstring text;
+        std::wstring handler;
         std::wstring descendants;
         std::wstring label;
         std::wstring nameKey;
@@ -1497,6 +1570,46 @@ private:
         info.allKey = CompactMatch(info.name + L" " + info.text + L" " + info.descendants);
         return true;
     }
+    bool DescribeRect(std::uint64_t rect, bool includeDescendants, ButtonInfo& info) {
+        info = {};
+        std::uint64_t active = 0, pointer = 0;
+        if (!Remote(rva::UIObjectActiveInHierarchy, rect, 0, 0, 0, active, 650) ||
+            (active & 0xFFu) == 0) return false;
+        info.object = rect;
+        if (Remote(rva::UIObjectGetName, rect, 0, 0, 0, pointer, 650))
+            info.name = process_.ReadIl2CppString(pointer);
+        pointer = 0;
+        if (!Remote(rva::UIRectGetPointerClickHandler, rect, 0, 0, 0, pointer, 650) || !pointer)
+            return false;
+        info.handler = process_.ReadIl2CppString(pointer);
+        if (info.handler.empty()) return false;
+        if (includeDescendants) CollectDescendantLabels(rect, info.descendants);
+        if (!info.name.empty()) info.label = L"Name=“" + info.name + L"”";
+        if (!info.handler.empty()) {
+            if (!info.label.empty()) info.label += L" • ";
+            info.label += L"Lua=“" + info.handler + L"”";
+        }
+        if (!info.descendants.empty()) {
+            if (!info.label.empty()) info.label += L" • ";
+            info.label += L"Child=“" + info.descendants + L"”";
+        }
+        if (info.label.empty()) info.label = L"UIRectTransform không có nhãn";
+        info.nameKey = CompactMatch(info.name);
+        info.textKey = CompactMatch(info.text);
+        info.allKey = CompactMatch(info.name + L" " + info.handler + L" " + info.descendants);
+        return true;
+    }
+    bool ReadActiveRectInfos(bool includeDescendants, std::vector<ButtonInfo>& output) {
+        output.clear();
+        std::vector<std::uint64_t> rects;
+        if (!ReadAllUiRects(rects)) return false;
+        for (const std::uint64_t rect : rects) {
+            ButtonInfo info;
+            if (DescribeRect(rect, includeDescendants, info)) output.push_back(std::move(info));
+        }
+        return true;
+    }
+
     bool ReadActiveToggleInfos(bool includeDescendants,
                                std::vector<ButtonInfo>& output) {
         output.clear();
@@ -1648,7 +1761,22 @@ private:
         }
         return ChooseButton(toggles, role, selected, reason);
     }
-    enum class ActionKind { Button, Toggle };
+    bool FindRect(ButtonRole role, ButtonInfo& selected, std::wstring& reason,
+                  bool inspectDescendants) {
+        std::vector<ButtonInfo> rects;
+        if (!ReadActiveRectInfos(false, rects)) {
+            reason = L"Không đọc được UIRectTransform có Lua click handler";
+            return false;
+        }
+        if (ChooseButton(rects, role, selected, reason)) return true;
+        if (!inspectDescendants) return false;
+        if (!ReadActiveRectInfos(true, rects)) {
+            reason = L"Không đọc được nhãn con UIRectTransform";
+            return false;
+        }
+        return ChooseButton(rects, role, selected, reason);
+    }
+    enum class ActionKind { Button, Toggle, RectLua };
     struct ActionControl { ActionKind kind = ActionKind::Button; ButtonInfo info; };
     bool FindAction(ButtonRole role, ActionControl& selected, std::wstring& reason,
                     bool inspectDescendants) {
@@ -1663,18 +1791,67 @@ private:
             selected = {ActionKind::Toggle, std::move(info)};
             return true;
         }
-        reason = L"UIButton: " + buttonReason + L" • UIToggle: " + toggleReason;
+        std::wstring rectReason;
+        if (FindRect(role, info, rectReason, inspectDescendants)) {
+            selected = {ActionKind::RectLua, std::move(info)};
+            return true;
+        }
+        reason = L"UIButton: " + buttonReason + L" • UIToggle: " + toggleReason +
+                 L" • UIRect/Lua: " + rectReason;
         return false;
     }
     bool InvokeToggle(std::uint64_t toggle) {
         std::uint64_t selected = 0, ignored = 0;
         if (!Remote(rva::UIToggleGetSelected, toggle, 0, 0, 0, selected, 900)) return false;
         if ((selected & 0xFFu) != 0) return true;
-        return Remote(rva::UIToggleSetSelected, toggle, 1, 0, 0, ignored, 1800);
+        if (Remote(rva::UIToggleSetSelected, toggle, 1, 0, 0, ignored, 1800)) {
+            Sleep(60);
+            selected = 0;
+            if (Remote(rva::UIToggleGetSelected, toggle, 0, 0, 0, selected, 900) &&
+                (selected & 0xFFu) != 0) return true;
+        }
+        // Some Lua-backed toggles do not propagate set_Selected into their script callback.
+        // Call the same bool handler used by the game's own Toggle listener, never a fake pointer event.
+        if (!Remote(rva::UIToggleHandleSelectEvent, toggle, 1, 0, 0, ignored, 1800)) return false;
+        Sleep(60);
+        selected = 0;
+        Remote(rva::UIToggleGetSelected, toggle, 0, 0, 0, selected, 900);
+        return true;
+    }
+    bool CreateUiArgArray(std::uint64_t uiObject, std::uint64_t& array,
+                          std::uint64_t& handle) {
+        array = handle = 0;
+        if (!systemObjectClass_ || !il2cppArrayNew_ ||
+            !RemoteAbsolute(il2cppArrayNew_, systemObjectClass_, 3, 0, 0, array, 1200) || !array ||
+            !RemoteAbsolute(il2cppGcHandleNew_, array, 0, 0, 0, handle, 900) || !handle)
+            return false;
+        if (!process_.WriteBytes(array + off::ArrayData, &uiObject, sizeof(uiObject))) {
+            std::uint64_t ignored = 0;
+            RemoteAbsolute(il2cppGcHandleFree_, handle, 0, 0, 0, ignored, 500);
+            array = handle = 0;
+            return false;
+        }
+        return true;
+    }
+    bool InvokeRectLua(std::uint64_t rect) {
+        std::uint64_t handler = 0, executor = 0, args = 0, argsHandle = 0, ignored = 0;
+        if (!Remote(rva::UIRectGetPointerClickHandler, rect, 0, 0, 0, handler, 900) || !handler ||
+            process_.ReadIl2CppString(handler).empty() ||
+            !Remote(rva::MonoBehaviourExecutorGetInstance, 0, 0, 0, 0, executor, 900) || !executor ||
+            !CreateUiArgArray(rect, args, argsHandle)) return false;
+        // UIRectTransform.HandlePointerClick builds object[3]: [uiObject, pointerData, pointerId].
+        // Use the same arity, but leave the two pointer-only values null instead of fabricating PointerEventData.
+        // Native ABI: this + uiObject + functionName + object[] + hidden MethodInfo*.
+        const bool called = Remote5(rva::MonoBehaviourExecutorExecuteUiObject,
+                                    executor, rect, handler, args, 0, ignored, 2200);
+        std::uint64_t freeIgnored = 0;
+        RemoteAbsolute(il2cppGcHandleFree_, argsHandle, 0, 0, 0, freeIgnored, 600);
+        return called;
     }
     bool InvokeAction(const ActionControl& action) {
-        return action.kind == ActionKind::Toggle
-            ? InvokeToggle(action.info.object) : InvokeButton(action.info.object);
+        if (action.kind == ActionKind::Toggle) return InvokeToggle(action.info.object);
+        if (action.kind == ActionKind::RectLua) return InvokeRectLua(action.info.object);
+        return InvokeButton(action.info.object);
     }
     bool InvokeButton(std::uint64_t button) {
         std::uint64_t ignored = 0;
@@ -1776,7 +1953,7 @@ private:
                 foundFight = FindAction(ButtonRole::Fight, fight, fightReason, attempt == 6);
             }
             if (!foundFight) {
-                detail = L"AUTO đã mở nhưng chưa thấy Đánh quái dạng UIButton/UIToggle • " + fightReason;
+                detail = L"AUTO đã mở nhưng chưa thấy Đánh quái dạng UIButton/UIToggle/UIRect-Lua • " + fightReason;
                 return false;
             }
         }
@@ -1784,15 +1961,21 @@ private:
             detail = L"Đã thấy Đánh quái nhưng callback nội bộ không phản hồi • " + fight.info.label;
             return false;
         }
-        Sleep(220);
-        std::uint64_t enabled = 0;
-        const bool verified = Remote(rva::LuaGetAutoF1, 0, 0, 0, 0, enabled, 900) &&
-                              (enabled & 0xFFu) != 0;
-        const std::wstring kind = fight.kind == ActionKind::Toggle ? L"UIToggle.set_Selected(true)"
-                                                                   : L"UIButton.HandleClickEvent()";
+        bool verified = false;
+        for (int i = 0; i < 4 && !verified; ++i) {
+            Sleep(180);
+            std::uint64_t enabled = 0;
+            verified = Remote(rva::LuaGetAutoF1, 0, 0, 0, 0, enabled, 900) &&
+                       (enabled & 0xFFu) != 0;
+        }
+        const std::wstring kind = fight.kind == ActionKind::Toggle
+            ? L"UIToggle.set_Selected/HandleSelectEvent"
+            : fight.kind == ActionKind::RectLua ? L"UIRectTransform Lua callback"
+                                                : L"UIButton.HandleClickEvent()";
         detail = L"Đã gọi " + kind + L": AUTO → Đánh quái • " + fight.info.label +
-                 (verified ? L" • EnableAutoF1=ON" : L" • đang chờ game xác nhận state");
-        return true;
+                 (verified ? L" • EnableAutoF1=ON"
+                           : L" • EnableAutoF1 vẫn OFF; coi là thất bại và sẽ thử lại");
+        return verified;
     }
     bool ClickInternalAutoStop(std::wstring& detail) {
         ActionControl stop;
@@ -1814,23 +1997,49 @@ private:
                 foundStop = FindAction(ButtonRole::Stop, stop, stopReason, attempt == 5);
             }
             if (!foundStop) {
-                detail = L"Đã mở AUTO nhưng không thấy Dừng dạng UIButton/UIToggle • " + stopReason;
+                detail = L"Đã mở AUTO nhưng không thấy Dừng dạng UIButton/UIToggle/UIRect-Lua • " + stopReason;
                 return false;
             }
         }
         const bool sent = InvokeAction(stop);
-        detail = sent ? L"Đã gọi control nội bộ Dừng • " + stop.info.label
-                      : L"Control nội bộ Dừng không phản hồi • " + stop.info.label;
-        return sent;
+        if (!sent) {
+            detail = L"Control nội bộ Dừng không phản hồi • " + stop.info.label;
+            return false;
+        }
+        bool stopped = false;
+        for (int i = 0; i < 4 && !stopped; ++i) {
+            Sleep(150);
+            std::uint64_t enabled = 1;
+            stopped = Remote(rva::LuaGetAutoF1, 0, 0, 0, 0, enabled, 900) &&
+                      (enabled & 0xFFu) == 0;
+        }
+        detail = stopped ? L"Đã gọi Dừng và xác nhận EnableAutoF1=OFF • " + stop.info.label
+                         : L"Đã gọi Dừng nhưng EnableAutoF1 vẫn ON • " + stop.info.label;
+        return stopped;
     }
     bool ReadAncestorKey(std::uint64_t object, std::wstring& key) {
         key.clear();
+        // Fast path: the game exposes all core parents in one managed array.
+        std::uint64_t parents = 0;
+        if (Remote(rva::UIObjectCoreParents, object, 0, 0, 0, parents, 700) && parents) {
+            std::uint64_t length = 0;
+            if (process_.Read(parents + off::ArrayLength, length) && length <= 64) {
+                for (std::uint64_t i = 0; i < length; ++i) {
+                    std::uint64_t parent = 0, namePointer = 0;
+                    if (!process_.Read(parents + off::ArrayData + i * sizeof(std::uint64_t), parent) ||
+                        !parent) continue;
+                    if (Remote(rva::UIObjectGetName, parent, 0, 0, 0, namePointer, 500))
+                        key += CompactMatch(process_.ReadIl2CppString(namePointer));
+                }
+                if (!key.empty()) return true;
+            }
+        }
+        // Compatibility fallback if a server build returns no CoreParents array.
         std::uint64_t current = object;
         std::set<std::uint64_t> seen;
         for (int depth = 0; depth < 10 && current && seen.insert(current).second; ++depth) {
             std::uint64_t parent = 0;
-            if (!Remote(rva::UIObjectGetParent, current, 0, 0, 0, parent, 600) || !parent)
-                break;
+            if (!Remote(rva::UIObjectGetParent, current, 0, 0, 0, parent, 600) || !parent) break;
             std::uint64_t namePointer = 0;
             if (Remote(rva::UIObjectGetName, parent, 0, 0, 0, namePointer, 600))
                 key += CompactMatch(process_.ReadIl2CppString(namePointer));
@@ -1855,6 +2064,20 @@ private:
             return false;
         return true;
     }
+    bool IsSafeBagItemRect(const ButtonInfo& info) {
+        if (info.handler.empty() ||
+            !ContainsCompact(info.nameKey, {L"item", L"slot", L"cell", L"griditem",
+                                            L"bagitem", L"packitem"})) return false;
+        std::wstring parentKey;
+        if (!ReadAncestorKey(info.object, parentKey) ||
+            !ContainsCompact(parentKey, {L"bag", L"inventory", L"package", L"itempack",
+                                         L"packitem", L"bagitem", L"itemgrid", L"itemlist"}))
+            return false;
+        if (ContainsCompact(info.nameKey + parentKey,
+                            {L"buyitem", L"productitem", L"shoplistitem", L"npcitem"}))
+            return false;
+        return true;
+    }
     bool ReadFreeBagSpace(int& freeSpace) {
         freeSpace = -1;
         std::uint64_t value = 0;
@@ -1863,14 +2086,27 @@ private:
         return freeSpace >= 0 && freeSpace <= 10000;
     }
     bool OpenSellUi(std::wstring& detail) {
-        if (sellNpc_.roleID <= 0) {
-            detail = L"Chưa lưu NPC bán đồ có RoleID thật";
+        std::int32_t currentRoleID = sellNpc_.roleID;
+        if (sellNpc_.resID > 0) {
+            std::uint64_t npc = 0, role = 0;
+            if (!Remote(rva::LuaGetNearestNPCByResID, static_cast<std::uint32_t>(sellNpc_.resID),
+                        0, 0, 0, npc, 1200) || !npc ||
+                !Remote(rva::LuaMapObjectGetRoleID, npc, 0, 0, 0, role, 900) || role <= 0) {
+                detail = L"Không tìm thấy đúng NPC ResID=" + std::to_wstring(sellNpc_.resID) +
+                         L" ở vị trí hiện tại; không ClickNPC mù";
+                return false;
+            }
+            currentRoleID = static_cast<std::int32_t>(role);
+            sellNpc_.roleID = currentRoleID;
+        }
+        if (currentRoleID <= 0) {
+            detail = L"NPC bán đồ chưa có ResID/RoleID hợp lệ";
             return false;
         }
         std::uint64_t ignored = 0;
-        if (!Remote(rva::LuaClickNPC, static_cast<std::uint32_t>(sellNpc_.roleID),
+        if (!Remote(rva::LuaClickNPC, static_cast<std::uint32_t>(currentRoleID),
                     0, 0, 0, ignored, 1600)) {
-            detail = L"ClickNPC(" + std::to_wstring(sellNpc_.roleID) + L") không phản hồi";
+            detail = L"ClickNPC(" + std::to_wstring(currentRoleID) + L") không phản hồi";
             return false;
         }
         ActionControl sellTab;
@@ -1958,21 +2194,25 @@ private:
                 detail = L"Mất cây UIButton của tay nải; dừng bán an toàn";
                 return false;
             }
-            std::vector<ButtonInfo> candidates;
+            std::vector<ActionControl> candidates;
             for (const ButtonInfo& info : buttons)
-                if (IsSafeBagItemButton(info)) candidates.push_back(info);
+                if (IsSafeBagItemButton(info)) candidates.push_back({ActionKind::Button, info});
+            std::vector<ButtonInfo> rects;
+            if (ReadActiveRectInfos(false, rects)) {
+                for (const ButtonInfo& info : rects)
+                    if (IsSafeBagItemRect(info)) candidates.push_back({ActionKind::RectLua, info});
+            }
             if (candidates.empty()) {
                 if (bestFree > freeBefore) break;
-                const bool rectItems = HasLikelyBagUiRect();
-                detail = rectItems
-                    ? L"Đã thấy ô đồ dạng UIRectTransform nhưng không gọi HandlePointerClick với PointerEventData giả/null; dừng bán an toàn"
+                detail = HasLikelyBagUiRect()
+                    ? L"Có UIRectTransform trong tay nải nhưng không có Lua click handler duy nhất/an toàn; không bấm mù"
                     : L"Không nhận diện chắc chắn ô đồ trong cây tay nải; không bấm mù";
                 return false;
             }
-            const ButtonInfo& item = candidates[static_cast<std::size_t>(attempt) % candidates.size()];
-            if (!InvokeButton(item.object)) {
+            const ActionControl& item = candidates[static_cast<std::size_t>(attempt) % candidates.size()];
+            if (!InvokeAction(item)) {
                 if (bestFree > freeBefore) break;
-                detail = L"Ô đồ đã nhận diện nhưng UIButton.HandleClickEvent() không phản hồi • " + item.label;
+                detail = L"Ô đồ đã nhận diện nhưng callback nội bộ không phản hồi • " + item.info.label;
                 return false;
             }
             ++invoked;
@@ -2250,6 +2490,7 @@ private:
         auto sellRetryAfter = Clock::time_point{};
         bool trainTriggered = false;
         bool sellingTrip = false;
+        int sellFailures = 0;
         bool outsideTarget = false;
         bool deathLatched = false;
         bool awaitingRevive = false;
@@ -2396,7 +2637,7 @@ private:
                                        L"IsDeath đã tắt • kiểm tra map ổn định 2 lần");
                         } else if (config_.autoSell && !sellingTrip &&
                                    now >= nextBagCheck && live.freeBagSpace == 0 &&
-                                   sellNpc_.roleID > 0) {
+                                   (sellNpc_.resID > 0 || sellNpc_.roleID > 0)) {
                             DisableActions();
                             trainTriggered = false;
                             sellingTrip = true;
@@ -2427,6 +2668,7 @@ private:
                                 std::wstring detail;
                                 const bool sold = TrySellAtNpc(freeAfter, detail);
                                 if (sold && freeAfter > 0) {
+                                    sellFailures = 0;
                                     UpdateFreeBagSpace(freeAfter);
                                     sellingTrip = false;
                                     outsideTarget = false;
@@ -2437,8 +2679,20 @@ private:
                                     UpdateLive(true, L"ĐÃ BÁN ĐỒ",
                                                detail + L" • quay lại bãi " + target_.name);
                                 } else {
-                                    sellRetryAfter = now + std::chrono::seconds(8);
-                                    UpdateLive(true, L"BÁN ĐỒ TẠM DỪNG AN TOÀN", detail);
+                                    ++sellFailures;
+                                    const bool exhausted90 = detail.find(L"tối đa") != std::wstring::npos;
+                                    if (sellFailures >= 3 || exhausted90) {
+                                        UpdateLive(true, L"ĐÃ DỪNG RIÊNG CỬA SỔ",
+                                                   detail + L" • bán đồ thất bại " +
+                                                   std::to_wstring(sellFailures) +
+                                                   L" lần; dừng PID này để tránh thao tác mù");
+                                        running_ = false;
+                                    } else {
+                                        sellRetryAfter = now + std::chrono::seconds(8);
+                                        UpdateLive(true, L"BÁN ĐỒ TẠM DỪNG AN TOÀN",
+                                                   detail + L" • lỗi " +
+                                                   std::to_wstring(sellFailures) + L"/3");
+                                    }
                                 }
                             } else {
                                 UpdateLive(true, L"ĐÃ TỚI NPC", L"Đang chờ thử lại chuỗi bán an toàn");
@@ -2606,12 +2860,15 @@ private:
     std::uint64_t il2cppGcHandleNew_ = 0;
     std::uint64_t il2cppGcHandleGetTarget_ = 0;
     std::uint64_t il2cppGcHandleFree_ = 0;
+    std::uint64_t il2cppGetCorlib_ = 0;
+    std::uint64_t il2cppArrayNew_ = 0;
     std::uint64_t assemblyImage_ = 0;
     std::uint64_t uiObjectClass_ = 0;
     std::uint64_t uiButtonClass_ = 0;
     std::uint64_t uiToggleClass_ = 0;
     std::uint64_t uiRectTransformClass_ = 0;
     std::uint64_t uiInstancesField_ = 0;
+    std::uint64_t systemObjectClass_ = 0;
     std::map<std::uint64_t, bool> uiButtonClassCache_;
     std::map<std::uint64_t, bool> uiToggleClassCache_;
     std::map<std::uint64_t, bool> uiRectClassCache_;
@@ -2767,7 +3024,7 @@ private:
                                  CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                                  DEFAULT_PITCH, L"Segoe UI");
 
-        Label(L"THẦN LONG MOBILE • AUTO TRAIN v0.7.0", 16, 5, 650, 31, titleFont_);
+        Label(L"THẦN LONG MOBILE • AUTO TRAIN v0.7.1", 16, 5, 650, 31, titleFont_);
         Label(L"Mỗi PID chạy độc lập • danh sách bãi TXT dùng chung", 18, 34, 700, 18,
               smallFont_);
         Button(L"↻  QUÉT CỬA SỔ GAME", 855, 10, 189, 34, V5_REFRESH);
@@ -2880,7 +3137,7 @@ private:
         Make(L"STATIC",
              L"Auto Train nhiều cửa sổ • mỗi PID có cấu hình và trạng thái độc lập",
              SS_CENTER | SS_CENTERIMAGE, 150, 255, 780, 35, 0, font_);
-        Make(L"STATIC", L"Phiên bản 0.7.0",
+        Make(L"STATIC", L"Phiên bản 0.7.1",
              SS_CENTER | SS_CENTERIMAGE, 150, 300, 780, 35, 0, smallFont_);
         buildingPage_ = 0;
         SelectPage(0);

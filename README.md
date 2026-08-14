@@ -1,92 +1,85 @@
-# Thần Long Mobile - Auto Train v0.7.0
+# Thần Long Mobile - Auto Train v0.7.1
 
-Bản v0.7.0 tiếp tục trực tiếp từ v0.6.0 cho đúng cặp `GameAssembly.dll` + `global-metadata.dat` người dùng cung cấp ngày 14-08-2026. Tool vẫn giữ mô hình nhiều PID độc lập, kiểm tra đúng PE/game build trước khi gọi IL2CPP và không sửa file game trên ổ đĩa.
+Bản v0.7.1 nhập lại các bản vá đúng từ nhánh build dở sau v0.7.0, dựa trên đúng `GameAssembly.dll` + `global-metadata.dat` đã cung cấp ngày 14-08-2026. Tool giữ mô hình nhiều PID độc lập, không sửa file game trên ổ đĩa và khóa đúng PE build trước khi gọi IL2CPP.
 
-## Thay đổi chính từ v0.6.0
+## v0.7.1 sửa gì so với v0.7.0
 
-- Bỏ hoàn toàn hai nút test **ĐẦU THAI NỘI BỘ** và **AUTO → ĐÁNH QUÁI NỘI BỘ** khỏi giao diện chính. Hai chức năng chỉ còn chạy tự động trong state machine.
-- Resolver `AUTO → Đánh quái / Dừng` quét cả `UIButton` và `UIToggle`; gọi `UIButton.HandleClickEvent()` hoặc `UIToggle.set_Selected(true)` theo control thật.
-- Không gọi `UIRectTransform.HandlePointerClick()` bằng `PointerEventData=null/fake`; nhánh pointer-click có dereference event data và bị chặn để tránh crash/disconnect.
-- Đọc trực tiếp `LuaSystemAPI_Game.GetFreeBagSpace()` để lấy số ô trống tay nải, không cần mở túi/vuốt/đếm hình ảnh.
-- Thêm **Tự bán đồ / chu kỳ kiểm tra / NPC** riêng theo từng RoleID/PID.
-- Nút **LƯU NPC GẦN NHẤT** lấy `GetNearestNPC()`, đọc `LuaMapObjectData.RoleID` + `Name`, lưu cùng MapID/X/Y realtime. File NPC dùng chung; mỗi nhân vật chọn NPC riêng.
-- Khi tay nải full (`GetFreeBagSpace=0`), đúng PID đó tắt train/AutoPath, đi NPC, gọi `ClickNPC(npcID)`, mở **Bán vật phẩm**, bật **Bán vật phẩm nhanh**, rồi chỉ gọi item cell khi chứng minh được đó là `UIButton` thuộc cây bag/inventory.
-- Nếu item cell chỉ là `UIRectTransform` hoặc cây UI mơ hồ, tool chuyển **BÁN ĐỒ TẠM DỪNG AN TOÀN** và không bấm mù.
-- Khi `GetFreeBagSpace` tăng, tool quay lại bãi và tiếp tục train.
-- Dòng trạng thái bổ sung `Túi trống: N` theo lần kiểm tra gần nhất; không gọi API túi ở mọi vòng worker.
+- **Remote worker 5 tham số native**: hỗ trợ đúng Win64 ABI cho method IL2CPP có `this + 3 managed args + hidden MethodInfo*`; tham số thứ 5 được đặt tại `[rsp+0x20]`.
+- **AUTO → Đánh quái không còn báo thành công ảo**: callback chỉ được coi là thành công khi đọc lại `get_EnableAutoF1()` và thấy ON. Nếu vẫn OFF, state machine coi là thất bại để thử lại.
+- **UIToggle chắc hơn**: `set_Selected(true)` → đọc lại `get_Selected()`; nếu chưa đổi thì fallback `HandleSelectEvent(true)`. Không spam toggle khi đã selected.
+- **UIRectTransform/Lua fallback**: đọc `get_OnPointerClickHandler()` và gọi `MonoBehaviourExecutor.ExecuteScriptFunction(UIObject, string, object[])` thay vì truyền `PointerEventData=null/fake` cho `HandlePointerClick`.
+- Fallback Rect tạo **managed `System.Object[3]` thật** bằng `il2cpp_array_new`, root bằng `il2cpp_gchandle_new`, truyền UIObject ở phần tử 0 và để hai tham số pointer phụ là nil. Đây giữ đúng số lượng args mà wrapper `HandlePointerClick` của client tạo nhưng không bịa pointer-event object.
+- `FindAction()` hiện thử theo thứ tự **UIButton → UIToggle → UIRectTransform có Lua click handler**. Match vẫn phải duy nhất; không chọn đại.
+- `UIObject.get_CoreParents()` được dùng làm fast-path để phân loại cây UI; nếu không đọc được thì fallback chuỗi `get_Parent()` cũ.
+- **NPC bán đồ lưu thêm ResID ổn định**. Khi về NPC, tool gọi `GetNearestNPC(ResID)` để lấy RoleID instance hiện tại rồi mới `ClickNPC(RoleID)`, tránh tin tuyệt đối RoleID đã lưu từ phiên trước.
+- File NPC nâng lên v2: `Tên<TAB>ResID<TAB>RoleID<TAB>MapID<TAB>X<TAB>Y`, vẫn đọc ngược file v1 cũ.
+- Chuỗi bán nhận cả item cell **UIButton** lẫn **UIRectTransform có Lua handler** nếu control + cây parent chứng minh thuộc bag/inventory; tối đa 90 callback.
+- Bán đồ thất bại 3 lần, hoặc đã hết 90 lượt mà túi vẫn full → **dừng riêng PID đó**, không kéo các cửa sổ khác theo.
+- Dừng AUTO cũng đọc lại `EnableAutoF1=OFF`; không chỉ tin callback đã gửi.
 
-## RVA mới đã đối chiếu
+## API/RVA mới xác minh trong v0.7.1
 
-| API | RVA |
+| Method | RVA |
 |---|---:|
-| `LuaSystemAPI_Game.GetFreeBagSpace()` | `0x6716F0` |
-| `LuaSystemAPI_Game.GetNearestNPC()` | `0x673A90` |
-| `LuaSystemAPI_Game.ClickNPC(int npcID)` | `0x66ADC0` |
-| `LuaMapObjectData.get_RoleID()` | `0x41F000` |
-| `LuaMapObjectData.get_Name()` | `0x41F3F0` |
-| `UIObject.get_Parent()` | `0x530270` |
-| `UIToggle.get_Interactable()` | `0x688580` |
-| `UIToggle.get_Selected()` | `0x6885D0` |
-| `UIToggle.get_Text()` | `0x688710` |
-| `UIToggle.set_Selected(bool)` | `0x6888E0` |
+| `LuaSystemAPI_Game.GetNearestNPC(int resID)` | `0x673AA0` |
+| `LuaMapSpriteData.get_ResID()` | `0x425870` |
+| `UIObject.get_CoreParents()` | `0x52FF10` |
+| `UIToggle.HandleSelectEvent(bool)` | `0x687450` |
+| `UIRectTransform.get_OnPointerClickHandler()` | `0x644B50` |
+| `MonoBehaviourExecutor.get_Instance()` | `0x523CE0` |
+| `MonoBehaviourExecutor.ExecuteScriptFunction(UIObject,string,object[])` | `0x521B20` |
 
-Các RVA cũ của v0.6.0 cho RoleData/Map/X/Y/ngựa/AutoPath/IsDeath/WaitingChangeMap/MessageBox/UIButton vẫn giữ nguyên và tiếp tục được kiểm tra chữ ký runtime.
+Các RVA v0.7.0 vẫn giữ: `GetFreeBagSpace=0x6716F0`, `GetNearestNPC()=0x673A90`, `ClickNPC=0x66ADC0`, `LuaMapObjectData.get_RoleID=0x41F000`, `get_Name=0x41F3F0`, `UIToggle.get_Selected=0x6885D0`, `set_Selected=0x6888E0`…
 
-## Logic Tự bán đồ
+## Logic tự bán đồ
 
-1. Khi bắt đầu và bật Tự bán đồ, `GetFreeBagSpace()` được probe ngay một lần.
-2. Nếu còn ô trống, train bình thường và **không probe lại ở mọi vòng worker**; lần check tiếp theo đúng theo số phút trên giao diện.
-3. Nếu bằng 0, đúng PID đó dừng đánh và đường cũ ngay.
-4. Tool đi NPC bằng cùng cơ chế AutoPath/chat ping + guard chuyển map đang dùng cho bãi.
-5. Tới NPC: dừng path, xuống ngựa, gọi `ClickNPC(RoleID)`.
-6. Quét UI nội bộ để chọn **Bán vật phẩm**, rồi bật **Bán vật phẩm nhanh** bằng UIButton/UIToggle thật.
-7. Item cell chỉ được invoke khi tên control + chuỗi parent chứng minh nó thuộc bag/inventory. Tối đa 90 lượt; tiếp tục quét sau mỗi món bán được để tránh tình trạng chỉ bán 1 món rồi quay về.
-8. Nếu cây item biến mất sau khi đã giải phóng được ô, chuỗi được coi là đã bán thành công; nếu chưa bán được gì thì tool dừng an toàn và không bấm mù.
-9. Sau chuỗi bán, tool chỉ thử đóng nút **Đóng/Close** nếu nút đó thuộc cây shop và được nhận diện duy nhất; sau đó quay về đúng bãi và bật train lại.
+1. Bật **Tự bán đồ** → probe `GetFreeBagSpace()` ngay khi Start, sau đó đúng chu kỳ cấu hình; không probe mỗi vòng worker.
+2. Full túi → đúng PID tắt train + dừng path → đi NPC đã lưu.
+3. Tới NPC → xuống ngựa → nếu có ResID thì tìm đúng NPC hiện tại bằng `GetNearestNPC(ResID)` → lấy RoleID mới → `ClickNPC(RoleID)`.
+4. Chọn **Bán vật phẩm** → bật **Bán vật phẩm nhanh** bằng UIButton/UIToggle/UIRect-Lua thật.
+5. Quét item cell ở cây bag/inventory. UIButton dùng `HandleClickEvent()`. UIRect chỉ được gọi khi có Lua handler thật và parent path an toàn.
+6. Tối đa 90 lượt; `GetFreeBagSpace()` được dùng làm bằng chứng bán thật.
+7. Nếu bán thành công, thử đóng đúng nút Close thuộc cây shop rồi quay lại bãi. Nếu thất bại lặp 3 lần hoặc hết 90 lượt vẫn full, dừng riêng session/PID.
 
-## Lưu NPC bán đồ
+## AUTO → Đánh quái
 
-Đứng sát NPC cần dùng → chọn đúng cửa sổ game → bấm **LƯU NPC GẦN NHẤT**. Tool ghi:
-
-`Tên NPC<TAB>RoleID<TAB>MapID<TAB>X<TAB>Y`
-
-vào `ThanLongAutoTrain.npcs.txt`. Không hardcode NPC ID đoán.
-
-## AUTO → Đánh quái v0.7.0
-
-- Mở `AUTO` bằng `UIButton.HandleClickEvent()` như v0.6.0.
-- Control con **Đánh quái** và **Dừng** được tìm trong cả `UIButton` và `UIToggle`.
-- Với `UIToggle`, tool kiểm tra Interactable, đọc Text/Selected rồi chỉ gọi `set_Selected(true)` khi đang off.
-- Sau khi kích hoạt vẫn đọc `get_EnableAutoF1()` để xác nhận.
-- Nếu nhiều control cùng điểm nhận diện, tool từ chối bấm thay vì chọn đại.
+- Mở `AUTO` bằng callback nội bộ.
+- Tìm **Đánh quái** ở UIButton, UIToggle rồi UIRect-Lua.
+- UIToggle: set → readback → fallback `HandleSelectEvent(true)` nếu cần.
+- UIRect: gọi Lua handler bằng `MonoBehaviourExecutor.ExecuteScriptFunction`, không gọi `HandlePointerClick(null)`.
+- Sau cùng bắt buộc `EnableAutoF1=ON`; nếu không, trả thất bại để state machine thử lại.
 
 ## Chức năng cũ giữ nguyên
 
-- Multi-window: mỗi PID có session/worker/config/skill/bãi/state độc lập.
-- Start/Stop chỉ áp dụng các cửa sổ được tick.
-- Profile riêng theo RoleID; file bãi/NPC dùng chung.
-- Sai tọa độ: tắt train ngay → hủy path → chạy về bãi → đúng tọa độ mới xuống ngựa/bật train.
-- Chuyển map dùng `WaitingChangeMap` + `IsMapReady`, không chờ cứng 6 giây sau xác nhận/hồi sinh.
-- Game treo/mất phản hồi/remote packet bận → tạm dừng an toàn, không ghi đè packet.
-- Hồi sinh/Đầu thai chỉ khi `IsDeath=true`, gọi `UIButton.HandleClickEvent()` thật.
-- Ba cách bật train: F1 nền, skill đã chọn, AUTO → Đánh quái nội bộ.
+- Multi-window: session/worker/config/skill/bãi/state độc lập theo PID; setting theo RoleID; spots/NPC file dùng chung.
+- Start/Pause chỉ áp dụng cửa sổ được tick.
+- Sai MapID/tọa độ: tắt train ngay → hủy path → về đúng bãi → đúng sai số mới bật train.
+- Chuyển map: `WaitingChangeMap + IsMapReady`, không dùng chờ cứng 6 giây sau xác nhận/hồi sinh.
+- Game treo/mất phản hồi/remote packet bận: pause an toàn, không ghi đè packet.
+- Hồi sinh/Đầu thai: chỉ khi `IsDeath=true`, gọi `UIButton.HandleClickEvent()` thật.
+- Không còn hai nút test trên giao diện.
 - Tab GIỚI THIỆU giữ “Phần mềm xây dựng bởi Nguyễn Mạnh Thắng.Long.”
 
 ## File cấu hình
 
 - `ThanLongAutoTrain.spots.txt`: `Tên<TAB>MapID<TAB>X<TAB>Y`.
-- `ThanLongAutoTrain.npcs.txt`: `Tên<TAB>RoleID<TAB>MapID<TAB>X<TAB>Y`.
-- `ThanLongAutoTrain.ini`: profile `AutoTrain.Role<RoleID>`; thêm `AutoSell`, `BagCheckMinutes`, `SellNpcName`.
+- `ThanLongAutoTrain.npcs.txt` v2: `Tên<TAB>ResID<TAB>RoleID<TAB>MapID<TAB>X<TAB>Y`; vẫn đọc file v1 cũ.
+- `ThanLongAutoTrain.ini`: profile `AutoTrain.Role<RoleID>`; `AutoSell`, `BagCheckMinutes`, `SellNpcName`.
 
-## Giới hạn cần test trong game thật
+## Kiểm tra tĩnh đã chạy
 
-Phân tích tĩnh xác nhận RVA/chữ ký; source đã qua C++17 syntax + `-Wall -Wextra -Werror` trong môi trường kiểm tra. Layout Lua/UI động của server không có ở đây, nên lần test đầu cần quan sát:
+- `main.cpp`: C++17 + `-Wall -Wextra -Werror` **PASS** bằng Win32 stub dùng riêng cho syntax/semantic check.
+- `remote_worker.S`: assemble **PASS** thành x86-64 Windows COFF.
+- Prefix machine-code của toàn bộ RVA mới phía trên đã đối chiếu trực tiếp với `GameAssembly(1).dll`.
+- Không còn chuỗi/tên hai nút test trong source UI.
 
-1. `AUTO → Đánh quái` được nhận thành UIButton hay UIToggle và `EnableAutoF1` có ON.
-2. `LƯU NPC GẦN NHẤT` trả đúng tên/ID NPC đứng cạnh.
-3. Sau khi full túi, item cell của shop là UIButton hay UIRectTransform. Nếu là UIRectTransform, v0.7 cố ý dừng an toàn để lấy đúng event path ở bản sau, không giả click.
+## Chưa thể khẳng định nếu chưa chạy client/server thật
 
-## Build source
+- Layout Lua UI do server tải có thể khác giữa màn hình/map. Resolver đã khóa “không bấm mù”, nhưng cần test runtime để xác nhận control thực tế của **Đánh quái**, **Bán vật phẩm**, **Bán nhanh** và từng item cell.
+- UIRect-Lua fallback giữ đúng callback string và mảng 3 args nhưng hai thông tin pointer phụ là nil. Phần này cần test trực tiếp; nếu handler server thực sự bắt buộc pointer coordinates/pointerId, callback có thể không thực hiện hành động và tool sẽ dựa vào state thật (`EnableAutoF1`/`GetFreeBagSpace`) để coi là thất bại.
 
-Cài Zig có target `x86_64-windows-gnu`, thêm `zig` vào PATH rồi chạy `build.cmd`.
-Kết quả: `dist\ThanLongAutoTrain_v0.7.0.exe`.
+## Build Windows
+
+Cài Zig và để `zig` trong PATH, sau đó chạy `build.cmd`.
+
+Kết quả mong đợi: `dist\ThanLongAutoTrain_v0.7.1.exe`.
