@@ -13,7 +13,7 @@ echo Zig: %ZIG_VERSION%
 
 if not exist dist mkdir dist
 del /q dist\*.exe dist\*.dll dist\*.res dist\*.lib dist\*.a >nul 2>nul
-del /q ThanLongNewCoreBridge.dll BridgeSelfTest.exe ThanLongAutoTrain_NewCore_v1.0.5.exe app.res >nul 2>nul
+del /q ThanLongNewCoreBridge.dll BridgeSelfTest.exe ThanLongAutoTrain_NewCore_v1.0.6.exe app.res >nul 2>nul
 
 echo [1/5] Resource...
 pushd resources
@@ -22,7 +22,7 @@ popd
 if errorlevel 1 goto :fail
 
 echo [2/5] Bridge DLL - minimal runtime...
-rem Bridge intentionally has no STL containers/streams and no managed invocation.
+rem Bridge intentionally has no STL containers/streams. Phase 2 uses runtime_invoke only for read-only main-thread proof getters.
 rem Do NOT combine -static with -shared here; that combination produced a DLL
 rem which built successfully on the previous revision but Windows rejected as Bad Image.
 zig c++ -target x86_64-windows-gnu -O2 -std=c++17 -DUNICODE -D_UNICODE ^
@@ -49,18 +49,18 @@ echo [4/5] Controller EXE...
 zig c++ -target x86_64-windows-gnu -O2 -std=c++17 -DUNICODE -D_UNICODE -Wall -Wextra -Werror -municode -static ^
   src\controller\main.cpp app.res ^
   -Wl,--subsystem,windows -lcomctl32 -luser32 -lkernel32 -lgdi32 ^
-  -o ThanLongAutoTrain_NewCore_v1.0.5.exe
+  -o ThanLongAutoTrain_NewCore_v1.0.6.exe
 if errorlevel 1 goto :fail
 
 echo [5/5] Package...
 move /y ThanLongNewCoreBridge.dll dist\ThanLongNewCoreBridge.dll >nul
-move /y ThanLongAutoTrain_NewCore_v1.0.5.exe dist\ThanLongAutoTrain_NewCore_v1.0.5.exe >nul
+move /y ThanLongAutoTrain_NewCore_v1.0.6.exe dist\ThanLongAutoTrain_NewCore_v1.0.6.exe >nul
 move /y app.res dist\app.res >nul
 del /q BridgeSelfTest.exe >nul 2>nul
 
 echo.
 echo BUILD + LOADLIBRARY SELFTEST THANH CONG:
-echo   dist\ThanLongAutoTrain_NewCore_v1.0.5.exe
+echo   dist\ThanLongAutoTrain_NewCore_v1.0.6.exe
 echo   dist\ThanLongNewCoreBridge.dll
 exit /b 0
 

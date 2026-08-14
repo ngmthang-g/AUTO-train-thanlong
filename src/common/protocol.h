@@ -6,7 +6,7 @@
 namespace tlcore {
 
 constexpr std::uint32_t kMagic = 0x544C4E43u; // TLNC
-constexpr std::uint32_t kProtocolVersion = 0x00010005u;
+constexpr std::uint32_t kProtocolVersion = 0x00010006u;
 constexpr UINT kWakeMessage = WM_APP + 0x4A1;
 constexpr wchar_t kMappingPrefix[] = L"Local\\ThanLongNewCore_";
 
@@ -15,13 +15,16 @@ enum class BridgeCommand : std::uint32_t {
     ValidateNative = 1,
     InspectFgMainThread = 2,
     InspectUnityDispatcher = 3,
+    ProveUnityMainThread = 4,
 };
 
 enum FoundationValid : std::uint32_t {
-    ValidHookThread       = 1u << 0,
-    ValidIl2CppExports    = 1u << 1,
-    ValidFgMainThreadType = 1u << 2,
-    ValidUnityDispatcher  = 1u << 3,
+    ValidHookThread          = 1u << 0,
+    ValidIl2CppExports       = 1u << 1,
+    ValidFgMainThreadType    = 1u << 2,
+    ValidUnityDispatcher     = 1u << 3,
+    ValidUnityMainThread     = 1u << 4,
+    ValidUnitySyncContext    = 1u << 5,
 };
 
 struct FoundationSnapshot {
@@ -34,6 +37,8 @@ struct FoundationSnapshot {
     std::uint32_t fgMainThreadFieldCount = 0;
     std::uint32_t unityDispatcherMethodCount = 0;
     std::uint32_t unityDispatcherFieldCount = 0;
+    std::int32_t currentManagedThreadId = 0;
+    std::int32_t unityMainManagedThreadId = 0;
 };
 
 struct BridgeRequest {

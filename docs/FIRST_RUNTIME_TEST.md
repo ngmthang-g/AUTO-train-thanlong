@@ -1,14 +1,15 @@
-# FIRST RUNTIME TEST - v1.0.5
+# FIRST RUNTIME TEST - v1.0.6
 
-Bản này KHÔNG gọi game action.
+Ban nay KHONG goi game action.
 
-PASS mong đợi:
+PASS mong doi:
 - Bridge = LOADED
-- Hook/Window TID: hai số giống nhau
-- IL2CPP = 14/14
-- FG MainThread = Mx Fy (không còn ?)
-- UnityDispatcher = Mx Fy (không còn ?)
-- Trạng thái = VALIDATOR PASS
-- MainThread = LOCKED (đúng thiết kế ở phase này)
+- Hook/Window TID: hai so giong nhau
+- IL2CPP = 22/22
+- FG MainThread = M9 F2 (hoac metadata count tuong ung)
+- UnityDispatcher = M6 F3 (hoac metadata count tuong ung)
+- MainThread = PROVEN M<managed-id>
+- Trang thai = MAINTHREAD PASS
+- Log co dong `MAINTHREAD PROVEN` va `managed current/main=X/X`
 
-Nếu FAIL: gửi toàn bộ log. Không thử spam nút.
+Neu MainThread van LOCKED/FAIL: gui toan bo log. Khong retry spam.

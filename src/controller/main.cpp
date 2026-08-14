@@ -29,7 +29,7 @@ bool ResolveProcAddress(HMODULE module, const char* name, T& out) {
     return out != nullptr;
 }
 
-constexpr wchar_t kTitle[] = L"Thần Long Auto - NewCore v1.0.5 Foundation Validator";
+constexpr wchar_t kTitle[] = L"Thần Long Auto - NewCore v1.0.6 MainThread Proof";
 constexpr wchar_t kModule[] = L"GameAssembly.dll";
 constexpr int IDC_LIST = 1001;
 constexpr int IDC_SCAN = 1002;
@@ -240,6 +240,7 @@ enum class FoundationState {
     ValidatingNative,
     InspectingFgMainThread,
     InspectingUnityDispatcher,
+    ProvingUnityMainThread,
     ReadyForNextPhase,
     Faulted,
 };
@@ -251,7 +252,8 @@ const wchar_t* StateName(FoundationState state) {
         case FoundationState::ValidatingNative: return L"Kiểm tra Hook/IL2CPP";
         case FoundationState::InspectingFgMainThread: return L"Inspect FG MainThread";
         case FoundationState::InspectingUnityDispatcher: return L"Inspect Unity Dispatcher";
-        case FoundationState::ReadyForNextPhase: return L"VALIDATOR PASS";
+        case FoundationState::ProvingUnityMainThread: return L"Chứng minh MainThread";
+        case FoundationState::ReadyForNextPhase: return L"MAINTHREAD PASS";
         case FoundationState::Faulted: return L"VALIDATOR FAIL";
     }
     return L"?";
@@ -272,7 +274,8 @@ public:
         if (state_ == FoundationState::Attaching ||
             state_ == FoundationState::ValidatingNative ||
             state_ == FoundationState::InspectingFgMainThread ||
-            state_ == FoundationState::InspectingUnityDispatcher) return;
+            state_ == FoundationState::InspectingUnityDispatcher ||
+            state_ == FoundationState::ProvingUnityMainThread) return;
         report_.clear();
         snapshot_ = {};
         Enter(FoundationState::Attaching, L"Bắt đầu kiểm tra nền read-only");
@@ -323,6 +326,8 @@ public:
         if (response.snapshot.fgMainThreadFieldCount) snapshot_.fgMainThreadFieldCount = response.snapshot.fgMainThreadFieldCount;
         if (response.snapshot.unityDispatcherMethodCount) snapshot_.unityDispatcherMethodCount = response.snapshot.unityDispatcherMethodCount;
         if (response.snapshot.unityDispatcherFieldCount) snapshot_.unityDispatcherFieldCount = response.snapshot.unityDispatcherFieldCount;
+        if (response.snapshot.currentManagedThreadId) snapshot_.currentManagedThreadId = response.snapshot.currentManagedThreadId;
+        if (response.snapshot.unityMainManagedThreadId) snapshot_.unityMainManagedThreadId = response.snapshot.unityMainManagedThreadId;
 
         AppendReport(response.detail);
         if (!response.ok) {
@@ -343,8 +348,18 @@ public:
             return;
         }
         if (completed == BridgeCommand::InspectUnityDispatcher) {
+            Enter(FoundationState::ProvingUnityMainThread,
+                  L"Metadata PASS; chạy main-thread proof chỉ bằng managed getter read-only");
+            Send(BridgeCommand::ProveUnityMainThread, L"ProveUnityMainThread");
+            return;
+        }
+        if (completed == BridgeCommand::ProveUnityMainThread) {
+            if ((snapshot_.validMask & ValidUnityMainThread) == 0) {
+                Fail(L"MainThread proof không đặt ValidUnityMainThread; fail-closed");
+                return;
+            }
             Enter(FoundationState::ReadyForNextPhase,
-                  L"PASS nền read-only. MainThread action vẫn KHÓA cho tới khi dispatcher được chứng minh.");
+                  L"MAINTHREAD PROVEN. Đường hook-message chạy trên Unity managed main thread; CHƯA mở action game.");
             return;
         }
     }
@@ -447,7 +462,9 @@ void RebuildList() {
             (L"M" + std::to_wstring(s.fgMainThreadMethodCount) + L" F" + std::to_wstring(s.fgMainThreadFieldCount)) : L"?";
         std::wstring ud = (s.validMask & ValidUnityDispatcher) ?
             (L"M" + std::to_wstring(s.unityDispatcherMethodCount) + L" F" + std::to_wstring(s.unityDispatcherFieldCount)) : L"?";
-        std::wstring mainThread = L"LOCKED";
+        std::wstring mainThread = (s.validMask & ValidUnityMainThread)
+            ? (L"PROVEN M" + std::to_wstring(s.currentManagedThreadId))
+            : L"LOCKED";
         std::wstring detail = session->Detail();
 
         ListView_SetItemText(g_list, row, 1, title.data());
@@ -517,12 +534,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
             CreateWindowW(L"BUTTON", L"Quét client", WS_CHILD | WS_VISIBLE,
                           12, 284, 120, 34, hwnd, reinterpret_cast<HMENU>(IDC_SCAN), nullptr, nullptr);
-            CreateWindowW(L"BUTTON", L"Kiểm tra nền", WS_CHILD | WS_VISIBLE,
+            CreateWindowW(L"BUTTON", L"Chứng minh nền", WS_CHILD | WS_VISIBLE,
                           144, 284, 140, 34, hwnd, reinterpret_cast<HMENU>(IDC_VALIDATE), nullptr, nullptr);
             CreateWindowW(L"BUTTON", L"Ngắt bridge", WS_CHILD | WS_VISIBLE,
                           296, 284, 130, 34, hwnd, reinterpret_cast<HMENU>(IDC_DISCONNECT), nullptr, nullptr);
             CreateWindowW(L"STATIC",
-                          L"Phase 1: READ-ONLY validator. Không gọi hành động game. MainThread phải được chứng minh trước khi mở action.",
+                          L"Phase 2: MAINTHREAD PROOF. Chỉ runtime_invoke các getter read-only; không gọi hành động game.",
                           WS_CHILD | WS_VISIBLE, 448, 292, 720, 26, hwnd, nullptr, nullptr, nullptr);
             g_log = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL |
                                     ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL,
@@ -541,7 +558,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     auto it = g_sessions.find(pid);
                     if (it != g_sessions.end()) it->second->ValidateWanted();
                 }
-                Log(L"Bắt đầu validator read-only cho các client đã tick");
+                Log(L"Bắt đầu foundation + Unity main-thread proof cho các client đã tick");
                 return 0;
             }
             if (LOWORD(wp) == IDC_DISCONNECT) {

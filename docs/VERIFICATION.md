@@ -1,18 +1,22 @@
-# Verification status
+# Verification status - v1.0.6
 
-## Static/source verification performed
+## Static/source verification
 
-- No `CreateRemoteThread`, `remote_worker.S`, or `il2cpp_thread_attach` exists in the NewCore action path.
-- Controller serializes mutation through one per-client `ActionQueue`.
-- SAFE PAUSE clears only queued-not-sent actions; an already-sent action is still drained/ACKed.
-- Mutation commands are blocked unless the bridge proves `UnitySynchronizationContext` on the target window thread.
-- Runtime IL2CPP class/method lookup is used for the migrated actions; hardcoded gameplay RVAs are not used.
-- Managed strings, boxed values, UI objects and argument arrays used across nested invokes are GC-rooted.
-- `Object[]` population uses reflected `System.Array.SetValue`; no hardcoded IL2CPP array-data offset.
-- `UNICODE/_UNICODE` is forced in the Windows build to keep ListView W APIs consistent.
+- Khong `CreateRemoteThread`, `remote_worker.S`, `il2cpp_thread_attach` trong source.
+- Khong co gameplay action: ClickNPC, Sell, Heal, Revive, AutoFight.
+- Moi client chi co toi da 1 bridge request dang chay.
+- Timeout fail-closed, khong retry spam.
+- Same PID nhung HWND/TID doi -> tao Session moi, khong giu hook/thread context cu.
+- Main-thread proof dung Unity `SynchronizationContext` + managed thread ID, khong suy dien tu window TID.
+- `runtime_invoke` chi dung cho cac getter read-only cua SynchronizationContext/Thread trong command proof.
 
-## Runtime verification that cannot be performed in this environment
+## Runtime proof condition
 
-This environment cannot launch the user's Windows game client. Therefore it cannot prove that the game's window thread exposes `UnitySynchronizationContext`, nor can it measure real disconnect/crash rate. The bridge intentionally fails closed if that proof is absent.
+Chi dat `ValidUnityMainThread` khi:
+- hook TID == owner window TID;
+- `il2cpp_thread_current()` != null;
+- `SynchronizationContext.Current` != null;
+- class name == `UnitySynchronizationContext`;
+- `Thread.CurrentThread.ManagedThreadId == UnitySynchronizationContext.MainThreadId`.
 
-Advanced donor features (sell/heal/revive/buff/path/mount) are not enabled in this foundation until the main-thread bridge is validated in the real client. This is intentional: migrating them before validating the execution layer would reintroduce the exact class of instability NewCore is meant to remove.
+Neu khong dat tat ca dieu kien tren, MainThread van LOCKED va phase action khong duoc mo.

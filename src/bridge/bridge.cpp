@@ -17,6 +17,8 @@ using Il2CppClass = void;
 using MethodInfo = void;
 using FieldInfo = void;
 using Il2CppType = void;
+using Il2CppObject = void;
+using Il2CppThread = void;
 
 template <typename T>
 bool ResolveProcAddress(HMODULE module, const char* name, T& out) {
@@ -65,6 +67,13 @@ void AppendAscii(wchar_t* out, std::size_t cap, const char* text) {
     AppendText(out, cap, tmp);
 }
 
+
+bool AsciiEquals(const char* a, const char* b) {
+    if (!a || !b) return false;
+    while (*a && *b) { if (*a != *b) return false; ++a; ++b; }
+    return *a == *b;
+}
+
 void AppendUInt(wchar_t* out, std::size_t cap, std::uint32_t value) {
     wchar_t tmp[32]{};
     wsprintfW(tmp, L"%lu", static_cast<unsigned long>(value));
@@ -87,8 +96,16 @@ struct Il2CppApi {
     FieldInfo* (__cdecl* class_get_fields)(Il2CppClass*, void**) = nullptr;
     const char* (__cdecl* field_get_name)(FieldInfo*) = nullptr;
     const Il2CppType* (__cdecl* field_get_type)(FieldInfo*) = nullptr;
+    Il2CppThread* (__cdecl* thread_current)() = nullptr;
+    const Il2CppImage* (__cdecl* get_corlib)() = nullptr;
+    const MethodInfo* (__cdecl* class_get_method_from_name)(Il2CppClass*, const char*, int) = nullptr;
+    Il2CppObject* (__cdecl* runtime_invoke)(const MethodInfo*, void*, void**, void**) = nullptr;
+    Il2CppClass* (__cdecl* object_get_class)(Il2CppObject*) = nullptr;
+    const char* (__cdecl* class_get_name)(Il2CppClass*) = nullptr;
+    const char* (__cdecl* class_get_namespace)(Il2CppClass*) = nullptr;
+    void* (__cdecl* object_unbox)(Il2CppObject*) = nullptr;
     std::uint32_t resolved = 0;
-    static constexpr std::uint32_t required = 14;
+    static constexpr std::uint32_t required = 22;
 
     bool Load(wchar_t* detail, std::size_t cap) {
         if (gameAssembly && resolved == required) return true;
@@ -120,8 +137,16 @@ struct Il2CppApi {
         RESOLVE_COUNT2(class_get_fields);
         RESOLVE_COUNT2(field_get_name);
         RESOLVE_COUNT2(field_get_type);
+        RESOLVE_COUNT2(thread_current);
+        RESOLVE_COUNT2(get_corlib);
+        RESOLVE_COUNT2(class_get_method_from_name);
+        RESOLVE_COUNT2(runtime_invoke);
+        RESOLVE_COUNT2(object_get_class);
+        RESOLVE_COUNT2(class_get_name);
+        RESOLVE_COUNT2(class_get_namespace);
+        RESOLVE_COUNT2(object_unbox);
 #undef RESOLVE_COUNT2
-        CopyText(detail, cap, L"IL2CPP metadata exports OK");
+        CopyText(detail, cap, L"IL2CPP foundation exports OK");
         return true;
     }
 };
@@ -170,7 +195,7 @@ bool NativeValidate(FoundationSnapshot& snap, wchar_t* detail, std::size_t cap) 
     AppendText(detail, cap, L"HOOK PASS TID="); AppendUInt(detail, cap, snap.hookThreadId);
     AppendText(detail, cap, L"; IL2CPP metadata exports "); AppendUInt(detail, cap, snap.resolvedExports);
     AppendText(detail, cap, L"/"); AppendUInt(detail, cap, snap.requiredExports);
-    AppendText(detail, cap, L"; CHƯA runtime_invoke; CHƯA xác minh Unity main thread");
+    AppendText(detail, cap, L"; runtime_invoke CHỈ được dùng ở probe read-only kế tiếp; Unity main thread CHƯA chứng minh");
     return true;
 }
 
@@ -238,6 +263,141 @@ bool DescribeType(const char* nameSpace, const char* className,
     return true;
 }
 
+
+bool InvokeInt32Getter(const MethodInfo* method, void* instance, std::int32_t& value, wchar_t* detail, std::size_t cap) {
+    if (!method) { CopyText(detail, cap, L"Thiếu method getter cần cho main-thread proof"); return false; }
+    void* exception = nullptr;
+    Il2CppObject* boxed = g_api.runtime_invoke(method, instance, nullptr, &exception);
+    if (exception) { CopyText(detail, cap, L"Managed getter ném exception; fail-closed"); return false; }
+    if (!boxed) { CopyText(detail, cap, L"Managed getter trả null thay vì Int32"); return false; }
+    void* raw = g_api.object_unbox(boxed);
+    if (!raw) { CopyText(detail, cap, L"Không unbox được Int32 từ managed getter"); return false; }
+    value = *reinterpret_cast<const std::int32_t*>(raw);
+    return true;
+}
+
+bool ProveUnityMainThread(FoundationSnapshot& snap, wchar_t* detail, std::size_t cap) {
+    wchar_t nativeDetail[512]{};
+    if (!NativeValidate(snap, nativeDetail, _countof(nativeDetail))) {
+        CopyText(detail, cap, nativeDetail);
+        return false;
+    }
+
+    // Fail closed: tuyệt đối không attach một worker lạ vào IL2CPP ở đây.
+    // Hook phải vốn đã chạy trên một managed IL2CPP thread của game.
+    if (!g_api.thread_current || !g_api.thread_current()) {
+        CopyText(detail, cap, L"Hook/window thread không phải IL2CPP managed thread hiện tại; không chứng minh main thread");
+        return false;
+    }
+
+    const Il2CppImage* corlib = g_api.get_corlib ? g_api.get_corlib() : nullptr;
+    if (!corlib) {
+        CopyText(detail, cap, L"Không lấy được corlib để kiểm tra SynchronizationContext");
+        return false;
+    }
+
+    Il2CppClass* syncBase = g_api.class_from_name(corlib, "System.Threading", "SynchronizationContext");
+    if (!syncBase) {
+        CopyText(detail, cap, L"Không resolve được System.Threading.SynchronizationContext");
+        return false;
+    }
+    const MethodInfo* getCurrent = g_api.class_get_method_from_name(syncBase, "get_Current", 0);
+    if (!getCurrent) {
+        CopyText(detail, cap, L"Không resolve được SynchronizationContext.get_Current()");
+        return false;
+    }
+
+    void* exception = nullptr;
+    Il2CppObject* syncContext = g_api.runtime_invoke(getCurrent, nullptr, nullptr, &exception);
+    if (exception) {
+        CopyText(detail, cap, L"SynchronizationContext.get_Current() ném exception; fail-closed");
+        return false;
+    }
+    if (!syncContext) {
+        CopyText(detail, cap, L"SynchronizationContext.Current = null trên hook thread; chưa phải Unity main thread");
+        return false;
+    }
+
+    Il2CppClass* syncClass = g_api.object_get_class(syncContext);
+    if (!syncClass) {
+        CopyText(detail, cap, L"Không lấy được class của SynchronizationContext.Current");
+        return false;
+    }
+    const char* syncName = g_api.class_get_name(syncClass);
+    const char* syncNs = g_api.class_get_namespace(syncClass);
+    if (!AsciiEquals(syncName, "UnitySynchronizationContext")) {
+        ClearText(detail, cap);
+        AppendText(detail, cap, L"SynchronizationContext.Current không phải UnitySynchronizationContext: ");
+        if (syncNs && *syncNs) { AppendAscii(detail, cap, syncNs); AppendText(detail, cap, L"."); }
+        AppendAscii(detail, cap, syncName ? syncName : "?");
+        return false;
+    }
+    snap.validMask |= ValidUnitySyncContext;
+
+    const MethodInfo* getUnityMainId = g_api.class_get_method_from_name(syncClass, "get_MainThreadId", 0);
+    if (!getUnityMainId) {
+        CopyText(detail, cap, L"UnitySynchronizationContext có mặt nhưng thiếu get_MainThreadId()");
+        return false;
+    }
+    std::int32_t unityMainManagedId = 0;
+    if (!InvokeInt32Getter(getUnityMainId, syncContext, unityMainManagedId, detail, cap)) return false;
+
+    Il2CppClass* threadClass = g_api.class_from_name(corlib, "System.Threading", "Thread");
+    if (!threadClass) {
+        CopyText(detail, cap, L"Không resolve được System.Threading.Thread");
+        return false;
+    }
+    const MethodInfo* getCurrentThread = g_api.class_get_method_from_name(threadClass, "get_CurrentThread", 0);
+    if (!getCurrentThread) {
+        CopyText(detail, cap, L"Không resolve được Thread.get_CurrentThread()");
+        return false;
+    }
+    exception = nullptr;
+    Il2CppObject* currentThread = g_api.runtime_invoke(getCurrentThread, nullptr, nullptr, &exception);
+    if (exception || !currentThread) {
+        CopyText(detail, cap, L"Không đọc được Thread.CurrentThread; fail-closed");
+        return false;
+    }
+    Il2CppClass* currentThreadClass = g_api.object_get_class(currentThread);
+    if (!currentThreadClass) {
+        CopyText(detail, cap, L"Không lấy được class của Thread.CurrentThread");
+        return false;
+    }
+    const MethodInfo* getManagedThreadId = g_api.class_get_method_from_name(currentThreadClass, "get_ManagedThreadId", 0);
+    if (!getManagedThreadId) {
+        CopyText(detail, cap, L"Không resolve được Thread.get_ManagedThreadId()");
+        return false;
+    }
+    std::int32_t currentManagedId = 0;
+    if (!InvokeInt32Getter(getManagedThreadId, currentThread, currentManagedId, detail, cap)) return false;
+
+    snap.currentManagedThreadId = currentManagedId;
+    snap.unityMainManagedThreadId = unityMainManagedId;
+    if (currentManagedId <= 0 || unityMainManagedId <= 0 || currentManagedId != unityMainManagedId) {
+        ClearText(detail, cap);
+        AppendText(detail, cap, L"UnitySynchronizationContext tồn tại nhưng ManagedThreadId lệch: current=");
+        AppendUInt(detail, cap, static_cast<std::uint32_t>(currentManagedId));
+        AppendText(detail, cap, L", unityMain=");
+        AppendUInt(detail, cap, static_cast<std::uint32_t>(unityMainManagedId));
+        AppendText(detail, cap, L"; action vẫn KHÓA");
+        return false;
+    }
+
+    snap.validMask |= ValidUnityMainThread;
+    ClearText(detail, cap);
+    AppendText(detail, cap, L"MAINTHREAD PROVEN: hook TID=");
+    AppendUInt(detail, cap, snap.hookThreadId);
+    AppendText(detail, cap, L"; SynchronizationContext=");
+    if (syncNs && *syncNs) { AppendAscii(detail, cap, syncNs); AppendText(detail, cap, L"."); }
+    AppendAscii(detail, cap, syncName);
+    AppendText(detail, cap, L"; managed current/main=");
+    AppendUInt(detail, cap, static_cast<std::uint32_t>(currentManagedId));
+    AppendText(detail, cap, L"/");
+    AppendUInt(detail, cap, static_cast<std::uint32_t>(unityMainManagedId));
+    AppendText(detail, cap, L". Chỉ chứng minh đường dispatch; CHƯA gọi action game.");
+    return true;
+}
+
 void SetDetail(BridgeResponse& response, const wchar_t* text) {
     CopyText(response.detail, _countof(response.detail), text ? text : L"");
 }
@@ -282,6 +442,8 @@ void ProcessRequest() {
             ok = DescribeType("", "UnityMainThreadDispatcher", ValidUnityDispatcher,
                               snap.unityDispatcherMethodCount, snap.unityDispatcherFieldCount,
                               snap, detail, _countof(detail)); response.errorCode = ok ? 0 : 2301; break;
+        case BridgeCommand::ProveUnityMainThread:
+            ok = ProveUnityMainThread(snap, detail, _countof(detail)); response.errorCode = ok ? 0 : 2401; break;
         default:
             CopyText(detail, _countof(detail), L"Command không hợp lệ"); response.errorCode = 2003; break;
     }
