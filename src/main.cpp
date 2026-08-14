@@ -24,7 +24,7 @@ extern "C" unsigned char RemoteWorkerStart[];
 extern "C" unsigned char RemoteWorkerEnd[];
 
 using Clock = std::chrono::steady_clock;
-constexpr wchar_t kTitle[] = L"Thần Long Mobile - Auto Train v0.8.6";
+constexpr wchar_t kTitle[] = L"Thần Long Mobile - Auto Train v0.8.7";
 constexpr wchar_t kModule[] = L"GameAssembly.dll";
 
 namespace rva {
@@ -2771,537 +2771,140 @@ private:
         }
         if (closed > 0) detail += L" • đã đóng " + std::to_wstring(closed) + L" cửa sổ shop/tay nải";
     }
-    bool CollectSafeBagItems(std::vector<ActionControl>& candidates) {
-        candidates.clear();
-        // Fast path: exact ItemBox prefab handler recovered from Interface.unity3d.
-        std::vector<ButtonInfo> itemButtons;
-        if (ReadButtonsByExactHandler(L"ButtonItemClicked", itemButtons)) {
-            for (const ButtonInfo& info : itemButtons)
-                if (IsSafeBagItemButton(info)) candidates.push_back({ActionKind::Button, info});
-        }
-        // Compatibility fallback only when the exact client handler produced no bag candidates.
-        if (candidates.empty()) {
-            std::vector<ButtonInfo> buttons;
-            if (ReadActiveButtonInfos(false, buttons)) {
-                for (ButtonInfo info : buttons) {
-                    ReadButtonClickHandler(info.object, info.handler);
-                    if (IsSafeBagItemButton(info)) candidates.push_back({ActionKind::Button, info});
+    struct SellItemBoxEntry {
+        ActionControl action;
+        int gridOrder = -1;
+    };
+    bool FindItemsGridOrder(std::uint64_t button, int& gridOrder) {
+        gridOrder = -1;
+        std::uint64_t current = button;
+        std::set<std::uint64_t> seen;
+        for (int depth = 0; depth < 12 && current && seen.insert(current).second; ++depth) {
+            std::uint64_t parent = 0;
+            if (!Remote(rva::UIObjectGetParent, current, 0, 0, 0, parent, 600) || !parent)
+                return false;
+            std::uint64_t namePointer = 0;
+            std::wstring parentName;
+            if (Remote(rva::UIObjectGetName, parent, 0, 0, 0, namePointer, 500) && namePointer)
+                parentName = CompactMatch(process_.ReadIl2CppString(namePointer));
+            if (parentName == L"itemsgrid") {
+                std::uint64_t children = 0, length = 0;
+                if (!Remote(rva::UIObjectCoreChildren, parent, 0, 0, 0, children, 700) || !children ||
+                    !process_.Read(children + off::ArrayLength, length) || length > 256)
+                    return false;
+                for (std::uint64_t i = 0; i < length; ++i) {
+                    std::uint64_t child = 0;
+                    if (process_.Read(children + off::ArrayData + i * sizeof(std::uint64_t), child) &&
+                        child == current) {
+                        gridOrder = static_cast<int>(i);
+                        return true;
+                    }
                 }
+                return false;
+            }
+            current = parent;
+        }
+        return false;
+    }
+    bool CollectSellItemBoxPool(std::vector<SellItemBoxEntry>& pool, std::wstring& detail) {
+        pool.clear();
+        std::vector<std::uint64_t> rawButtons;
+        if (!ReadAllUiButtons(rawButtons)) {
+            detail = L"Không đọc được danh sách UIButton của tay nải";
+            return false;
+        }
+        for (const std::uint64_t button : rawButtons) {
+            std::wstring handler;
+            if (!ReadButtonClickHandler(button, handler) || CompactMatch(handler) != L"buttonitemclicked")
+                continue;
+            ButtonInfo info;
+            info.object = button;
+            info.handler = std::move(handler);
+            if (!IsSafeBagItemButton(info)) continue;
+            int order = -1;
+            if (!FindItemsGridOrder(button, order)) continue;
+            pool.push_back({{ActionKind::Button, std::move(info)}, order});
+        }
+        std::sort(pool.begin(), pool.end(), [](const SellItemBoxEntry& a,
+                                                const SellItemBoxEntry& b) {
+            return a.gridOrder < b.gridOrder;
+        });
+        if (pool.empty()) {
+            detail = L"Đã vào Trang bị nhưng chưa lấy được pool ItemBox của ItemsGrid";
+            return false;
+        }
+        return true;
+    }
+    bool IsSellItemBoxVisible(const SellItemBoxEntry& item) {
+        std::uint64_t active = 0;
+        return Remote(rva::UIObjectActiveInHierarchy, item.action.info.object,
+                      0, 0, 0, active, 550) && (active & 0xFFu) != 0;
+    }
+    bool FindSecondVisibleSellItem(const std::vector<SellItemBoxEntry>& pool,
+                                   ActionControl& target, int& visibleCount) {
+        visibleCount = 0;
+        for (const SellItemBoxEntry& item : pool) {
+            if (!IsSellItemBoxVisible(item)) continue;
+            ++visibleCount;
+            if (visibleCount == 2) {
+                target = item.action;
+                return true;
             }
         }
-        std::vector<ButtonInfo> rects;
-        if (candidates.empty() && ReadActiveRectInfos(false, rects)) {
-            for (const ButtonInfo& info : rects)
-                if (IsSafeBagItemRect(info)) candidates.push_back({ActionKind::RectLua, info});
-        }
-        std::sort(candidates.begin(), candidates.end(), [](const ActionControl& a,
-                                                            const ActionControl& b) {
-            return a.info.object < b.info.object;
-        });
-        return true;
+        return false;
     }
     bool TrySellAtNpc(int& freeAfter, std::wstring& detail) {
         freeAfter = -1;
         int freeBefore = -1;
-        if (!ReadFreeBagSpace(freeBefore)) {
-            detail = L"Không đọc được GetFreeBagSpace trước khi bán";
-            return false;
-        }
+        ReadFreeBagSpace(freeBefore);  // chỉ để hiển thị; không dùng làm điều kiện kết thúc.
         if (!OpenSellUi(detail)) return false;
 
-        // BagItemsGrid creates a fixed pool of 100 ItemBox controls and reuses them. Under
-        // Equipment filter a successfully sold item becomes inactive; an unsellable item stays
-        // active. Three fast passes therefore naturally implement “món nào 3 lần không bán được
-        // thì bỏ qua”, while avoiding a full UI scan + RAM probe after every single click.
-        int callbacks = 0;
-        int passes = 0;
-        int visibleCandidates = 0;
-        for (int pass = 0; pass < 3 && callbacks < 90; ++pass) {
-            std::vector<ActionControl> candidates;
-            CollectSafeBagItems(candidates);
-            if (candidates.empty()) break;
-            ++passes;
-            visibleCandidates = std::max(visibleCandidates, static_cast<int>(candidates.size()));
-            for (const ActionControl& item : candidates) {
-                if (callbacks >= 90) break;
-                // Always resolve active candidates fresh once per pass; never keep them across UI
-                // page changes. ItemBox objects themselves persist inside BagItemsGrid.
-                InvokeAction(item);
-                ++callbacks;
-                Sleep(45);  // 4x faster than the old 180 ms cadence, still strictly sequential.
-            }
-            // Give server RemoveItem/UpdateItemsList a small quiet window, then the next pass
-            // rescans active controls and automatically drops slots already removed.
-            Sleep(70);
+        // BagItemsGrid tạo pool ItemBox theo Position rồi DoFilter()+RebuildLayout(). Khi món ở
+        // vị trí hiển thị thứ 2 bán thành công, ItemBox đó bị Clear/inactive và món kế tiếp dịch
+        // vào đúng vị trí hiển thị thứ 2. Vì thế không giữ pointer cũ: mỗi nhịp 1 giây resolve lại
+        // ItemBox đang hiển thị thứ 2, bỏ nguyên ô đầu tiên như yêu cầu.
+        std::vector<SellItemBoxEntry> pool;
+        if (!CollectSellItemBoxPool(pool, detail)) {
+            std::wstring closeDetail;
+            CloseTradeAndBagUi(closeDetail);
+            detail += closeDetail;
+            return false;
         }
 
-        int finalFree = freeBefore;
-        // Server inventory updates are authoritative. Poll a few short times instead of probing
-        // after every click, which was one of the heaviest parts of the old loop.
-        for (int i = 0; i < 8; ++i) {
-            if (i) Sleep(45);
-            int value = -1;
-            if (ReadFreeBagSpace(value)) finalFree = std::max(finalFree, value);
+        constexpr int kSellAttempts = 90;
+        constexpr DWORD kSellIntervalMs = 1000;
+        int callbacks = 0;
+        int emptySecondSlotTicks = 0;
+        int lastVisibleCount = 0;
+        for (int attempt = 0; attempt < kSellAttempts; ++attempt) {
+            ActionControl second;
+            int visibleCount = 0;
+            if (FindSecondVisibleSellItem(pool, second, visibleCount)) {
+                if (InvokeAction(second)) ++callbacks;
+            } else {
+                ++emptySecondSlotTicks;
+            }
+            lastVisibleCount = visibleCount;
+            if (attempt + 1 < kSellAttempts) Sleep(kSellIntervalMs);
         }
-        freeAfter = finalFree;
+
+        int value = -1;
+        if (ReadFreeBagSpace(value)) freeAfter = value;
+        else freeAfter = freeBefore;
+
         std::wstring closeDetail;
         CloseTradeAndBagUi(closeDetail);
-
-        if (callbacks == 0) {
-            detail = L"Đã tới tab Trang bị nhưng không nhận diện được ItemBox/handler ButtonItemClicked" +
-                     closeDetail;
-            return false;
-        }
-        if (finalFree <= freeBefore) {
-            detail = L"Đã click " + std::to_wstring(callbacks) + L" ô trang bị qua " +
-                     std::to_wstring(passes) + L" lượt nhưng số ô trống chưa tăng • ItemBox thấy " +
-                     std::to_wstring(visibleCandidates) + closeDetail;
-            return false;
-        }
-        detail = L"Đã bán nhanh: " + std::to_wstring(callbacks) + L" click / " +
-                 std::to_wstring(passes) + L" lượt • tay nải " +
-                 std::to_wstring(freeBefore) + L" → " + std::to_wstring(finalFree) +
-                 L" ô trống" + closeDetail;
+        detail = L"Đã hoàn thành 90 nhịp tại ô Trang bị số 2 (bỏ ô số 1) • callback gửi " +
+                 std::to_wstring(callbacks) + L"/90 • nhịp ô số 2 trống " +
+                 std::to_wstring(emptySecondSlotTicks) + L" • còn hiển thị " +
+                 std::to_wstring(lastVisibleCount) + L" ItemBox";
+        if (freeBefore >= 0 && freeAfter >= 0)
+            detail += L" • tay nải " + std::to_wstring(freeBefore) + L" → " +
+                      std::to_wstring(freeAfter) + L" ô trống";
+        detail += closeDetail;
         return true;
     }
 
-    void UpdateTransitionState(bool mapReady, bool waitingChangeMap,
-                               bool messageBoxVisible) {
-        std::lock_guard<std::mutex> guard(stateLock_);
-        state_.connected = true;
-        state_.running = running_.load();
-        state_.mapReady = mapReady;
-        state_.waitingChangeMap = waitingChangeMap;
-        state_.messageBoxVisible = messageBoxVisible;
-        state_.moving = false;
-        state_.autoPathing = false;
-        ++state_.sequence;
-    }
-    bool RefreshLive(std::wstring& error) {
-        std::uint64_t mapReadyValue = 0, waitingChangeMapValue = 0;
-        bool messageBoxVisible = false;
-        if (!Remote(rva::LuaIsMapReady, 0, 0, 0, 0, mapReadyValue) ||
-            !Remote(rva::SessionWaitingChangeMap, 0, 0, 0, 0,
-                    waitingChangeMapValue)) {
-            error = L"Mất phản hồi trạng thái chuyển map";
-            return false;
-        }
-        const bool mapReady = (mapReadyValue & 0xFFu) != 0;
-        const bool waitingChangeMap = (waitingChangeMapValue & 0xFFu) != 0;
-        if (!mapReady || waitingChangeMap) {
-            UpdateTransitionState(mapReady, waitingChangeMap, false);
-            return true;
-        }
-        if (!ReadMessageBoxVisible(messageBoxVisible)) {
-            error = L"Mất phản hồi bộ nhận diện hộp xác nhận";
-            return false;
-        }
-        std::uint64_t luaPlayer = 0;
-        if (!Remote(rva::LuaGetRoleData, 0, 0, 0, 0, luaPlayer) || !luaPlayer) {
-            error = L"Hãy đăng nhập nhân vật và vào bản đồ";
-            return false;
-        }
-        std::uint64_t roleData = 0;
-        std::int32_t map = 0, x = 0, y = 0;
-        if (!process_.Read(luaPlayer + off::LuaPlayerRoleData, roleData) || !roleData ||
-            !process_.Read(roleData + off::RoleMapID, map) ||
-            !process_.Read(roleData + off::RolePosX, x) ||
-            !process_.Read(roleData + off::RolePosY, y) || map <= 0) {
-            error = L"Chưa đọc được MapID/X/Y realtime";
-            return false;
-        }
-        std::uint64_t roleIDValue = 0, namePointer = 0;
-        if (!Remote(rva::LuaPlayerGetRoleID, luaPlayer, 0, 0, 0, roleIDValue, 900) ||
-            !Remote(rva::LuaPlayerGetName, luaPlayer, 0, 0, 0, namePointer, 900)) {
-            error = L"Mất phản hồi danh tính nhân vật";
-            return false;
-        }
-        const std::wstring characterName = process_.ReadIl2CppString(namePointer);
-        std::uint64_t riding = 0, autoFight = 0, moving = 0, pathing = 0, dead = 0;
-        if (!Remote(rva::LuaLeaderIsDeath, luaPlayer, 0, 0, 0, dead) ||
-            !Remote(rva::LuaIsRiding, 0, 0, 0, 0, riding) ||
-            !Remote(rva::LuaGetAutoFightEnabled, 0, 0, 0, 0, autoFight) ||
-            !Remote(rva::LuaIsMoving, 0, 0, 0, 0, moving) ||
-            !Remote(rva::AutoPathIsRunning, autoPathManager_, 0, 0, 0, pathing)) {
-            error = L"Mất phản hồi trạng thái nhân vật";
-            return false;
-        }
-        std::lock_guard<std::mutex> guard(stateLock_);
-        state_.connected = true;
-        state_.running = running_.load();
-        state_.mapID = map;
-        state_.x = x;
-        state_.y = y;
-        state_.roleID = static_cast<std::int32_t>(roleIDValue);
-        state_.characterName = characterName;
-        state_.riding = (riding & 0xFFu) != 0;
-        // Interface Lua semantics: StartAutoFight(Train) sets EnableAutoF1=false;
-        // StopAllCurrentTask restores it to true. Expose autoFight as the inferred combat state.
-        state_.autoFight = (autoFight & 0xFFu) == 0;
-        state_.moving = (moving & 0xFFu) != 0;
-        state_.autoPathing = (pathing & 0xFFu) != 0;
-        state_.dead = (dead & 0xFFu) != 0;
-        state_.mapReady = mapReady;
-        state_.waitingChangeMap = waitingChangeMap;
-        state_.messageBoxVisible = messageBoxVisible;
-        ++state_.sequence;
-        return true;
-    }
-    void UpdateFreeBagSpace(int freeSpace) {
-        std::lock_guard<std::mutex> guard(stateLock_);
-        state_.freeBagSpace = freeSpace;
-        ++state_.sequence;
-    }
-    void UpdateLive(bool connected, const std::wstring& phase, const std::wstring& detail) {
-        std::lock_guard<std::mutex> guard(stateLock_);
-        state_.connected = connected;
-        state_.running = running_.load();
-        state_.phase = phase;
-        state_.detail = detail;
-        ++state_.sequence;
-    }
-    bool ToggleRide(bool) {
-        std::uint64_t slot = 0;
-        std::uint64_t ignored = 0;
-        if (!Remote(rva::LuaCurrentMountSlot, 0, 0, 0, 0, slot)) return false;
-        return Remote(rva::LuaToggleRide, static_cast<std::uint32_t>(slot), 0, 0, 0, ignored);
-    }
-    bool ReadSelectedTargetRoleID(std::int32_t& roleID) {
-        roleID = 0;
-        std::uint64_t selected = 0, value = 0;
-        if (!Remote(rva::LuaGetSelectedTarget, 0, 0, 0, 0, selected, 800)) return false;
-        if (!selected) return true;
-        if (!Remote(rva::SelectedTargetGetRoleID, selected, 0, 0, 0, value, 800)) return false;
-        roleID = static_cast<std::int32_t>(value);
-        return true;
-    }
-    bool SelectNearestEnemy(std::int32_t& roleID) {
-        roleID = 0;
-        std::uint64_t array = 0;
-        if (!Remote(rva::LuaGetNearbyEnemyIDs, 1, 1, 1, 0, array, 1000) || !array) return false;
-        std::uint64_t length = 0;
-        if (!process_.Read(array + off::ArrayLength, length) || length == 0 || length > 1024 ||
-            !process_.Read(array + off::ArrayData, roleID) || roleID <= 0) return false;
-        std::uint64_t ignored = 0;
-        return Remote(rva::LuaSelectTarget, static_cast<std::uint32_t>(roleID),
-                      0, 0, 0, ignored, 900);
-    }
-    bool EnsureSkillTarget(std::int32_t& roleID, std::wstring& detail) {
-        bool selectedRead = ReadSelectedTargetRoleID(roleID);
-        bool targetDead = false;
-        if (selectedRead && roleID > 0) {
-            std::uint64_t dead = 0;
-            if (Remote(rva::LuaIsSelectTargetDie, static_cast<std::uint32_t>(roleID),
-                       0, 0, 0, dead, 800)) targetDead = (dead & 0xFFu) != 0;
-        }
-        if (!selectedRead || roleID <= 0 || targetDead) {
-            if (SelectNearestEnemy(roleID)) {
-                Sleep(120);
-                return true;
-            }
-            // Equivalent to the user's Ctrl+Tab operation, delivered only to the
-            // selected game window and without foreground activation.
-            PressGameKey(game_.window, VK_TAB, true);
-            Sleep(180);
-            if (!ReadSelectedTargetRoleID(roleID) || roleID <= 0) {
-                detail = L"Chưa tìm thấy mục tiêu địch quanh nhân vật";
-                return false;
-            }
-        }
-        return true;
-    }
-    bool TriggerSelectedSkill(std::wstring& detail) {
-        if (config_.skillID <= 0) {
-            detail = L"Chưa chọn skill";
-            return false;
-        }
-        std::int32_t targetRoleID = 0;
-        if (!EnsureSkillTarget(targetRoleID, detail)) return false;
-        std::uint64_t value = 0;
-        if (!Remote(rva::LuaHasSkill, static_cast<std::uint32_t>(config_.skillID),
-                    0, 0, 0, value, 900) || (value & 0xFFu) == 0) {
-            detail = L"Game báo nhân vật không có skill đã chọn";
-            return false;
-        }
-        if (!Remote(rva::LuaCanUseSkill, 0, 0, 0, 0, value, 900) ||
-            (value & 0xFFu) == 0) {
-            detail = L"Nhân vật chưa thể dùng skill";
-            return false;
-        }
-        if (!Remote(rva::LuaIsSkillCooldown, static_cast<std::uint32_t>(config_.skillID),
-                    0, 0, 0, value, 900)) {
-            detail = L"Không đọc được hồi chiêu";
-            return false;
-        }
-        if ((value & 0xFFu) != 0) {
-            detail = L"Skill đang hồi";
-            return false;
-        }
-        if (!Remote(rva::LuaCheckSkillCondition, static_cast<std::uint32_t>(config_.skillID),
-                    0, 0, 0, value, 900) || (value & 0xFFu) == 0) {
-            detail = L"Chưa đủ điều kiện dùng skill";
-            return false;
-        }
-        std::uint64_t ignored = 0;
-        const bool sent = Remote(rva::LuaRequestUsingSkillWithTarget,
-                                 static_cast<std::uint32_t>(config_.skillID),
-                                 static_cast<std::uint32_t>(targetRoleID),
-                                 0, 0, ignored, 1200);
-        detail = sent ? L"Skill " + std::to_wstring(config_.skillID) +
-                            L" → Role " + std::to_wstring(targetRoleID)
-                      : L"Gửi skill thất bại";
-        return sent;
-    }
-    struct BuffSnapshot {
-        std::map<int, std::uint64_t> durationById;
-    };
-    bool ReadBuffObject(std::uint64_t object, BuffSnapshot& out) {
-        if (!object) return false;
-        std::uint64_t idValue = 0, durationValue = 0;
-        if (!Remote(rva::LuaBuffGetBuffID, object, 0, 0, 0, idValue, 700)) return false;
-        const int id = static_cast<std::int32_t>(idValue);
-        if (id <= 0 || id > 100000000) return false;
-        Remote(rva::LuaBuffGetDurationTick, object, 0, 0, 0, durationValue, 700);
-        out.durationById[id] = durationValue;
-        return true;
-    }
-    bool ReadBuffSnapshot(BuffSnapshot& out) {
-        out.durationById.clear();
-        std::uint64_t collection = 0;
-        if (!Remote(rva::LuaGetBuffs, 0, 0, 0, 0, collection, 1400) || !collection) return false;
-
-        // The API return type is a managed collection. Support both common layouts used by
-        // this build (List<LuaBuffData> and Dictionary<*, LuaBuffData>) and validate every
-        // count/pointer before reading; never assume a layout after a failed sanity check.
-        std::uint64_t array = 0;
-        std::int32_t count = -1;
-        bool layoutValid = false;
-        if (process_.Read(collection + off::ListItems, array) && array &&
-            process_.Read(collection + off::ListSize, count) && count >= 0 && count <= 512) {
-            std::uint64_t arrayLength = 0;
-            if (process_.Read(array + off::ArrayLength, arrayLength) &&
-                arrayLength >= static_cast<std::uint64_t>(count) && arrayLength <= 4096) {
-                layoutValid = true;
-                for (int i = 0; i < count; ++i) {
-                    std::uint64_t value = 0;
-                    if (process_.Read(array + off::ArrayData + static_cast<std::uint64_t>(i) * 8,
-                                      value) && value) ReadBuffObject(value, out);
-                }
-            }
-        }
-        if (layoutValid) return true;
-
-        array = 0; count = -1;
-        if (process_.Read(collection + off::DictionaryEntries, array) && array &&
-            process_.Read(collection + off::DictionaryCount, count) && count >= 0 && count <= 512) {
-            layoutValid = true;
-            for (int i = 0; i < count; ++i) {
-                const std::uint64_t entry = array + off::ArrayData +
-                    static_cast<std::uint64_t>(i) * off::EntrySize;
-                std::uint64_t value = 0;
-                if (process_.Read(entry + off::EntryValue, value) && value) ReadBuffObject(value, out);
-            }
-        }
-        return layoutValid;
-    }
-    bool HasMappedBuff(int buffID) {
-        if (buffID <= 0) return false;
-        std::uint64_t value = 0;
-        return Remote(rva::LuaHasBuff, static_cast<std::uint32_t>(buffID), 0, 0, 0,
-                      value, 900) && (value & 0xFFu) != 0;
-    }
-    bool TryApplyAndVerifyBuff(int skillID, std::wstring& detail) {
-        if (skillID <= 0) return false;
-        const auto mapped = config_.buffMap.find(skillID);
-        if (mapped != config_.buffMap.end() && HasMappedBuff(mapped->second)) {
-            detail = L"Skill " + std::to_wstring(skillID) + L" đã có buff " +
-                     std::to_wstring(mapped->second);
-            return true;
-        }
-        BuffSnapshot before, after;
-        const bool haveBefore = ReadBuffSnapshot(before);
-        std::uint64_t ignored = 0;
-        if (!Remote(rva::LuaRequestUsingSkill, static_cast<std::uint32_t>(skillID),
-                    0, 0, 0, ignored, 1800)) {
-            detail = L"RequestUsingSkill(" + std::to_wstring(skillID) + L") thất bại";
-            return false;
-        }
-        Sleep(650);
-        const bool haveAfter = ReadBuffSnapshot(after);
-        if (mapped != config_.buffMap.end() && HasMappedBuff(mapped->second)) {
-            detail = L"Buff " + std::to_wstring(mapped->second) + L" đã xuất hiện";
-            return true;
-        }
-        if (haveBefore && haveAfter) {
-            int detected = 0;
-            for (const auto& [buffID, duration] : after.durationById) {
-                const auto old = before.durationById.find(buffID);
-                if (old == before.durationById.end() || duration > old->second) {
-                    if (detected != 0 && detected != buffID) {
-                        detected = -1;  // ambiguous: more than one buff changed.
-                        break;
-                    }
-                    detected = buffID;
-                }
-            }
-            if (detected > 0) {
-                config_.buffMap[skillID] = detected;
-                detail = L"Đã xác minh skill " + std::to_wstring(skillID) + L" → buff " +
-                         std::to_wstring(detected);
-                return true;
-            }
-        }
-        detail = L"Skill " + std::to_wstring(skillID) +
-                 L" chưa tạo/refresh buff có thể xác minh";
-        return false;
-    }
-    bool FindChatInput(std::uint64_t& input, std::wstring& detail) {
-        input = 0;
-        std::vector<std::uint64_t> inputs;
-        if (!ReadAllUiInputs(inputs)) {
-            detail = L"Không đọc được danh sách UIInput";
-            return false;
-        }
-        struct Candidate { std::uint64_t object; int score; std::wstring label; };
-        std::vector<Candidate> candidates;
-        for (const std::uint64_t item : inputs) {
-            std::uint64_t active = 0, namePointer = 0;
-            if (!Remote(rva::UIObjectActiveInHierarchy, item, 0, 0, 0, active, 600) ||
-                (active & 0xFFu) == 0) continue;
-            std::wstring name;
-            if (Remote(rva::UIObjectGetName, item, 0, 0, 0, namePointer, 600))
-                name = process_.ReadIl2CppString(namePointer);
-            const std::wstring nameKey = CompactMatch(name);
-            std::wstring parentKey;
-            ReadAncestorKey(item, parentKey);
-            int score = 0;
-            if (ContainsCompact(nameKey, {L"chatinput", L"inputchat", L"chatmessage",
-                                          L"messageinput", L"inputmessage", L"talkinput"}))
-                score = 900;
-            else if (ContainsCompact(parentKey, {L"chat", L"talk", L"message", L"channel"}) &&
-                     ContainsCompact(nameKey, {L"input", L"edit", L"text"}))
-                score = 700;
-            else if (ContainsCompact(parentKey, {L"chat", L"talk", L"message", L"channel"}))
-                score = 520;
-            if (ContainsCompact(nameKey + parentKey, {L"search", L"rename", L"filter"}))
-                score -= 1000;
-            if (score > 0)
-                candidates.push_back({item, score, name.empty() ? L"UIInput" : name});
-        }
-        std::sort(candidates.begin(), candidates.end(),
-                  [](const Candidate& a, const Candidate& b) { return a.score > b.score; });
-        if (candidates.empty()) {
-            detail = L"Bảng chat đã mở nhưng chưa nhận diện được UIInput nhập tin nhắn";
-            return false;
-        }
-        if (candidates.size() > 1 && candidates[0].score == candidates[1].score &&
-            candidates[0].object != candidates[1].object) {
-            detail = L"Có nhiều UIInput chat cùng mức khớp; không tự chọn mù";
-            return false;
-        }
-        input = candidates[0].object;
-        detail = L"UIInput=" + candidates[0].label;
-        return true;
-    }
-    bool SetUiInputText(std::uint64_t input, const std::wstring& message,
-                        std::wstring& detail) {
-        if (!input || message.empty()) return false;
-        const std::string utf8 = Utf8(message);
-        if (utf8.empty() || utf8.size() > 800 || !il2cppStringNew_ || !WriteScratch(0, utf8)) {
-            detail = L"Nội dung Auto chat rỗng hoặc quá dài";
-            return false;
-        }
-        std::uint64_t managed = 0, handle = 0, ignored = 0;
-        if (!RemoteAbsolute(il2cppStringNew_, scratchBuffer_, 0, 0, 0, managed, 1000) || !managed ||
-            !RemoteAbsolute(il2cppGcHandleNew_, managed, 0, 0, 0, handle, 900) || !handle) {
-            detail = L"Không tạo được chuỗi managed để nhập chat";
-            return false;
-        }
-        const bool written = Remote(rva::UIInputSetText, input, managed, 0, 0, ignored, 1600);
-        RemoteAbsolute(il2cppGcHandleFree_, handle, 0, 0, 0, ignored, 600);
-        detail = written ? L"Đã điền nội dung trực tiếp vào UIInput của chat"
-                         : L"UIInput.set_Text() không phản hồi";
-        return written;
-    }
-    bool FindChatOpen(ActionControl& action, std::wstring& reason) {
-        if (FindButtonOrToggle(ButtonRole::ChatOpen, action, reason, false) ||
-            FindButtonOrToggle(ButtonRole::ChatOpen, action, reason, true))
-            return true;
-        // Some HUD builds implement the Chat icon as a Lua-backed rect. This fallback
-        // is used only for the uniquely scored Chat icon, never for AUTO combat.
-        ButtonInfo rect;
-        std::wstring rectReason;
-        if (FindRect(ButtonRole::ChatOpen, rect, rectReason, true)) {
-            action = {ActionKind::RectLua, std::move(rect)};
-            return true;
-        }
-        reason += L" • UIRect/Lua: " + rectReason;
-        return false;
-    }
-    bool FindChatPanelAction(ButtonRole role, ActionControl& action,
-                             std::wstring& reason, int attempts = 8) {
-        for (int i = 0; i < attempts; ++i) {
-            if (FindAction(role, action, reason, i == attempts - 1)) {
-                if (role != ButtonRole::ChatClose) return true;
-                std::wstring parentKey;
-                if (ReadAncestorKey(action.info.object, parentKey) &&
-                    ContainsCompact(parentKey, {L"chat", L"talk", L"message", L"channel"}))
-                    return true;
-                if (ContainsCompact(action.info.allKey, {L"closechat", L"chatclose"}))
-                    return true;
-            }
-            Sleep(120);
-        }
-        return false;
-    }
-    bool SendChatViaUiInternal(const std::wstring& message, std::wstring& detail) {
-        // Mirror the actual client workflow from the supplied video:
-        // open Chat -> fill the chat UIInput -> press "Gửi tin nhắn" -> close Chat.
-        std::uint64_t input = 0;
-        std::wstring inputReason;
-        if (!FindChatInput(input, inputReason)) {
-            // Interface.unity3d exposes the exact HUD action. It calls GUI.CallUI("ChatBox")
-            // when the panel is absent, so do not scan/click the visible Chat icon.
-            std::wstring openDetail;
-            if (!InvokeMainUiScriptNoArgs("BottomIcon", "ButtonOpenChatBoxClicked", openDetail)) {
-                detail = L"Không mở được ChatBox bằng Lua action thật • " + openDetail;
-                return false;
-            }
-            bool foundInput = false;
-            for (int i = 0; i < 10 && !foundInput; ++i) {
-                Sleep(120);
-                foundInput = FindChatInput(input, inputReason);
-            }
-            if (!foundInput) {
-                detail = L"Đã gọi mở Chat nhưng không tìm thấy ô nhập • " + inputReason;
-                return false;
-            }
-        }
-
-        std::wstring setDetail;
-        if (!SetUiInputText(input, message, setDetail)) {
-            detail = setDetail;
-            return false;
-        }
-
-        // Exact ChatBox Lua callbacks recovered from Interface.unity3d. Resolve the script
-        // again for every step instead of keeping transient UIButton pointers.
-        std::wstring sendDetail;
-        if (!InvokeMainUiScriptNoArgs("ChatBox", "ButtonSendMessageClicked", sendDetail)) {
-            detail = setDetail + L" • không gọi được ChatBox.ButtonSendMessageClicked • " +
-                     sendDetail;
-            return false;
-        }
-        Sleep(220);
-
-        std::wstring closeDetail;
-        const bool closed = InvokeMainUiScriptNoArgs("ChatBox", "ButtonCloseClicked", closeDetail);
-        detail = L"Đã BottomIcon mở ChatBox → nhập UIInput → ButtonSendMessageClicked" +
-                 std::wstring(closed ? L" → ButtonCloseClicked"
-                                     : L"; gửi xong nhưng chưa đóng được ChatBox • ") +
-                 (closed ? L"" : closeDetail);
-        return true;
-    }
     bool TryTreatmentAtNpc(std::wstring& detail) {
         if (!OpenNpc(healNpc_, detail)) return false;
 
@@ -3796,9 +3399,9 @@ private:
                                 nextRideDecision = npcUiQuietUntil;
                                 lastProgress = npcDone;
                                 bestDistance = LLONG_MAX;
-                                if (sold && freeAfter > 0) {
+                                if (sold) {
                                     sellFailures = 0;
-                                    UpdateFreeBagSpace(freeAfter);
+                                    if (freeAfter >= 0) UpdateFreeBagSpace(freeAfter);
                                     sellingTrip = false;
                                     outsideTarget = false;
                                     awaitingRideCheck = false;
@@ -4334,7 +3937,7 @@ private:
                                  CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                                  DEFAULT_PITCH, L"Segoe UI");
 
-        Label(L"THẦN LONG MOBILE • AUTO TRAIN v0.8.6", 16, 5, 650, 31, titleFont_);
+        Label(L"THẦN LONG MOBILE • AUTO TRAIN v0.8.7", 16, 5, 650, 31, titleFont_);
         Button(L"↻  QUÉT CỬA SỔ GAME", 855, 10, 189, 34, V5_REFRESH);
 
         tab_ = Make(WC_TABCONTROLW, L"", TCS_TABS | TCS_SINGLELINE | WS_TABSTOP,
@@ -4465,7 +4068,7 @@ private:
              150, 145, 780, 46, 0, titleFont_);
         Make(L"STATIC", L"Phần mềm được thiết kế bởi Thắng Nguyễn - ĐỒ LONG",
              SS_CENTER | SS_CENTERIMAGE, 150, 205, 780, 48, 0, boldFont_);
-        Make(L"STATIC", L"Phiên bản 0.8.6",
+        Make(L"STATIC", L"Phiên bản 0.8.7",
              SS_CENTER | SS_CENTERIMAGE, 150, 270, 780, 35, 0, smallFont_);
         buildingPage_ = 0;
         SelectPage(0);

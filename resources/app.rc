@@ -18,11 +18,11 @@ BEGIN
     BEGIN
       VALUE "CompanyName", "Thang Nguyen - DO LONG\0"
       VALUE "FileDescription", "Than Long Mobile - Auto Train\0"
-      VALUE "FileVersion", "0.8.6.0\0"
+      VALUE "FileVersion", "0.8.7.0\0"
       VALUE "InternalName", "ThanLongAutoTrain\0"
-      VALUE "OriginalFilename", "ThanLongAutoTrain_v0.8.6.exe\0"
+      VALUE "OriginalFilename", "ThanLongAutoTrain_v0.8.7.exe\0"
       VALUE "ProductName", "Than Long Mobile - Auto Train\0"
-      VALUE "ProductVersion", "0.8.6.0\0"
+      VALUE "ProductVersion", "0.8.7.0\0"
     END
   END
   BLOCK "VarFileInfo"
