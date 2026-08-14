@@ -1,10 +1,6 @@
 #include <windows.h>
 #include <cstdint>
-#include <cstring>
-#include <cwchar>
-#include <string>
-#include <sstream>
-#include <vector>
+#include <cstddef>
 #include "../common/protocol.h"
 
 using namespace tlcore;
@@ -28,8 +24,51 @@ bool ResolveProcAddress(HMODULE module, const char* name, T& out) {
     FARPROC raw = GetProcAddress(module, name);
     if (!raw) return false;
     static_assert(sizeof(raw) == sizeof(out), "Windows function pointer size mismatch");
-    std::memcpy(&out, &raw, sizeof(out));
+    const unsigned char* src = reinterpret_cast<const unsigned char*>(&raw);
+    unsigned char* dst = reinterpret_cast<unsigned char*>(&out);
+    for (std::size_t i = 0; i < sizeof(out); ++i) dst[i] = src[i];
     return out != nullptr;
+}
+
+void ClearText(wchar_t* out, std::size_t cap) {
+    if (out && cap) out[0] = L'\0';
+}
+
+
+void CopyText(wchar_t* out, std::size_t cap, const wchar_t* text) {
+    if (!out || cap == 0) return;
+    std::size_t i = 0;
+    if (text) {
+        while (i + 1 < cap && text[i]) { out[i] = text[i]; ++i; }
+    }
+    out[i] = L'\0';
+}
+
+void AppendText(wchar_t* out, std::size_t cap, const wchar_t* text) {
+    if (!out || cap == 0 || !text) return;
+    std::size_t used = 0;
+    while (used + 1 < cap && out[used]) ++used;
+    std::size_t i = 0;
+    while (used + 1 < cap && text[i]) out[used++] = text[i++];
+    out[used] = L'\0';
+}
+
+void AppendAscii(wchar_t* out, std::size_t cap, const char* text) {
+    if (!text) { AppendText(out, cap, L"?"); return; }
+    wchar_t tmp[256]{};
+    std::size_t i = 0;
+    while (i + 1 < _countof(tmp) && text[i]) {
+        tmp[i] = static_cast<unsigned char>(text[i]);
+        ++i;
+    }
+    tmp[i] = L'\0';
+    AppendText(out, cap, tmp);
+}
+
+void AppendUInt(wchar_t* out, std::size_t cap, std::uint32_t value) {
+    wchar_t tmp[32]{};
+    wsprintfW(tmp, L"%lu", static_cast<unsigned long>(value));
+    AppendText(out, cap, tmp);
 }
 
 struct Il2CppApi {
@@ -51,16 +90,16 @@ struct Il2CppApi {
     std::uint32_t resolved = 0;
     static constexpr std::uint32_t required = 14;
 
-    bool Load(std::wstring& detail) {
+    bool Load(wchar_t* detail, std::size_t cap) {
         if (gameAssembly && resolved == required) return true;
         gameAssembly = GetModuleHandleW(L"GameAssembly.dll");
         if (!gameAssembly) {
-            detail = L"GameAssembly.dll chưa được load trong client";
+            CopyText(detail, cap, L"GameAssembly.dll chưa được load trong client");
             return false;
         }
         resolved = 0;
 #define RESOLVE_COUNT(name) do { if (!ResolveProcAddress(gameAssembly, "il2cpp_" #name, name)) { \
-            detail = L"Thiếu một IL2CPP metadata export bắt buộc"; return false; } ++resolved; } while (0)
+            CopyText(detail, cap, L"Thiếu một IL2CPP metadata export bắt buộc"); return false; } ++resolved; } while (0)
         RESOLVE_COUNT(domain_get);
         RESOLVE_COUNT(domain_assembly_open);
         RESOLVE_COUNT(assembly_get_image);
@@ -71,36 +110,30 @@ struct Il2CppApi {
         RESOLVE_COUNT(method_get_param);
         RESOLVE_COUNT(method_get_flags);
         RESOLVE_COUNT(type_get_name);
+#undef RESOLVE_COUNT
         if (!ResolveProcAddress(gameAssembly, "il2cpp_free", free_fn)) {
-            detail = L"Thiếu export: il2cpp_free";
-            return false;
+            CopyText(detail, cap, L"Thiếu export: il2cpp_free"); return false;
         }
         ++resolved;
-        RESOLVE_COUNT(class_get_fields);
-        RESOLVE_COUNT(field_get_name);
-        RESOLVE_COUNT(field_get_type);
-#undef RESOLVE_COUNT
-        detail = L"IL2CPP metadata exports OK";
+#define RESOLVE_COUNT2(name) do { if (!ResolveProcAddress(gameAssembly, "il2cpp_" #name, name)) { \
+            CopyText(detail, cap, L"Thiếu một IL2CPP metadata export bắt buộc"); return false; } ++resolved; } while (0)
+        RESOLVE_COUNT2(class_get_fields);
+        RESOLVE_COUNT2(field_get_name);
+        RESOLVE_COUNT2(field_get_type);
+#undef RESOLVE_COUNT2
+        CopyText(detail, cap, L"IL2CPP metadata exports OK");
         return true;
     }
 };
 
 Il2CppApi g_api;
 
-std::wstring WidenAscii(const char* text) {
-    if (!text) return L"?";
-    std::wstring out;
-    while (*text) out.push_back(static_cast<unsigned char>(*text++));
-    return out;
-}
-
-std::wstring TypeName(const Il2CppType* type) {
-    if (!type || !g_api.type_get_name) return L"?";
+void AppendTypeName(wchar_t* out, std::size_t cap, const Il2CppType* type) {
+    if (!type || !g_api.type_get_name) { AppendText(out, cap, L"?"); return; }
     char* raw = g_api.type_get_name(type);
-    if (!raw) return L"?";
-    std::wstring out = WidenAscii(raw);
+    if (!raw) { AppendText(out, cap, L"?"); return; }
+    AppendAscii(out, cap, raw);
     g_api.free_fn(raw);
-    return out;
 }
 
 const Il2CppImage* AssemblyCSharpImage() {
@@ -111,35 +144,33 @@ const Il2CppImage* AssemblyCSharpImage() {
     return assembly ? g_api.assembly_get_image(assembly) : nullptr;
 }
 
-bool NativeValidate(FoundationSnapshot& snap, std::wstring& detail) {
+bool NativeValidate(FoundationSnapshot& snap, wchar_t* detail, std::size_t cap) {
     snap.hookThreadId = GetCurrentThreadId();
     snap.windowThreadId = g_shared ? g_shared->targetWindowThreadId : 0;
     if (!g_shared || g_shared->targetPid != GetCurrentProcessId()) {
-        detail = L"Shared mapping/PID không khớp";
-        return false;
+        CopyText(detail, cap, L"Shared mapping/PID không khớp"); return false;
     }
     if (!snap.windowThreadId || snap.hookThreadId != snap.windowThreadId) {
-        detail = L"Hook không chạy trên thread sở hữu cửa sổ game";
-        return false;
+        CopyText(detail, cap, L"Hook không chạy trên thread sở hữu cửa sổ game"); return false;
     }
     snap.validMask |= ValidHookThread;
 
-    std::wstring apiDetail;
-    if (!g_api.Load(apiDetail)) {
+    wchar_t apiDetail[256]{};
+    if (!g_api.Load(apiDetail, _countof(apiDetail))) {
         snap.resolvedExports = g_api.resolved;
         snap.requiredExports = Il2CppApi::required;
-        detail = apiDetail;
+        CopyText(detail, cap, apiDetail);
         return false;
     }
     snap.resolvedExports = g_api.resolved;
     snap.requiredExports = Il2CppApi::required;
     snap.validMask |= ValidIl2CppExports;
 
-    std::wstringstream ss;
-    ss << L"HOOK PASS TID=" << snap.hookThreadId
-       << L"; IL2CPP metadata exports " << snap.resolvedExports << L"/" << snap.requiredExports
-       << L"; CHƯA gọi managed action invoke; CHƯA xác minh Unity main thread";
-    detail = ss.str();
+    ClearText(detail, cap);
+    AppendText(detail, cap, L"HOOK PASS TID="); AppendUInt(detail, cap, snap.hookThreadId);
+    AppendText(detail, cap, L"; IL2CPP metadata exports "); AppendUInt(detail, cap, snap.resolvedExports);
+    AppendText(detail, cap, L"/"); AppendUInt(detail, cap, snap.requiredExports);
+    AppendText(detail, cap, L"; CHƯA runtime_invoke; CHƯA xác minh Unity main thread");
     return true;
 }
 
@@ -148,81 +179,67 @@ bool DescribeType(const char* nameSpace, const char* className,
                   std::uint32_t& methodCountOut,
                   std::uint32_t& fieldCountOut,
                   FoundationSnapshot& snap,
-                  std::wstring& detail) {
-    std::wstring nativeDetail;
-    if (!NativeValidate(snap, nativeDetail)) {
-        detail = nativeDetail;
-        return false;
+                  wchar_t* detail, std::size_t cap) {
+    wchar_t nativeDetail[512]{};
+    if (!NativeValidate(snap, nativeDetail, _countof(nativeDetail))) {
+        CopyText(detail, cap, nativeDetail); return false;
     }
     const Il2CppImage* image = AssemblyCSharpImage();
-    if (!image) {
-        detail = L"Không resolve được Assembly-CSharp bằng metadata API";
-        return false;
-    }
+    if (!image) { CopyText(detail, cap, L"Không resolve được Assembly-CSharp bằng metadata API"); return false; }
     Il2CppClass* klass = g_api.class_from_name(image, nameSpace, className);
     if (!klass) {
-        std::wstringstream miss;
-        miss << L"Không tìm thấy type " << WidenAscii(nameSpace) << L"." << WidenAscii(className);
-        detail = miss.str();
-        return false;
+        ClearText(detail, cap); AppendText(detail, cap, L"Không tìm thấy type ");
+        if (nameSpace && *nameSpace) { AppendAscii(detail, cap, nameSpace); AppendText(detail, cap, L"."); }
+        AppendAscii(detail, cap, className); return false;
     }
 
     constexpr std::uint32_t METHOD_ATTRIBUTE_STATIC = 0x0010;
-    std::vector<std::wstring> methods;
+    ClearText(detail, cap);
+    if (nameSpace && *nameSpace) { AppendAscii(detail, cap, nameSpace); AppendText(detail, cap, L"."); }
+    AppendAscii(detail, cap, className);
+
     void* iter = nullptr;
+    std::uint32_t shownMethods = 0;
+    wchar_t methodText[700]{};
     while (const MethodInfo* method = g_api.class_get_methods(klass, &iter)) {
         ++methodCountOut;
-        if (methods.size() >= 24) continue;
-        const char* mn = g_api.method_get_name(method);
-        const std::uint32_t argc = g_api.method_get_param_count(method);
+        if (shownMethods >= 16) continue;
+        if (shownMethods++) AppendText(methodText, _countof(methodText), L"; ");
         std::uint32_t iflags = 0;
         const bool isStatic = (g_api.method_get_flags(method, &iflags) & METHOD_ATTRIBUTE_STATIC) != 0;
-        std::wstringstream one;
-        one << (isStatic ? L"static " : L"") << WidenAscii(mn) << L"(";
+        if (isStatic) AppendText(methodText, _countof(methodText), L"static ");
+        AppendAscii(methodText, _countof(methodText), g_api.method_get_name(method));
+        AppendText(methodText, _countof(methodText), L"(");
+        const std::uint32_t argc = g_api.method_get_param_count(method);
         for (std::uint32_t i = 0; i < argc; ++i) {
-            if (i) one << L", ";
-            one << TypeName(g_api.method_get_param(method, i));
+            if (i) AppendText(methodText, _countof(methodText), L", ");
+            AppendTypeName(methodText, _countof(methodText), g_api.method_get_param(method, i));
         }
-        one << L")";
-        methods.push_back(one.str());
+        AppendText(methodText, _countof(methodText), L")");
     }
 
-    std::vector<std::wstring> fields;
     iter = nullptr;
+    std::uint32_t shownFields = 0;
+    wchar_t fieldText[420]{};
     while (FieldInfo* field = g_api.class_get_fields(klass, &iter)) {
         ++fieldCountOut;
-        if (fields.size() >= 16) continue;
-        std::wstringstream one;
-        one << TypeName(g_api.field_get_type(field)) << L" " << WidenAscii(g_api.field_get_name(field));
-        fields.push_back(one.str());
+        if (shownFields >= 12) continue;
+        if (shownFields++) AppendText(fieldText, _countof(fieldText), L"; ");
+        AppendTypeName(fieldText, _countof(fieldText), g_api.field_get_type(field));
+        AppendText(fieldText, _countof(fieldText), L" ");
+        AppendAscii(fieldText, _countof(fieldText), g_api.field_get_name(field));
     }
 
     snap.validMask |= validBit;
-    std::wstringstream ss;
-    if (nameSpace && *nameSpace) ss << WidenAscii(nameSpace) << L".";
-    ss << WidenAscii(className) << L": methods=" << methodCountOut << L", fields=" << fieldCountOut;
-    if (!methods.empty()) {
-        ss << L" | M: ";
-        for (std::size_t i = 0; i < methods.size(); ++i) {
-            if (i) ss << L"; ";
-            ss << methods[i];
-        }
-    }
-    if (!fields.empty()) {
-        ss << L" | F: ";
-        for (std::size_t i = 0; i < fields.size(); ++i) {
-            if (i) ss << L"; ";
-            ss << fields[i];
-        }
-    }
-    detail = ss.str();
+    AppendText(detail, cap, L": methods="); AppendUInt(detail, cap, methodCountOut);
+    AppendText(detail, cap, L", fields="); AppendUInt(detail, cap, fieldCountOut);
+    if (methodText[0]) { AppendText(detail, cap, L" | M: "); AppendText(detail, cap, methodText); }
+    if (fieldText[0]) { AppendText(detail, cap, L" | F: "); AppendText(detail, cap, fieldText); }
     return true;
 }
 
-void SetDetail(BridgeResponse& response, const std::wstring& text) {
-    const std::size_t cap = sizeof(response.detail) / sizeof(response.detail[0]);
-    std::wcsncpy(response.detail, text.c_str(), cap - 1);
-    response.detail[cap - 1] = L'\0';
+void SetDetail(BridgeResponse& response, const wchar_t* text) {
+    CopyText(response.detail, _countof(response.detail), text ? text : L"");
 }
 
 bool EnsureShared() {
@@ -231,13 +248,11 @@ bool EnsureShared() {
     MappingName(GetCurrentProcessId(), name, _countof(name));
     g_mapping = OpenFileMappingW(FILE_MAP_ALL_ACCESS, FALSE, name);
     if (!g_mapping) return false;
-    g_shared = reinterpret_cast<SharedBlock*>(MapViewOfFile(g_mapping, FILE_MAP_ALL_ACCESS, 0, 0,
-                                                            sizeof(SharedBlock)));
+    g_shared = reinterpret_cast<SharedBlock*>(MapViewOfFile(g_mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SharedBlock)));
     if (!g_shared || g_shared->magic != kMagic || g_shared->protocolVersion != kProtocolVersion) {
         if (g_shared) UnmapViewOfFile(g_shared);
         g_shared = nullptr;
-        CloseHandle(g_mapping);
-        g_mapping = nullptr;
+        CloseHandle(g_mapping); g_mapping = nullptr;
         return false;
     }
     InterlockedExchange(&g_shared->bridgeLoaded, 1);
@@ -252,35 +267,23 @@ void ProcessRequest() {
 
     BridgeResponse response{};
     FoundationSnapshot snap{};
-    std::wstring detail;
+    wchar_t detail[1024]{};
     bool ok = false;
 
     const BridgeCommand command = static_cast<BridgeCommand>(g_shared->request.command);
     switch (command) {
         case BridgeCommand::ValidateNative:
-            ok = NativeValidate(snap, detail);
-            response.errorCode = ok ? 0 : 2101;
-            break;
+            ok = NativeValidate(snap, detail, _countof(detail)); response.errorCode = ok ? 0 : 2101; break;
         case BridgeCommand::InspectFgMainThread:
-            ok = DescribeType("FGStudio.Engine.Utilities", "MainThread",
-                              ValidFgMainThreadType,
-                              snap.fgMainThreadMethodCount,
-                              snap.fgMainThreadFieldCount,
-                              snap, detail);
-            response.errorCode = ok ? 0 : 2201;
-            break;
+            ok = DescribeType("FGStudio.Engine.Utilities", "MainThread", ValidFgMainThreadType,
+                              snap.fgMainThreadMethodCount, snap.fgMainThreadFieldCount,
+                              snap, detail, _countof(detail)); response.errorCode = ok ? 0 : 2201; break;
         case BridgeCommand::InspectUnityDispatcher:
-            ok = DescribeType("", "UnityMainThreadDispatcher",
-                              ValidUnityDispatcher,
-                              snap.unityDispatcherMethodCount,
-                              snap.unityDispatcherFieldCount,
-                              snap, detail);
-            response.errorCode = ok ? 0 : 2301;
-            break;
+            ok = DescribeType("", "UnityMainThreadDispatcher", ValidUnityDispatcher,
+                              snap.unityDispatcherMethodCount, snap.unityDispatcherFieldCount,
+                              snap, detail, _countof(detail)); response.errorCode = ok ? 0 : 2301; break;
         default:
-            detail = L"Command không hợp lệ";
-            response.errorCode = 2003;
-            break;
+            CopyText(detail, _countof(detail), L"Command không hợp lệ"); response.errorCode = 2003; break;
     }
 
     response.ok = ok ? 1 : 0;

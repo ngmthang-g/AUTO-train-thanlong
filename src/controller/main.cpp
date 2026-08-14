@@ -29,7 +29,7 @@ bool ResolveProcAddress(HMODULE module, const char* name, T& out) {
     return out != nullptr;
 }
 
-constexpr wchar_t kTitle[] = L"Thần Long Auto - NewCore v1.0.3 Foundation Validator";
+constexpr wchar_t kTitle[] = L"Thần Long Auto - NewCore v1.0.4 Foundation Validator";
 constexpr wchar_t kModule[] = L"GameAssembly.dll";
 constexpr int IDC_LIST = 1001;
 constexpr int IDC_SCAN = 1002;
@@ -130,9 +130,17 @@ public:
         shared_->targetWindowThreadId = game.threadId;
 
         const std::wstring bridgePath = ExeDirectory() + L"\\ThanLongNewCoreBridge.dll";
+        const UINT oldMode = SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX);
+        SetLastError(ERROR_SUCCESS);
         localBridge_ = LoadLibraryW(bridgePath.c_str());
+        const DWORD loadError = GetLastError();
+        SetErrorMode(oldMode);
         if (!localBridge_) {
-            error = L"Thiếu/không load được ThanLongNewCoreBridge.dll";
+            wchar_t sys[512]{};
+            FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, loadError,
+                           MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), sys, _countof(sys), nullptr);
+            error = L"Không load được bridge. Win32=" + std::to_wstring(loadError) +
+                    L" (" + std::wstring(sys) + L") Path=" + bridgePath;
             Close();
             return false;
         }
