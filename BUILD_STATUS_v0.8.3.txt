@@ -1,0 +1,9 @@
+ThanLongAutoTrain v0.8.3
+
+Static source validation:
+- clang++ C++17 -Wall -Wextra -Werror -fsyntax-only: PASS (Win32 API stubbed only for host-independent syntax checking)
+- clang Static Analyzer: 0 diagnostics
+- remote_worker.S -> x86-64 Windows COFF: PASS
+- worker arg5 placement verified at [rsp+0x20]
+
+Full PE link is intended for build.cmd / GitHub Actions on Windows/Zig toolchain.

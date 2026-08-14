@@ -24,7 +24,7 @@ extern "C" unsigned char RemoteWorkerStart[];
 extern "C" unsigned char RemoteWorkerEnd[];
 
 using Clock = std::chrono::steady_clock;
-constexpr wchar_t kTitle[] = L"Thần Long Mobile - Auto Train v0.8.2";
+constexpr wchar_t kTitle[] = L"Thần Long Mobile - Auto Train v0.8.3";
 constexpr wchar_t kModule[] = L"GameAssembly.dll";
 
 namespace rva {
@@ -1013,7 +1013,7 @@ public:
         }
         std::int32_t currentResID = 0;
         std::wstring resDetail;
-        if (!ResolveNpcResIDByRoleID(currentRoleID, currentResID, resDetail)) {
+        if (!ResolveNpcResIDByRoleID(currentRoleID, currentName, currentResID, resDetail)) {
             error = L"Đã thấy NPC “" +
                     (currentName.empty() ? std::to_wstring(currentRoleID) : currentName) +
                     L"” nhưng chưa lấy được ResID thật • " + resDetail;
@@ -2103,29 +2103,35 @@ private:
         return true;
     }
     bool ClickInternalAutoFight(std::wstring& detail) {
-        // Deterministic sequence only: AUTO root -> wait for the newly-created submenu -> Đánh quái.
-        // Do not accept a globally-visible/stale "fight" control before opening AUTO, because that
-        // was able to skip the known-good root click and could call an unrelated recycled UI object.
-        std::wstring rootDetail;
-        if (!OpenAutoRootButton(rootDetail)) {
-            detail = rootDetail;
-            return false;
-        }
-
+        // Restore the v0.7.x order that was empirically better on this client:
+        // if the AUTO submenu is already alive, use its Đánh quái control directly.
+        // Only open the root when the submenu control is not currently present.
+        // This also avoids being trapped by a stale EnableAutoF1=ON flag.
         ActionControl fight;
         std::wstring fightReason;
-        bool foundFight = false;
-        for (int attempt = 0; attempt < 7 && !foundFight; ++attempt) {
-            Sleep(180);
-            foundFight = FindButtonOrToggle(ButtonRole::Fight, fight, fightReason,
-                                            attempt >= 5);
-        }
+        bool foundFight = FindButtonOrToggle(ButtonRole::Fight, fight, fightReason, false);
+        if (!foundFight)
+            foundFight = FindButtonOrToggle(ButtonRole::Fight, fight, fightReason, true);
+
+        std::wstring rootDetail;
         if (!foundFight) {
-            detail = rootDetail +
-                     L" • AUTO đã mở nhưng chưa thấy Đánh quái dạng UIButton/UIToggle • " +
-                     fightReason;
-            return false;
+            if (!OpenAutoRootButton(rootDetail)) {
+                detail = L"Chưa thấy Đánh quái và không mở được AUTO • " + rootDetail;
+                return false;
+            }
+            for (int attempt = 0; attempt < 8 && !foundFight; ++attempt) {
+                Sleep(180);
+                foundFight = FindButtonOrToggle(ButtonRole::Fight, fight, fightReason,
+                                                attempt >= 5);
+            }
+            if (!foundFight) {
+                detail = rootDetail +
+                         L" • AUTO đã mở nhưng chưa thấy Đánh quái dạng UIButton/UIToggle • " +
+                         fightReason;
+                return false;
+            }
         }
+
         if (!InvokeButtonOrToggle(fight)) {
             detail = L"Đã thấy Đánh quái nhưng callback Button/Toggle không phản hồi • " +
                      fight.info.label;
@@ -2133,15 +2139,13 @@ private:
         }
 
         bool verified = false;
-        for (int i = 0; i < 5 && !verified; ++i) {
+        for (int i = 0; i < 6 && !verified; ++i) {
             Sleep(180);
             std::uint64_t enabled = 0;
             verified = Remote(rva::LuaGetAutoFightEnabled, 0, 0, 0, 0, enabled, 900) &&
                        (enabled & 0xFFu) != 0;
         }
         if (!verified && fight.kind == ActionKind::Toggle) {
-            // set_Selected can change the visual toggle without executing the Lua select handler.
-            // Fire the game's bool select handler once, never a PointerEventData/null click.
             std::uint64_t ignored = 0;
             Remote(rva::UIToggleHandleSelectEvent, fight.info.object, 1, 0, 0, ignored, 1600);
             for (int i = 0; i < 4 && !verified; ++i) {
@@ -2151,12 +2155,13 @@ private:
                            (enabled & 0xFFu) != 0;
             }
         }
+
         const std::wstring kind = fight.kind == ActionKind::Toggle
             ? L"UIToggle.set_Selected/HandleSelectEvent"
             : L"UIButton.HandleClickEvent()";
         detail = verified
             ? L"Đã bật AUTO → Đánh quái bằng " + kind + L" • AutoFight=ON • " + fight.info.label
-            : L"AUTO đã mở và đã gọi Đánh quái bằng " + kind +
+            : L"Đã gọi Đánh quái bằng " + kind +
               L" nhưng AutoFight vẫn OFF; không coi là đã bật";
         return verified;
     }
@@ -2317,13 +2322,58 @@ private:
         }
         return false;
     }
-    bool ResolveNpcResIDByRoleID(std::int32_t roleID, std::int32_t& resID,
-                                 std::wstring& detail) {
+    bool ValidateNpcResIDCandidate(std::int32_t roleID, const std::wstring& expectedName,
+                                   std::int32_t candidate, std::wstring& detail) {
+        if (roleID <= 0 || candidate <= 0) return false;
+        std::uint64_t npc = 0;
+        if (!Remote(rva::LuaGetNearestNPCByResID, static_cast<std::uint32_t>(candidate),
+                    0, 0, 0, npc, 1000) || !npc) return false;
+
+        std::uint64_t returnedRole = 0, namePointer = 0;
+        if (!Remote(rva::LuaMapObjectGetRoleID, npc, 0, 0, 0, returnedRole, 800) ||
+            static_cast<std::int32_t>(returnedRole) != roleID) return false;
+
+        std::wstring returnedName;
+        if (Remote(rva::LuaMapObjectGetName, npc, 0, 0, 0, namePointer, 800) && namePointer)
+            returnedName = process_.ReadIl2CppString(namePointer);
+        const std::wstring expectedKey = CompactMatch(expectedName);
+        const std::wstring returnedKey = CompactMatch(returnedName);
+        if (!expectedKey.empty() && !returnedKey.empty() && expectedKey != returnedKey)
+            return false;
+
+        detail = L"Game xác minh RoleID " + std::to_wstring(roleID) +
+                 L" ↔ ResID " + std::to_wstring(candidate);
+        return true;
+    }
+    bool ResolveNpcResIDByRoleID(std::int32_t roleID, const std::wstring& name,
+                                 std::int32_t& resID, std::wstring& detail) {
         resID = 0;
         if (roleID <= 0) {
             detail = L"RoleID NPC không hợp lệ";
             return false;
         }
+
+        // Static NPC RoleID on this client uses the 1,000,000,000 namespace.  The two
+        // live failures reported by the user are 1000000346 and 1000000378, while native
+        // client code contains the same billion-base normalization.  Never trust the
+        // arithmetic alone: ask GetNearestNPC(candidate) and require the returned RoleID
+        // (and name, when available) to match before using/persisting the candidate.
+        constexpr std::int32_t kStaticNpcRoleBase = 1000000000;
+        constexpr std::int32_t kStaticNpcRoleSpan = 10000000;
+        if (roleID >= kStaticNpcRoleBase &&
+            roleID < kStaticNpcRoleBase + kStaticNpcRoleSpan) {
+            const std::int32_t candidate = roleID - kStaticNpcRoleBase;
+            std::wstring verifyDetail;
+            if (ValidateNpcResIDCandidate(roleID, name, candidate, verifyDetail)) {
+                resID = candidate;
+                detail = verifyDetail + L" • không cần quét Dictionary nội bộ";
+                return true;
+            }
+        }
+
+        // Compatibility fallback for moving/special NPC types whose RoleID is not in the
+        // static billion namespace.  This path is intentionally secondary because the
+        // concrete Dictionary layout is more version-sensitive than the public Lua API.
         if (ReadNpcResIDFromSessionDictionary(rva::SessionGetNPCs, roleID, resID)) {
             detail = L"SessionData.NPCs: RoleID " + std::to_wstring(roleID) +
                      L" → ResID " + std::to_wstring(resID);
@@ -2334,48 +2384,55 @@ private:
                      L" → ResID " + std::to_wstring(resID);
             return true;
         }
-        detail = L"Không thấy RoleID " + std::to_wstring(roleID) +
-                 L" trong SessionData.NPCs/MovingNPCs";
+        detail = L"Không ánh xạ được RoleID " + std::to_wstring(roleID) +
+                 L" sang ResID bằng API game hoặc SessionData";
         return false;
     }
     bool ResolveSavedNpcResID(const SellNpc& saved, std::int32_t& resID,
                               std::wstring& detail) {
         resID = saved.resID;
-        if (resID <= 0) {
-            // Backward compatibility for files saved by v0.7.x/v0.8.1: resolve the current
-            // nearby object by name/RoleID, then translate RoleID -> GNPC.ResID.
-            std::int32_t nearestRoleID = 0;
-            std::wstring nearestName, nearestDetail;
-            if (!ReadNearestNpcIdentity(nearestRoleID, nearestName, nearestDetail)) {
-                detail = L"NPC cũ chưa có ResID; hãy đứng gần và lưu lại • " + nearestDetail;
-                return false;
+
+        // Prefer a previously saved ResID only when the game's own nearest-NPC query
+        // proves that it still maps back to the saved RoleID/name.
+        if (resID > 0 && saved.roleID > 0) {
+            std::wstring verifyDetail;
+            if (ValidateNpcResIDCandidate(saved.roleID, saved.name, resID, verifyDetail)) {
+                detail = verifyDetail;
+                return true;
             }
-            const std::wstring savedKey = CompactMatch(saved.name);
-            const std::wstring nearestKey = CompactMatch(nearestName);
-            const bool sameName = !savedKey.empty() && !nearestKey.empty() && savedKey == nearestKey;
-            const bool sameRole = saved.roleID > 0 && saved.roleID == nearestRoleID;
-            if (!sameName && !sameRole) {
-                detail = L"NPC gần nhất “" +
-                         (nearestName.empty() ? L"không rõ tên" : nearestName) +
-                         L"” khác NPC đã lưu “" + saved.name + L"”";
-                return false;
-            }
-            if (!ResolveNpcResIDByRoleID(nearestRoleID, resID, detail)) return false;
+            resID = 0; // stale/legacy entry: re-resolve from the live nearby NPC below.
         }
 
-        // Verify that this NPC resource actually exists close enough for the game's own
-        // GetNearestNPC(resID) query.  This prevents sending ClickNPC with a stale/wrong ID and
-        // avoids the game's “Không tìm thấy NPC tương ứng!” popup.
-        std::uint64_t matchingNpc = 0;
-        if (!Remote(rva::LuaGetNearestNPCByResID, static_cast<std::uint32_t>(resID),
-                    0, 0, 0, matchingNpc, 1000) || !matchingNpc) {
-            detail = L"Không thấy NPC ResID " + std::to_wstring(resID) +
-                     L" trong phạm vi tương tác; hãy đứng sát NPC hoặc lưu lại NPC";
+        std::int32_t nearestRoleID = 0;
+        std::wstring nearestName, nearestDetail;
+        if (!ReadNearestNpcIdentity(nearestRoleID, nearestName, nearestDetail)) {
+            detail = L"Chưa xác minh được NPC đã lưu; hãy đứng sát NPC • " + nearestDetail;
             return false;
         }
-        detail = L"Đã xác minh NPC ResID " + std::to_wstring(resID);
+        const std::wstring savedKey = CompactMatch(saved.name);
+        const std::wstring nearestKey = CompactMatch(nearestName);
+        const bool sameName = !savedKey.empty() && !nearestKey.empty() && savedKey == nearestKey;
+        const bool sameRole = saved.roleID > 0 && saved.roleID == nearestRoleID;
+        if (!sameName && !sameRole) {
+            detail = L"NPC gần nhất “" +
+                     (nearestName.empty() ? L"không rõ tên" : nearestName) +
+                     L"” khác NPC đã lưu “" + saved.name + L"”";
+            return false;
+        }
+
+        if (!ResolveNpcResIDByRoleID(nearestRoleID, nearestName, resID, detail))
+            return false;
+
+        std::wstring verifyDetail;
+        if (!ValidateNpcResIDCandidate(nearestRoleID, nearestName, resID, verifyDetail)) {
+            detail = L"Đã suy ra ResID " + std::to_wstring(resID) +
+                     L" nhưng game không xác minh NPC tương ứng; không ClickNPC mù";
+            return false;
+        }
+        detail = verifyDetail;
         return true;
     }
+
     bool OpenNpc(const SellNpc& saved, std::wstring& detail) {
         std::int32_t resID = 0;
         if (!ResolveSavedNpcResID(saved, resID, detail)) return false;
@@ -3096,17 +3153,9 @@ private:
         Remote(rva::AutoPathStop, autoPathManager_, 0, 0, 0, ignored, 700);
     }
     void DisableActions() {
-        if (!executor_) return;
-        if (config_.activation == TrainActivationMode::AutoMenu) {
-            std::uint64_t enabled = 0;
-            // Never launch an expensive AUTO UI scan merely because the state read failed.
-            // During map load/hang the old code did exactly that and could race UI reconstruction.
-            if (Remote(rva::LuaGetAutoFightEnabled, 0, 0, 0, 0, enabled, 700) &&
-                (enabled & 0xFFu) != 0) {
-                std::wstring stopDetail;
-                ClickInternalAutoStop(stopDetail);
-            }
-        }
+        // Navigation/path shutdown must never depend on opening/scanning the AUTO UI.
+        // AUTO → Dừng is attempted by Worker only when this tool itself confirmed that it
+        // activated AUTO at the train spot. A stale EnableAutoF1 flag must not deadlock movement.
         StopPathOnly();
     }
     bool AtSpot(const LiveState& s, const Spot& destination) const {
@@ -3121,6 +3170,35 @@ private:
         const long long dx = static_cast<long long>(s.x) - destination.x;
         const long long dy = static_cast<long long>(s.y) - destination.y;
         return dx * dx + dy * dy;
+    }
+    bool ResolveCrossServerPortal(const LiveState& live, const Spot& finalTarget,
+                                  Spot& portal, std::wstring& routeName) const {
+        portal = {};
+        routeName.clear();
+        // Special routing is needed only while standing in Lạc Dương Liên Server.
+        // Once the server reports the actual destination map, normal navigation resumes.
+        if (live.mapID != 10000 || finalTarget.mapID == 10000) return false;
+
+        const std::wstring key = CompactMatch(finalTarget.name);
+        if (finalTarget.mapID == 10005 ||
+            ContainsCompact(key, {L"thanhlientrai", L"thanhlien", L"tlt"})) {
+            portal = {L"Cổng Thanh Liên Trại", 10000, 15600, 8250};
+            routeName = L"Thanh Liên Trại";
+            return true;
+        }
+        // The user has not supplied the two destination MapIDs yet, so do not invent them.
+        // Match their saved spot/map names and route through the exact portal coordinates given.
+        if (ContainsCompact(key, {L"khovinhdao", L"khovinh", L"kvd"})) {
+            portal = {L"Cổng Khô Vinh Đạo", 10000, 8195, 1190};
+            routeName = L"Khô Vinh Đạo";
+            return true;
+        }
+        if (ContainsCompact(key, {L"phamlientrai", L"phamlien", L"plt"})) {
+            portal = {L"Cổng Phàm Liên Trại", 10000, 1215, 8475};
+            routeName = L"Phàm Liên Trại";
+            return true;
+        }
+        return false;
     }
     void Worker() {
         UpdateLive(false, L"Đang kết nối", L"");
@@ -3142,7 +3220,6 @@ private:
         auto nextMountFightAction = Clock::now();
         bool awaitingRideCheck = false;
         auto nextTrainAction = Clock::now();
-        auto nextAutoStopRetry = Clock::now();
         auto dauThaiRetryAfter = Clock::time_point{};
         auto transitionDeadline = Clock::time_point{};
         auto nextBagCheck = Clock::now();
@@ -3500,13 +3577,21 @@ private:
                                 const bool wantsBuff = config_.autoBuff && !config_.buffSkillIDs.empty();
                                 if (wantsBuff && (buffCycle || now >= nextBuffCheck)) {
                                     if (!buffCycle && config_.activation == TrainActivationMode::AutoMenu &&
-                                        live.autoFight) {
+                                        autoCombatConfirmed && live.autoFight) {
+                                        // Only stop AUTO that this session itself successfully activated.
+                                        // Never loop on a raw/stale AutoFight flag: repeated UI scans here were
+                                        // another source of hangs. One best-effort stop is enough; the next scan
+                                        // begins the buff cycle regardless, and combat is re-activated afterward.
                                         std::wstring stopDetail;
                                         const bool stopped = ClickInternalAutoStop(stopDetail);
+                                        autoCombatConfirmed = false;
+                                        buffCycle = true;
+                                        buffIndex = 0;
                                         nextBuffAction = now + std::chrono::milliseconds(350);
+                                        trainTriggered = false;
                                         UpdateLive(true, L"CHUẨN BỊ BUFF",
-                                                   stopped ? L"Đã AUTO → Dừng trước chu kỳ buff"
-                                                           : L"Chưa tắt được AUTO; sẽ thử lại trước khi buff");
+                                                   stopped ? L"Đã AUTO → Dừng một lần trước chu kỳ buff"
+                                                           : L"Không định vị được Dừng; không retry UI liên tục, chuyển sang buff");
                                     } else {
                                         if (!buffCycle) {
                                             buffCycle = true;
@@ -3554,18 +3639,11 @@ private:
                                             if (autoCombatConfirmed && live.autoFight) {
                                                 sent = true;
                                                 detail = L"AUTO → Đánh quái đã được xác minh sau khi tới bãi";
-                                            } else if (!autoCombatConfirmed && live.autoFight) {
-                                                // A true flag inherited from an earlier/dead/navigation state is not
-                                                // proof that the current AUTO combat loop was armed at this spot.
-                                                // Clear it first, then activate once from a clean state next cycle.
-                                                std::wstring stopDetail;
-                                                const bool stopped = ClickInternalAutoStop(stopDetail);
-                                                sent = false;
-                                                detail = stopped
-                                                    ? L"Đã xóa trạng thái AUTO cũ trước khi bật lại tại bãi"
-                                                    : L"AutoFight đang ON từ trạng thái cũ nhưng chưa Dừng được • " + stopDetail;
-                                                nextTrainAction = now + std::chrono::seconds(stopped ? 1 : 6);
                                             } else {
+                                                // EnableAutoF1 may remain ON after a previous/dead state even while
+                                                // the character is doing nothing. Do not require AUTO → Dừng before
+                                                // navigation/activation. The only proof accepted here is a fresh
+                                                // AUTO → Đánh quái action issued after arrival + down-mount.
                                                 sent = TriggerAutoMenu(detail);
                                                 if (sent) {
                                                     autoCombatConfirmed = true;
@@ -3574,7 +3652,6 @@ private:
                                                     autoCombatConfirmed = false;
                                                     ++autoActivationFailures;
                                                 }
-                                                // Avoid hammering the menu/UI if activation cannot be resolved.
                                                 nextTrainAction = now + std::chrono::seconds(
                                                     sent ? 2 : (autoActivationFailures >= 3 ? 15 : 5));
                                             }
@@ -3604,41 +3681,38 @@ private:
                                 }
                             }
                         } else {
+                            const bool wasAutoConfirmed = autoCombatConfirmed;
                             autoCombatConfirmed = false;
-                            const Spot destination = healingTrip
+                            const Spot finalDestination = healingTrip
                                 ? Spot{healNpc_.name, healNpc_.mapID, healNpc_.x, healNpc_.y}
                                 : sellingTrip
                                     ? Spot{sellNpc_.name, sellNpc_.mapID, sellNpc_.x, sellNpc_.y}
                                     : target_;
+                            Spot destination = finalDestination;
+                            Spot crossServerPortal;
+                            std::wstring crossServerRoute;
+                            const bool usingCrossServerPortal =
+                                !healingTrip && !sellingTrip &&
+                                ResolveCrossServerPortal(live, target_, crossServerPortal,
+                                                         crossServerRoute);
+                            if (usingCrossServerPortal) destination = crossServerPortal;
+
                             trainTriggered = false;
                             buffCycle = false;
                             nextTrainAction = now;
                             if (!outsideTarget) {
-                                // Stop combat/path once before returning to the destination.  From this
-                                // point until arrival, navigation owns the session and AUTO may not start.
-                                DisableActions();
+                                // NAVIGATION is authoritative. Never wait for a raw AutoFight flag to
+                                // become OFF before AutoPath/mount/portal commands. If this tool itself
+                                // previously confirmed AUTO at the train spot, request AUTO → Dừng once
+                                // as best effort, but movement proceeds even if the UI cannot be resolved.
+                                StopPathOnly();
+                                if (config_.activation == TrainActivationMode::AutoMenu &&
+                                    wasAutoConfirmed && live.mapReady && !live.waitingChangeMap) {
+                                    std::wstring stopDetail;
+                                    ClickInternalAutoStop(stopDetail);
+                                }
                                 outsideTarget = true;
                                 nextNavigate = now;
-                                nextAutoStopRetry = now + std::chrono::seconds(2);
-                            }
-                            bool navigationAutoPending = false;
-                            if (config_.activation == TrainActivationMode::AutoMenu && live.autoFight) {
-                                // Strict serialization: never let AutoPath/portal/mount commands run while
-                                // an AUTO combat state is still active.  Stop path first, then retry AUTO →
-                                // Dừng at a low rate.  This removes the command overlap seen in v0.8.1.
-                                navigationAutoPending = true;
-                                StopPathOnly();
-                                if (now >= nextAutoStopRetry) {
-                                    std::wstring stopDetail;
-                                    const bool stopped = ClickInternalAutoStop(stopDetail);
-                                    nextAutoStopRetry = now + std::chrono::seconds(stopped ? 1 : 5);
-                                    UpdateLive(true, L"ĐANG TÁCH AUTO KHỎI ĐI MAP",
-                                               stopped ? L"Đã AUTO → Dừng; chờ state OFF trước khi đi tiếp"
-                                                       : L"Chưa Dừng được AUTO • " + stopDetail);
-                                } else {
-                                    UpdateLive(true, L"ĐANG TÁCH AUTO KHỎI ĐI MAP",
-                                               L"AutoFight còn ON • chưa gửi AutoPath/ngựa/cổng song song");
-                                }
                             }
                             const long long distance = DistanceSquaredTo(live, destination);
                             if (distance != LLONG_MAX &&
@@ -3649,15 +3723,17 @@ private:
                             const bool mountSettled = now >= nextRideDecision;
                             const bool stalled = now - lastProgress >= std::chrono::seconds(7) &&
                                                  !live.moving;
+                            const bool atCrossServerGate =
+                                usingCrossServerPortal && AtSpot(live, destination);
                             const bool portalConfirmationReady =
-                                mountFightUntil == Clock::time_point{} &&
-                                live.mapID != destination.mapID && mountSettled && stalled &&
-                                live.messageBoxVisible && now >= nextConfirm;
-                            if (navigationAutoPending) {
-                                // Status already updated above.  Wait for a fresh scan showing AutoFight=OFF.
-                            } else if (portalConfirmationReady) {
-                                // Combat was already stopped when this navigation trip began.
-                                // Do not reopen/scan AUTO while a portal UI is being rebuilt.
+                                mountFightUntil == Clock::time_point{} && mountSettled &&
+                                live.messageBoxVisible && now >= nextConfirm &&
+                                ((usingCrossServerPortal && (atCrossServerGate || stalled)) ||
+                                 (!usingCrossServerPortal &&
+                                  live.mapID != destination.mapID && stalled));
+                            if (portalConfirmationReady) {
+                                // Cross-server maps must first leave Map 10000 through their exact
+                                // portal. For generic routes preserve the existing stalled-at-gate logic.
                                 StopPathOnly();
                                 std::wstring detail;
                                 const bool clicked = ClickInternalConfirm(detail);
@@ -3751,6 +3827,12 @@ private:
                 }
             }
             for (int i = 0; i < 5 && running_.load(); ++i) Sleep(100);
+        }
+        // If this session itself proved AUTO combat was activated at the train spot,
+        // request the normal AUTO → Dừng once before detach. Never loop/retry on shutdown.
+        if (config_.activation == TrainActivationMode::AutoMenu && autoCombatConfirmed) {
+            std::wstring stopDetail;
+            ClickInternalAutoStop(stopDetail);
         }
         std::lock_guard<std::mutex> operation(operation_);
         DisableActions();
@@ -3954,7 +4036,7 @@ private:
                                  CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                                  DEFAULT_PITCH, L"Segoe UI");
 
-        Label(L"THẦN LONG MOBILE • AUTO TRAIN v0.8.2", 16, 5, 650, 31, titleFont_);
+        Label(L"THẦN LONG MOBILE • AUTO TRAIN v0.8.3", 16, 5, 650, 31, titleFont_);
         Button(L"↻  QUÉT CỬA SỔ GAME", 855, 10, 189, 34, V5_REFRESH);
 
         tab_ = Make(WC_TABCONTROLW, L"", TCS_TABS | TCS_SINGLELINE | WS_TABSTOP,
@@ -4085,7 +4167,7 @@ private:
              150, 145, 780, 46, 0, titleFont_);
         Make(L"STATIC", L"Phần mềm được thiết kế bởi Thắng Nguyễn - ĐỒ LONG",
              SS_CENTER | SS_CENTERIMAGE, 150, 205, 780, 48, 0, boldFont_);
-        Make(L"STATIC", L"Phiên bản 0.8.2",
+        Make(L"STATIC", L"Phiên bản 0.8.3",
              SS_CENTER | SS_CENTERIMAGE, 150, 270, 780, 35, 0, smallFont_);
         buildingPage_ = 0;
         SelectPage(0);
@@ -4735,7 +4817,8 @@ private:
         PopulateNpcs(runtime->config.sellNpcName, runtime->config.healNpcName);
         ShowManualDetail(std::wstring(L"Đã lưu riêng NPC ") +
                          (treatment ? L"trị liệu: " : L"bán đồ: ") +
-                         npc.name + L" • ID " + std::to_wstring(npc.roleID) + L" • Map " +
+                         npc.name + L" • RoleID " + std::to_wstring(npc.roleID) +
+                         L" • ResID " + std::to_wstring(npc.resID) + L" • Map " +
                          std::to_wstring(npc.mapID) + L" • " + std::to_wstring(npc.x) + L"," +
                          std::to_wstring(npc.y));
     }
