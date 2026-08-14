@@ -1,0 +1,20 @@
+ThanLongAutoTrain v0.8.8
+
+Sell Engine v2
+- No repeated ItemBox/UIButton clicks while selling.
+- Reads Bag site 10 with GetItemsAtSite().
+- Holds bag snapshot with a strong GC handle while scanning.
+- Reads LuaItemData ID/ItemID/Position directly from verified offsets.
+- Caches ItemType==Equip and IsItemSellable by immutable ItemID.
+- Keeps the first equipment position.
+- Resolves candidate again by DBID immediately before RequestSellItem().
+- Calls NPCShop_SellItemTab.RequestSellItem(item) one item at a time.
+- Waits for GetItemData(DBID)==null before the next sale.
+- Maximum 90 sell requests; 3 failures skip one DBID.
+- Closes NPCShop only after a quiet window.
+
+Local verification in this environment:
+- C++17 syntax + -Wall -Wextra -Werror PASS using Win32 declaration stubs.
+- All 69 Validate() byte signatures match the supplied GameAssembly.dll.
+- remote_worker.S assembles as Windows x64 COFF; arg5 remains at [rsp+0x20].
+- Full Windows PE linking still belongs to build.cmd/GitHub Actions (Zig Windows toolchain).

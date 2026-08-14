@@ -15,6 +15,6 @@ if errorlevel 1 exit /b 1
 zig c++ -target x86_64-windows-gnu -O2 -std=c++17 -Wall -Wextra -Werror -municode -static -s ^
   src\main.cpp src\remote_worker.S dist\app.res ^
   -Wl,--subsystem,windows -lcomctl32 -luser32 -lkernel32 -lgdi32 ^
-  -o dist\ThanLongAutoTrain_v0.8.7.exe
+  -o dist\ThanLongAutoTrain_v0.8.8.exe
 if errorlevel 1 exit /b 1
-echo BUILD THANH CONG: dist\ThanLongAutoTrain_v0.8.7.exe
+echo BUILD THANH CONG: dist\ThanLongAutoTrain_v0.8.8.exe

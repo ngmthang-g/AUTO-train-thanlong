@@ -24,7 +24,7 @@ extern "C" unsigned char RemoteWorkerStart[];
 extern "C" unsigned char RemoteWorkerEnd[];
 
 using Clock = std::chrono::steady_clock;
-constexpr wchar_t kTitle[] = L"Thần Long Mobile - Auto Train v0.8.7";
+constexpr wchar_t kTitle[] = L"Thần Long Mobile - Auto Train v0.8.8";
 constexpr wchar_t kModule[] = L"GameAssembly.dll";
 
 namespace rva {
@@ -37,6 +37,13 @@ constexpr std::uint64_t LuaCurrentMountSlot = 0x67AE60;
 constexpr std::uint64_t LuaToggleRide = 0x679760;
 constexpr std::uint64_t LuaGetAutoFightEnabled = 0x67B440;
 constexpr std::uint64_t LuaGetFreeBagSpace = 0x6716F0;
+constexpr std::uint64_t LuaGetItemsAtSite = 0x672650;
+constexpr std::uint64_t LuaGetItemData = 0x672160;
+constexpr std::uint64_t LuaGetItemType = 0x672520;
+constexpr std::uint64_t LuaIsItemSellable = 0x677B30;
+constexpr std::uint64_t LuaItemGetID = 0x41F000;
+constexpr std::uint64_t LuaItemGetItemID = 0x4D0A90;
+constexpr std::uint64_t LuaItemGetPosition = 0x43F560;
 constexpr std::uint64_t LuaGetBuffs = 0x66F020;
 constexpr std::uint64_t LuaHasBuff = 0x677610;
 constexpr std::uint64_t LuaRequestUsingSkill = 0x6791C0;
@@ -1126,6 +1133,13 @@ private:
             {rva::LuaToggleRide,        {0x40,0x53,0x48,0x83,0xEC,0x20,0x80,0x3D,0xA5,0xE8,0x14,0x03}},
             {rva::LuaGetAutoFightEnabled,         {0x40,0x53,0x48,0x83,0xEC,0x20,0x80,0x3D,0x5E,0xCB,0x14,0x03}},
             {rva::LuaGetFreeBagSpace,    {0x48,0x83,0xEC,0x28,0x80,0x3D,0xB2,0x68,0x15,0x03,0x00,0x75}},
+            {rva::LuaGetItemsAtSite,      {0x33,0xD2,0xE9,0x39,0x84,0xEA,0xFF,0xCC,0xCC,0xCC,0xCC,0xCC}},
+            {rva::LuaGetItemData,         {0x40,0x53,0x48,0x83,0xEC,0x20,0x80,0x3D,0x6F,0x5E,0x15,0x03}},
+            {rva::LuaGetItemType,         {0x40,0x53,0x48,0x83,0xEC,0x20,0x80,0x3D,0xAE,0x5A,0x15,0x03}},
+            {rva::LuaIsItemSellable,      {0x40,0x53,0x48,0x83,0xEC,0x20,0x80,0x3D,0xA6,0x04,0x15,0x03}},
+            {rva::LuaItemGetID,           {0x8B,0x41,0x10,0xC3,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC}},
+            {rva::LuaItemGetItemID,       {0x8B,0x41,0x14,0xC3,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC}},
+            {rva::LuaItemGetPosition,     {0x8B,0x41,0x1C,0xC3,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC}},
             {rva::LuaGetBuffs,           {0x48,0x83,0xEC,0x28,0x80,0x3D,0x98,0x8F,0x15,0x03,0x00,0x75}},
             {rva::LuaHasBuff,            {0x40,0x53,0x48,0x83,0xEC,0x20,0x80,0x3D,0xA8,0x09,0x15,0x03}},
             {rva::LuaRequestUsingSkill,  {0x33,0xD2,0xE9,0x09,0x45,0x05,0x00,0xCC,0xCC,0xCC,0xCC,0xCC}},
@@ -2771,137 +2785,329 @@ private:
         }
         if (closed > 0) detail += L" • đã đóng " + std::to_wstring(closed) + L" cửa sổ shop/tay nải";
     }
-    struct SellItemBoxEntry {
-        ActionControl action;
-        int gridOrder = -1;
+    struct BagSellItem {
+        std::uint64_t object = 0;
+        std::int32_t dbID = 0;
+        std::int32_t itemID = 0;
+        std::int32_t position = -1;
+        bool sellable = false;
     };
-    bool FindItemsGridOrder(std::uint64_t button, int& gridOrder) {
-        gridOrder = -1;
-        std::uint64_t current = button;
-        std::set<std::uint64_t> seen;
-        for (int depth = 0; depth < 12 && current && seen.insert(current).second; ++depth) {
-            std::uint64_t parent = 0;
-            if (!Remote(rva::UIObjectGetParent, current, 0, 0, 0, parent, 600) || !parent)
-                return false;
-            std::uint64_t namePointer = 0;
-            std::wstring parentName;
-            if (Remote(rva::UIObjectGetName, parent, 0, 0, 0, namePointer, 500) && namePointer)
-                parentName = CompactMatch(process_.ReadIl2CppString(namePointer));
-            if (parentName == L"itemsgrid") {
-                std::uint64_t children = 0, length = 0;
-                if (!Remote(rva::UIObjectCoreChildren, parent, 0, 0, 0, children, 700) || !children ||
-                    !process_.Read(children + off::ArrayLength, length) || length > 256)
-                    return false;
-                for (std::uint64_t i = 0; i < length; ++i) {
-                    std::uint64_t child = 0;
-                    if (process_.Read(children + off::ArrayData + i * sizeof(std::uint64_t), child) &&
-                        child == current) {
-                        gridOrder = static_cast<int>(i);
-                        return true;
-                    }
-                }
-                return false;
+    bool ReadManagedObjectCollection(std::uint64_t collection,
+                                     std::vector<std::uint64_t>& objects) {
+        objects.clear();
+        if (!collection) return false;
+
+        // GetItemsAtSite() on this build normally returns a managed List<...>.
+        // Validate both the List and raw-array layouts so a minor binding change does not turn
+        // into an unsafe pointer walk.
+        std::uint64_t array = 0, arrayLength = 0;
+        std::int32_t count = -1;
+        if (process_.Read(collection + off::ListItems, array) && array &&
+            process_.Read(collection + off::ListSize, count) && count >= 0 && count <= 512 &&
+            process_.Read(array + off::ArrayLength, arrayLength) &&
+            arrayLength >= static_cast<std::uint64_t>(count) && arrayLength <= 4096) {
+            objects.reserve(static_cast<std::size_t>(count));
+            for (int i = 0; i < count; ++i) {
+                std::uint64_t object = 0;
+                if (process_.Read(array + off::ArrayData + static_cast<std::uint64_t>(i) * 8,
+                                  object) && object)
+                    objects.push_back(object);
             }
-            current = parent;
+            return true;
+        }
+
+        // Defensive raw Il2CppArray fallback.
+        arrayLength = 0;
+        if (process_.Read(collection + off::ArrayLength, arrayLength) && arrayLength <= 512) {
+            objects.reserve(static_cast<std::size_t>(arrayLength));
+            for (std::uint64_t i = 0; i < arrayLength; ++i) {
+                std::uint64_t object = 0;
+                if (process_.Read(collection + off::ArrayData + i * 8, object) && object)
+                    objects.push_back(object);
+            }
+            return true;
         }
         return false;
     }
-    bool CollectSellItemBoxPool(std::vector<SellItemBoxEntry>& pool, std::wstring& detail) {
-        pool.clear();
-        std::vector<std::uint64_t> rawButtons;
-        if (!ReadAllUiButtons(rawButtons)) {
-            detail = L"Không đọc được danh sách UIButton của tay nải";
+    bool ReadBagEquipmentItems(std::vector<BagSellItem>& items, std::wstring& detail) {
+        items.clear();
+        std::uint64_t collection = 0;
+        constexpr std::uint32_t kBagSite = 10; // C_ItemSite.Bag recovered from Interface.unity3d.
+        if (!Remote(rva::LuaGetItemsAtSite, kBagSite, 0, 0, 0, collection, 1400) || !collection) {
+            detail = L"GetItemsAtSite(Bag) không trả về danh sách";
             return false;
         }
-        for (const std::uint64_t button : rawButtons) {
-            std::wstring handler;
-            if (!ReadButtonClickHandler(button, handler) || CompactMatch(handler) != L"buttonitemclicked")
-                continue;
-            ButtonInfo info;
-            info.object = button;
-            info.handler = std::move(handler);
-            if (!IsSafeBagItemButton(info)) continue;
-            int order = -1;
-            if (!FindItemsGridOrder(button, order)) continue;
-            pool.push_back({{ActionKind::Button, std::move(info)}, order});
+        // GetItemsAtSite may return a managed list created for this call. Hold a strong GC handle
+        // for the entire scan so the collection and its item references cannot disappear between
+        // the remote return and our cross-process reads.
+        std::uint64_t collectionHandle = 0;
+        if (!il2cppGcHandleNew_ ||
+            !RemoteAbsolute(il2cppGcHandleNew_, collection, 0, 0, 0,
+                            collectionHandle, 900) || !collectionHandle) {
+            detail = L"Không giữ được snapshot Bag bằng GC handle";
+            return false;
         }
-        std::sort(pool.begin(), pool.end(), [](const SellItemBoxEntry& a,
-                                                const SellItemBoxEntry& b) {
-            return a.gridOrder < b.gridOrder;
+        auto freeCollection = [&]() {
+            if (!collectionHandle) return;
+            std::uint64_t ignored = 0;
+            RemoteAbsolute(il2cppGcHandleFree_, collectionHandle, 0, 0, 0, ignored, 600);
+            collectionHandle = 0;
+        };
+
+        std::vector<std::uint64_t> objects;
+        if (!ReadManagedObjectCollection(collection, objects)) {
+            freeCollection();
+            detail = L"Không đọc được cấu trúc danh sách vật phẩm trong Bag";
+            return false;
+        }
+
+        for (const std::uint64_t object : objects) {
+            // LuaItemData's three getters used here are trivial field reads in this exact build:
+            // ID +0x10, ItemID +0x14, Position +0x1C.  Read those immutable snapshot fields
+            // directly instead of issuing three remote managed calls per item on every rescan.
+            // This keeps the sell loop mostly read-only while the server/UI may be rebuilding.
+            std::int32_t dbID = 0, itemID = 0, position = -1;
+            if (!process_.Read(object + 0x10, dbID) ||
+                !process_.Read(object + 0x14, itemID) ||
+                !process_.Read(object + 0x1C, position))
+                continue;
+            if (dbID <= 0 || itemID <= 0 || position < 0 || position >= 1000) continue;
+
+            bool isEquip = false;
+            const auto equipIt = itemEquipCache_.find(itemID);
+            if (equipIt != itemEquipCache_.end()) {
+                isEquip = equipIt->second;
+            } else {
+                std::uint64_t typePointer = 0;
+                if (!Remote(rva::LuaGetItemType, static_cast<std::uint32_t>(itemID),
+                            0, 0, 0, typePointer, 800) || !typePointer)
+                    continue;
+                isEquip = CompactMatch(process_.ReadIl2CppString(typePointer)) == L"equip";
+                itemEquipCache_[itemID] = isEquip;
+            }
+            if (!isEquip) continue;
+
+            bool sellable = false;
+            const auto sellIt = itemSellableCache_.find(itemID);
+            if (sellIt != itemSellableCache_.end()) {
+                sellable = sellIt->second;
+            } else {
+                std::uint64_t sellableValue = 0;
+                sellable = Remote(rva::LuaIsItemSellable,
+                                  static_cast<std::uint32_t>(itemID),
+                                  0, 0, 0, sellableValue, 800) &&
+                           (sellableValue & 0xFFu) != 0 &&
+                           !(itemID >= 40000000 && itemID < 50000000);
+                itemSellableCache_[itemID] = sellable;
+            }
+            items.push_back({object, dbID, itemID, position, sellable});
+        }
+        std::sort(items.begin(), items.end(), [](const BagSellItem& a, const BagSellItem& b) {
+            if (a.position != b.position) return a.position < b.position;
+            return a.dbID < b.dbID;
         });
-        if (pool.empty()) {
-            detail = L"Đã vào Trang bị nhưng chưa lấy được pool ItemBox của ItemsGrid";
+        freeCollection();
+        detail = L"Đọc data Bag: " + std::to_wstring(items.size()) + L" trang bị";
+        return true;
+    }
+    bool CreateSingleUiArgArray(std::uint64_t object, std::uint64_t& array,
+                                std::uint64_t& handle) {
+        array = handle = 0;
+        if (!object || !systemObjectClass_ || !il2cppArrayNew_ ||
+            !RemoteAbsolute(il2cppArrayNew_, systemObjectClass_, 1, 0, 0, array, 1200) || !array ||
+            !RemoteAbsolute(il2cppGcHandleNew_, array, 0, 0, 0, handle, 900) || !handle)
+            return false;
+        if (!process_.WriteBytes(array + off::ArrayData, &object, sizeof(object))) {
+            std::uint64_t ignored = 0;
+            RemoteAbsolute(il2cppGcHandleFree_, handle, 0, 0, 0, ignored, 500);
+            array = handle = 0;
             return false;
         }
         return true;
     }
-    bool IsSellItemBoxVisible(const SellItemBoxEntry& item) {
-        std::uint64_t active = 0;
-        return Remote(rva::UIObjectActiveInHierarchy, item.action.info.object,
-                      0, 0, 0, active, 550) && (active & 0xFFu) != 0;
+    bool InvokeUiScriptOneArg(const char* uiName, const char* functionName,
+                              std::uint64_t argument, std::wstring& detail) {
+        std::uint64_t uiNameObj = 0, uiNameHandle = 0, functionObj = 0, functionHandle = 0;
+        std::uint64_t ui = 0, executor = 0, args = 0, argsHandle = 0, result = 0;
+        auto freeHandle = [&](std::uint64_t handle) {
+            if (!handle) return;
+            std::uint64_t ignored = 0;
+            RemoteAbsolute(il2cppGcHandleFree_, handle, 0, 0, 0, ignored, 600);
+        };
+        if (!argument || !CreateManagedUtf8(uiName, uiNameObj, uiNameHandle)) {
+            detail = L"Không tạo được tên Lua UI bán đồ";
+            return false;
+        }
+        bool found = Remote(rva::LuaFindUI, uiNameObj, 0, 0, 0, ui, 1000) && ui;
+        if (!found)
+            found = Remote(rva::LuaMainFindUI, uiNameObj, 0, 0, 0, ui, 1000) && ui;
+        if (!found) {
+            freeHandle(uiNameHandle);
+            detail = L"Không tìm thấy Lua UI " + Wide(uiName);
+            return false;
+        }
+        if (!CreateManagedUtf8(functionName, functionObj, functionHandle) ||
+            !Remote(rva::MonoBehaviourExecutorGetInstance, 0, 0, 0, 0, executor, 900) || !executor ||
+            !CreateSingleUiArgArray(argument, args, argsHandle)) {
+            freeHandle(functionHandle);
+            freeHandle(uiNameHandle);
+            detail = L"Không chuẩn bị được Lua sell action";
+            return false;
+        }
+        const bool called = Remote5(rva::MonoBehaviourExecutorExecuteUiObject,
+                                    executor, ui, functionObj, args, 0, result, 2200);
+        freeHandle(argsHandle);
+        freeHandle(functionHandle);
+        freeHandle(uiNameHandle);
+        detail = called ? L"Đã gọi NPCShop_SellItemTab.RequestSellItem(data)"
+                        : L"RequestSellItem(data) không phản hồi";
+        return called;
     }
-    bool FindSecondVisibleSellItem(const std::vector<SellItemBoxEntry>& pool,
-                                   ActionControl& target, int& visibleCount) {
-        visibleCount = 0;
-        for (const SellItemBoxEntry& item : pool) {
-            if (!IsSellItemBoxVisible(item)) continue;
-            ++visibleCount;
-            if (visibleCount == 2) {
-                target = item.action;
+    bool WaitItemRemoved(std::int32_t dbID, std::wstring& detail) {
+        if (dbID <= 0) return false;
+        // Do not guess a fixed server delay. The Lua BagItemsGrid itself waits for
+        // RemoveItem/UpdateItemsList; mirror that by polling the authoritative item API.
+        constexpr int kPolls = 40;
+        constexpr DWORD kPollMs = 60;
+        for (int i = 0; i < kPolls; ++i) {
+            std::uint64_t item = 0;
+            if (!Remote(rva::LuaGetItemData, static_cast<std::uint32_t>(dbID),
+                        0, 0, 0, item, 900)) {
+                detail = L"Mất phản hồi GetItemData khi chờ server xác nhận bán";
+                return false;
+            }
+            if (!item) {
+                detail = L"Server đã xóa DBID " + std::to_wstring(dbID);
                 return true;
             }
+            Sleep(kPollMs);
         }
+        detail = L"Hết thời gian chờ server xóa DBID " + std::to_wstring(dbID);
         return false;
+    }
+    void CloseSellUiAfterQuiet(std::wstring& detail) {
+        // Never destroy the shop in the same instant as the final sell response.
+        Sleep(350);
+        std::wstring closeDetail;
+        if (InvokeMainUiScriptNoArgs("NPCShop", "ButtonCloseClicked", closeDetail)) {
+            detail += L" • đóng NPCShop bằng Lua action";
+            Sleep(250);
+            return;
+        }
+        // Conservative fallback: one close action only. Do not fan out through four stale
+        // buttons while a shop hierarchy may be tearing down.
+        std::wstring label;
+        if (CloseOneTradeOrBagUi(label)) {
+            detail += L" • đóng 1 cửa sổ: " + label;
+            Sleep(250);
+        } else if (!closeDetail.empty()) {
+            detail += L" • chưa đóng được NPCShop: " + closeDetail;
+        }
     }
     bool TrySellAtNpc(int& freeAfter, std::wstring& detail) {
         freeAfter = -1;
         int freeBefore = -1;
-        ReadFreeBagSpace(freeBefore);  // chỉ để hiển thị; không dùng làm điều kiện kết thúc.
+        ReadFreeBagSpace(freeBefore);
         if (!OpenSellUi(detail)) return false;
 
-        // BagItemsGrid tạo pool ItemBox theo Position rồi DoFilter()+RebuildLayout(). Khi món ở
-        // vị trí hiển thị thứ 2 bán thành công, ItemBox đó bị Clear/inactive và món kế tiếp dịch
-        // vào đúng vị trí hiển thị thứ 2. Vì thế không giữ pointer cũ: mỗi nhịp 1 giây resolve lại
-        // ItemBox đang hiển thị thứ 2, bỏ nguyên ô đầu tiên như yêu cầu.
-        std::vector<SellItemBoxEntry> pool;
-        if (!CollectSellItemBoxPool(pool, detail)) {
-            std::wstring closeDetail;
-            CloseTradeAndBagUi(closeDetail);
-            detail += closeDetail;
-            return false;
-        }
+        // Sell Engine v2: the recovered NPCShop_SellItemTab Lua proves that clicking an ItemBox
+        // only ends in RequestSellItem(dbItemData). Avoid 90 Unity UIButton callbacks entirely.
+        // Read authoritative bag data, protect the first equipment by Position, sell one item,
+        // wait for the server to remove that DBID, then rescan. This prevents racing
+        // BagItemsGrid:Clear()/DoFilter()/RebuildLayout() on Unity's main thread.
+        constexpr int kMaxSellRequests = 90;
+        std::map<std::int32_t, int> failures;
+        std::set<std::int32_t> skipped;
+        int requests = 0;
+        int confirmed = 0;
+        int skippedCount = 0;
 
-        constexpr int kSellAttempts = 90;
-        constexpr DWORD kSellIntervalMs = 1000;
-        int callbacks = 0;
-        int emptySecondSlotTicks = 0;
-        int lastVisibleCount = 0;
-        for (int attempt = 0; attempt < kSellAttempts; ++attempt) {
-            ActionControl second;
-            int visibleCount = 0;
-            if (FindSecondVisibleSellItem(pool, second, visibleCount)) {
-                if (InvokeAction(second)) ++callbacks;
-            } else {
-                ++emptySecondSlotTicks;
+        while (requests < kMaxSellRequests) {
+            std::vector<BagSellItem> items;
+            std::wstring scanDetail;
+            if (!ReadBagEquipmentItems(items, scanDetail)) {
+                detail = L"Sell Engine v2: " + scanDetail;
+                CloseSellUiAfterQuiet(detail);
+                return false;
             }
-            lastVisibleCount = visibleCount;
-            if (attempt + 1 < kSellAttempts) Sleep(kSellIntervalMs);
+            if (items.size() <= 1) {
+                detail = L"Sell Engine v2 xong: chỉ còn " + std::to_wstring(items.size()) +
+                         L" trang bị (ô đầu luôn được giữ)";
+                break;
+            }
+
+            // items[0] is the protected visual slot #1. After each acknowledged sale the
+            // bag is rescanned, so the next item naturally becomes visual slot #2.
+            const BagSellItem* candidate = nullptr;
+            for (std::size_t i = 1; i < items.size(); ++i) {
+                if (skipped.find(items[i].dbID) != skipped.end()) continue;
+                candidate = &items[i];
+                break;
+            }
+            if (!candidate) {
+                detail = L"Sell Engine v2: không còn trang bị hợp lệ ngoài ô đầu";
+                break;
+            }
+            if (!candidate->sellable) {
+                skipped.insert(candidate->dbID);
+                ++skippedCount;
+                continue;
+            }
+
+            // Never carry a LuaItemData pointer from the scan into an action.  Resolve the DBID
+            // again immediately before sending; if the server/UI changed the inventory after the
+            // scan, simply rescan instead of invoking Lua with a stale object.
+            std::uint64_t freshItem = 0;
+            if (!Remote(rva::LuaGetItemData, static_cast<std::uint32_t>(candidate->dbID),
+                        0, 0, 0, freshItem, 900) || !freshItem) {
+                Sleep(80);
+                continue;
+            }
+
+            std::wstring sendDetail;
+            ++requests;
+            if (!InvokeUiScriptOneArg("NPCShop_SellItemTab", "RequestSellItem",
+                                      freshItem, sendDetail)) {
+                const int count = ++failures[candidate->dbID];
+                if (count >= 3) {
+                    skipped.insert(candidate->dbID);
+                    ++skippedCount;
+                }
+                // A failed Lua invoke must not be followed by another action immediately.
+                Sleep(250);
+                continue;
+            }
+
+            std::wstring ackDetail;
+            if (WaitItemRemoved(candidate->dbID, ackDetail)) {
+                ++confirmed;
+                failures.erase(candidate->dbID);
+                // No fixed 1-second sleep: the ACK itself is the state transition.
+                Sleep(80);
+                continue;
+            }
+
+            const int count = ++failures[candidate->dbID];
+            if (count >= 3) {
+                skipped.insert(candidate->dbID);
+                ++skippedCount;
+            }
+            // If an ACK was missed, give any late response a quiet window before rescan/retry.
+            Sleep(400);
         }
 
         int value = -1;
         if (ReadFreeBagSpace(value)) freeAfter = value;
         else freeAfter = freeBefore;
 
-        std::wstring closeDetail;
-        CloseTradeAndBagUi(closeDetail);
-        detail = L"Đã hoàn thành 90 nhịp tại ô Trang bị số 2 (bỏ ô số 1) • callback gửi " +
-                 std::to_wstring(callbacks) + L"/90 • nhịp ô số 2 trống " +
-                 std::to_wstring(emptySecondSlotTicks) + L" • còn hiển thị " +
-                 std::to_wstring(lastVisibleCount) + L" ItemBox";
+        if (detail.empty() || detail.find(L"Sell Engine v2") == std::wstring::npos)
+            detail = L"Sell Engine v2 hoàn tất";
+        detail += L" • request " + std::to_wstring(requests) + L"/90 • server xác nhận " +
+                  std::to_wstring(confirmed) + L" • bỏ qua " + std::to_wstring(skippedCount);
         if (freeBefore >= 0 && freeAfter >= 0)
             detail += L" • tay nải " + std::to_wstring(freeBefore) + L" → " +
                       std::to_wstring(freeAfter) + L" ô trống";
-        detail += closeDetail;
+        CloseSellUiAfterQuiet(detail);
         return true;
     }
 
@@ -4215,6 +4421,10 @@ private:
     std::map<std::uint64_t, bool> uiToggleClassCache_;
     std::map<std::uint64_t, bool> uiRectClassCache_;
     std::map<std::uint64_t, bool> uiInputClassCache_;
+    // Item template classification is immutable for this client build.  Cache it so a sell
+    // rescan does not call managed item-type helpers for every unchanged template each time.
+    std::map<std::int32_t, bool> itemEquipCache_;
+    std::map<std::int32_t, bool> itemSellableCache_;
     std::atomic<bool> running_{false};
     std::thread worker_;
     mutable std::mutex stateLock_;
@@ -4375,7 +4585,7 @@ private:
                                  CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                                  DEFAULT_PITCH, L"Segoe UI");
 
-        Label(L"THẦN LONG MOBILE • AUTO TRAIN v0.8.7", 16, 5, 650, 31, titleFont_);
+        Label(L"THẦN LONG MOBILE • AUTO TRAIN v0.8.8", 16, 5, 650, 31, titleFont_);
         Button(L"↻  QUÉT CỬA SỔ GAME", 855, 10, 189, 34, V5_REFRESH);
 
         tab_ = Make(WC_TABCONTROLW, L"", TCS_TABS | TCS_SINGLELINE | WS_TABSTOP,
@@ -4506,7 +4716,7 @@ private:
              150, 145, 780, 46, 0, titleFont_);
         Make(L"STATIC", L"Phần mềm được thiết kế bởi Thắng Nguyễn - ĐỒ LONG",
              SS_CENTER | SS_CENTERIMAGE, 150, 205, 780, 48, 0, boldFont_);
-        Make(L"STATIC", L"Phiên bản 0.8.7",
+        Make(L"STATIC", L"Phiên bản 0.8.8",
              SS_CENTER | SS_CENTERIMAGE, 150, 270, 780, 35, 0, smallFont_);
         buildingPage_ = 0;
         SelectPage(0);
