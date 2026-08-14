@@ -1,14 +1,33 @@
-# Thần Long Mobile - Auto Train v0.8.8
+# Thần Long Mobile - Auto Train v0.8.9
 
-## Sell Engine v2
-Bản này thay toàn bộ vòng bán bằng `UIButton.HandleClickEvent()` của v0.8.7. Sau khi mở NPC/shop/bán nhanh/tab Trang bị, tool đọc dữ liệu Bag trực tiếp, giữ trang bị đầu tiên, chọn trang bị tiếp theo theo `Position`, gọi Lua action thật `NPCShop_SellItemTab.RequestSellItem(dbItemData)`, rồi chỉ chuyển món sau khi `GetItemData(DBID)` xác nhận server đã xóa món trước. Giới hạn tối đa 90 request.
+Bản v0.8.9 là bản dọn kiến trúc UI/chat từ v0.8.8.
 
-Điểm an toàn mới:
-- không giữ pool `UIButton*` suốt 90 giây;
-- không click ItemBox trong vòng bán;
-- snapshot `GetItemsAtSite(Bag)` được giữ bằng GC handle trong lúc đọc;
-- trước mỗi request, item được resolve lại bằng DBID để tránh dùng object cũ;
-- item type/sellable được cache theo ItemID để giảm remote-call;
-- đóng shop sau quiet window và chỉ dùng một Lua close action (fallback tối đa một close control).
+## Đã xóa tận gốc
 
-Build bằng `build.cmd`; output `dist\ThanLongAutoTrain_v0.8.8.exe`.
+- Toàn bộ `ChatPing` / điều hướng bằng chat.
+- `ClickGamePoint`, `TypeUnicode`, tọa độ hiệu chỉnh chat và toàn bộ UI hiệu chỉnh chat.
+- Toàn bộ Auto Chat: config, UI, worker, UIInput, Lua ChatBox.
+- Code chết `OpenAutoRootButton`, `FindChatOpen`, `FindChatPanelAction`.
+- Toàn bộ đường `UIRectTransform` / `InvokeRectLua` / callback với PointerEventData giả/null.
+
+Điều hướng bãi hiện chỉ còn `AutoPathManager.Start/Stop` nội bộ.
+
+## Trị liệu và shop
+
+Các bước dễ lỗi trước đây không còn fallback sang UIRect/Lua giả pointer:
+
+- NPC dialog: `GameDialog.FunctionButtonClicked(UIButton)`.
+- Xác nhận trị liệu: `MessageBox.ButtonOKClicked()`.
+- Tab Bán vật phẩm: `NPCShop.ToggleTabHeaderSelected(UIToggle)`.
+- Bán từng món: `NPCShop_SellItemTab.RequestSellItem(DBItemData)` + chờ server xóa DBID rồi scan lại.
+- Đóng shop: `NPCShop.ButtonCloseClicked()`.
+
+`Bán vật phẩm nhanh` không có SelectHandler Lua riêng trong asset; tool đặt trạng thái trên `UIToggle` thật của game. Tab `Trang bị` cũng dùng `UIToggle` thật, để listener `BagItemsGrid.ToggleTabSelected` của game chạy theo control gốc.
+
+## Build
+
+Chạy `build.cmd` với Zig 0.15.2. Output:
+
+`dist\ThanLongAutoTrain_v0.8.9.exe`
+
+Workflow `.github/workflows/build-windows.yml` vẫn tự tìm `ThanLongAutoTrain_v*.exe`, không hardcode tên artifact ở bước verify.
