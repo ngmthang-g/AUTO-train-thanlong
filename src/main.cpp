@@ -24,7 +24,7 @@ extern "C" unsigned char RemoteWorkerStart[];
 extern "C" unsigned char RemoteWorkerEnd[];
 
 using Clock = std::chrono::steady_clock;
-constexpr wchar_t kTitle[] = L"Thần Long Mobile - Auto Train v0.7.2";
+constexpr wchar_t kTitle[] = L"Thần Long Mobile - Auto Train v0.8.0";
 constexpr wchar_t kModule[] = L"GameAssembly.dll";
 
 namespace rva {
@@ -37,12 +37,16 @@ constexpr std::uint64_t LuaCurrentMountSlot = 0x67AE60;
 constexpr std::uint64_t LuaToggleRide = 0x679760;
 constexpr std::uint64_t LuaGetAutoFightEnabled = 0x67B440;
 constexpr std::uint64_t LuaGetFreeBagSpace = 0x6716F0;
+constexpr std::uint64_t LuaGetBuffs = 0x66F020;
+constexpr std::uint64_t LuaHasBuff = 0x677610;
+constexpr std::uint64_t LuaRequestUsingSkill = 0x6791C0;
+constexpr std::uint64_t LuaBuffGetBuffID = 0x41F000;
+constexpr std::uint64_t LuaBuffGetDurationTick = 0x41F3F0;
+constexpr std::uint64_t UIFactorySendDefaultChat = 0x6FAAD0;
 constexpr std::uint64_t LuaGetNearestNPC = 0x673A90;
-constexpr std::uint64_t LuaGetNearestNPCByResID = 0x673AA0;
 constexpr std::uint64_t LuaClickNPC = 0x66ADC0;
 constexpr std::uint64_t LuaMapObjectGetRoleID = 0x41F000;
 constexpr std::uint64_t LuaMapObjectGetName = 0x41F3F0;
-constexpr std::uint64_t LuaMapSpriteGetResID = 0x425870;
 constexpr std::uint64_t LuaIsMoving = 0x677F60;
 constexpr std::uint64_t LuaGetSkills = 0x675160;
 constexpr std::uint64_t LuaGetSkillName = 0x674D40;
@@ -93,6 +97,8 @@ constexpr std::uint64_t ArrayData = 0x20;
 constexpr std::uint64_t EntrySize = 0x18;
 constexpr std::uint64_t EntryValue = 0x10;
 constexpr std::uint64_t LuaDbSkillID = 0x10;
+constexpr std::uint64_t ListItems = 0x10;
+constexpr std::uint64_t ListSize = 0x18;
 }
 
 static std::wstring ExeDirectory() {
@@ -542,6 +548,14 @@ struct TrainConfig {
     bool autoSell = false;
     int bagCheckMinutes = 5;
     std::wstring sellNpcName;
+    bool healAtStart = false;
+    std::wstring healNpcName;
+    bool autoBuff = false;
+    std::vector<int> buffSkillIDs;
+    std::map<int, int> buffMap;
+    bool autoChat = false;
+    int autoChatMinutes = 5;
+    std::wstring autoChatMessage;
     NormalizedPoint chatClear;
     NormalizedPoint chatInput;
     NormalizedPoint chatLatestCoordinate;
@@ -668,7 +682,7 @@ static std::vector<SellNpc> LoadNpcs() {
 }
 
 static bool SaveNpcs(const std::vector<SellNpc>& npcs) {
-    std::wstring text = L"# ThanLongAutoTrain sell NPCs v2\r\n# Ten NPC<TAB>ResID<TAB>RoleID<TAB>MapID<TAB>X<TAB>Y\r\n";
+    std::wstring text = L"# ThanLongAutoTrain NPCs v3\r\n# Dung chung NPC ban do / tri lieu\r\n# Ten NPC<TAB>ResID(compat)<TAB>RoleID<TAB>MapID<TAB>X<TAB>Y\r\n";
     for (SellNpc npc : npcs) {
         for (wchar_t& c : npc.name) if (c == L'\t' || c == L'\r' || c == L'\n') c = L' ';
         text += npc.name + L"\t" + std::to_wstring(npc.resID) + L"\t" +
@@ -713,6 +727,63 @@ static void WriteIniText(const std::wstring& section, const wchar_t* key,
     WritePrivateProfileStringW(section.c_str(), key, value.c_str(), ConfigPath().c_str());
 }
 
+static std::vector<int> ParseIdList(const std::wstring& text) {
+    std::vector<int> out;
+    std::set<int> seen;
+    std::wstring token;
+    auto flush = [&] {
+        const int id = _wtoi(Trim(token).c_str());
+        if (id > 0 && seen.insert(id).second) out.push_back(id);
+        token.clear();
+    };
+    for (wchar_t c : text) {
+        if (c == L',' || c == L';' || c == L'|') flush();
+        else token.push_back(c);
+    }
+    flush();
+    return out;
+}
+
+static std::wstring JoinIdList(const std::vector<int>& ids) {
+    std::wstring out;
+    for (int id : ids) {
+        if (id <= 0) continue;
+        if (!out.empty()) out += L",";
+        out += std::to_wstring(id);
+    }
+    return out;
+}
+
+static std::map<int, int> ParseBuffMap(const std::wstring& text) {
+    std::map<int, int> out;
+    std::wstring pair;
+    auto flush = [&] {
+        const std::size_t colon = pair.find(L':');
+        if (colon != std::wstring::npos) {
+            const int skill = _wtoi(Trim(pair.substr(0, colon)).c_str());
+            const int buff = _wtoi(Trim(pair.substr(colon + 1)).c_str());
+            if (skill > 0 && buff > 0) out[skill] = buff;
+        }
+        pair.clear();
+    };
+    for (wchar_t c : text) {
+        if (c == L',' || c == L';' || c == L'|') flush();
+        else pair.push_back(c);
+    }
+    flush();
+    return out;
+}
+
+static std::wstring JoinBuffMap(const std::map<int, int>& values) {
+    std::wstring out;
+    for (const auto& [skill, buff] : values) {
+        if (skill <= 0 || buff <= 0) continue;
+        if (!out.empty()) out += L",";
+        out += std::to_wstring(skill) + L":" + std::to_wstring(buff);
+    }
+    return out;
+}
+
 static std::wstring ProfileSection(std::int32_t roleID, DWORD pid) {
     return roleID > 0 ? L"AutoTrain.Role" + std::to_wstring(roleID)
                       : L"AutoTrain.PID" + std::to_wstring(pid);
@@ -731,6 +802,14 @@ static TrainConfig LoadConfig(const std::wstring& section = L"AutoTrain") {
     c.autoSell = IniInt(section, L"AutoSell", 0) != 0;
     c.bagCheckMinutes = std::clamp(IniInt(section, L"BagCheckMinutes", 5), 1, 180);
     c.sellNpcName = IniText(section, L"SellNpcName");
+    c.healAtStart = IniInt(section, L"HealAtStart", 0) != 0;
+    c.healNpcName = IniText(section, L"HealNpcName");
+    c.autoBuff = IniInt(section, L"AutoBuff", 0) != 0;
+    c.buffSkillIDs = ParseIdList(IniText(section, L"BuffSkillIDs"));
+    c.buffMap = ParseBuffMap(IniText(section, L"BuffMap"));
+    c.autoChat = IniInt(section, L"AutoChat", 0) != 0;
+    c.autoChatMinutes = std::clamp(IniInt(section, L"AutoChatMinutes", 5), 1, 180);
+    c.autoChatMessage = IniText(section, L"AutoChatMessage");
     auto point = [&](const wchar_t* x, const wchar_t* y) {
         return NormalizedPoint{IniInt(section, x, -1), IniInt(section, y, -1)};
     };
@@ -750,6 +829,14 @@ static void SaveConfig(const std::wstring& section, const TrainConfig& c,
     WriteIniInt(section, L"AutoSell", c.autoSell ? 1 : 0);
     WriteIniInt(section, L"BagCheckMinutes", c.bagCheckMinutes);
     WriteIniText(section, L"SellNpcName", c.sellNpcName);
+    WriteIniInt(section, L"HealAtStart", c.healAtStart ? 1 : 0);
+    WriteIniText(section, L"HealNpcName", c.healNpcName);
+    WriteIniInt(section, L"AutoBuff", c.autoBuff ? 1 : 0);
+    WriteIniText(section, L"BuffSkillIDs", JoinIdList(c.buffSkillIDs));
+    WriteIniText(section, L"BuffMap", JoinBuffMap(c.buffMap));
+    WriteIniInt(section, L"AutoChat", c.autoChat ? 1 : 0);
+    WriteIniInt(section, L"AutoChatMinutes", c.autoChatMinutes);
+    WriteIniText(section, L"AutoChatMessage", c.autoChatMessage);
     auto point = [&](const wchar_t* x, const wchar_t* y, const NormalizedPoint& p) {
         WriteIniInt(section, x, p.x); WriteIniInt(section, y, p.y);
     };
@@ -903,20 +990,19 @@ public:
             return false;
         }
         const LiveState live = State();
-        std::uint64_t npc = 0, role = 0, res = 0, namePointer = 0;
-        const bool ok = Remote(rva::LuaGetNearestNPC, 0, 0, 0, 0, npc, 1000) && npc &&
-                        Remote(rva::LuaMapObjectGetRoleID, npc, 0, 0, 0, role, 900) && role > 0 &&
-                        Remote(rva::LuaMapSpriteGetResID, npc, 0, 0, 0, res, 900) && res > 0 &&
-                        Remote(rva::LuaMapObjectGetName, npc, 0, 0, 0, namePointer, 900);
-        if (!ok) {
-            error = L"Không tìm thấy NPC gần nhân vật. Hãy đứng sát NPC cần bán rồi lưu lại.";
+        // GetNearestNPC() returns LuaMapObjectData.  v0.7.2 incorrectly treated that base
+        // object as LuaMapSpriteData and made ResID mandatory, which caused valid nearby NPCs
+        // to be rejected.  Keep the proven v0.7.0 identity path: RoleID + Name.
+        std::int32_t currentRoleID = 0;
+        std::wstring currentName;
+        if (!ReadNearestNpcIdentity(currentRoleID, currentName, error)) {
+            error = L"Không tìm thấy NPC gần nhân vật. Hãy đứng sát NPC cần lưu rồi thử lại. • " + error;
             if (temporary) Cleanup();
             return false;
         }
-        output.resID = static_cast<std::int32_t>(res);
-        output.roleID = static_cast<std::int32_t>(role);
-        output.name = process_.ReadIl2CppString(namePointer);
-        if (output.name.empty()) output.name = L"NPC " + std::to_wstring(output.roleID);
+        output.resID = 0; // retained in the TXT schema only for backward compatibility.
+        output.roleID = currentRoleID;
+        output.name = currentName.empty() ? L"NPC " + std::to_wstring(output.roleID) : currentName;
         output.mapID = live.mapID;
         output.x = live.x;
         output.y = live.y;
@@ -925,12 +1011,13 @@ public:
     }
 
     void Start(const GameProcess& game, Spot target, TrainConfig config,
-               SellNpc sellNpc = {}) {
+               SellNpc sellNpc = {}, SellNpc healNpc = {}) {
         Stop();
         game_ = game;
         target_ = std::move(target);
         config_ = config;
         sellNpc_ = std::move(sellNpc);
+        healNpc_ = std::move(healNpc);
         running_ = true;
         worker_ = std::thread([this] { Worker(); });
     }
@@ -989,12 +1076,14 @@ private:
             {rva::LuaToggleRide,        {0x40,0x53,0x48,0x83,0xEC,0x20,0x80,0x3D,0xA5,0xE8,0x14,0x03}},
             {rva::LuaGetAutoFightEnabled,         {0x40,0x53,0x48,0x83,0xEC,0x20,0x80,0x3D,0x5E,0xCB,0x14,0x03}},
             {rva::LuaGetFreeBagSpace,    {0x48,0x83,0xEC,0x28,0x80,0x3D,0xB2,0x68,0x15,0x03,0x00,0x75}},
+            {rva::LuaGetBuffs,           {0x48,0x83,0xEC,0x28,0x80,0x3D,0x98,0x8F,0x15,0x03,0x00,0x75}},
+            {rva::LuaHasBuff,            {0x40,0x53,0x48,0x83,0xEC,0x20,0x80,0x3D,0xA8,0x09,0x15,0x03}},
+            {rva::LuaRequestUsingSkill,  {0x33,0xD2,0xE9,0x09,0x45,0x05,0x00,0xCC,0xCC,0xCC,0xCC,0xCC}},
+            {rva::UIFactorySendDefaultChat,{0x48,0x89,0x5C,0x24,0x08,0x57,0x48,0x83,0xEC,0x20,0x80,0x3D}},
             {rva::LuaGetNearestNPC,      {0x33,0xD2,0xB9,0xFF,0xFF,0xFF,0xFF,0xE9,0x94,0xBF,0xEA,0xFF}},
-            {rva::LuaGetNearestNPCByResID,{0x40,0x57,0x48,0x83,0xEC,0x20,0x80,0x3D,0x73,0x45,0x15,0x03}},
             {rva::LuaClickNPC,           {0x48,0x89,0x5C,0x24,0x10,0x57,0x48,0x83,0xEC,0x30,0x80,0x3D}},
             {rva::LuaMapObjectGetRoleID, {0x8B,0x41,0x10,0xC3,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC}},
             {rva::LuaMapObjectGetName,   {0x48,0x8B,0x41,0x18,0xC3,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC}},
-            {rva::LuaMapSpriteGetResID,   {0x8B,0x41,0x30,0xC3,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC}},
             {rva::LuaIsMoving,          {0x48,0x83,0xEC,0x28,0x80,0x3D,0x4A,0x00,0x15,0x03,0x00,0x75}},
             {rva::LuaGetSkills,         {0x48,0x83,0xEC,0x28,0x80,0x3D,0xDA,0x2E,0x15,0x03,0x00,0x0F}},
             {rva::LuaGetSkillName,      {0x40,0x53,0x48,0x83,0xEC,0x20,0x80,0x3D,0xFD,0x32,0x15,0x03}},
@@ -1422,7 +1511,9 @@ private:
         std::wstring textKey;
         std::wstring allKey;
     };
-    enum class ButtonRole { DauThai, AutoRoot, Fight, Stop, SellTab, QuickSell };
+    enum class ButtonRole {
+        DauThai, AutoRoot, Fight, Stop, ShopEntry, SellTab, QuickSell, EquipmentTab, Treatment
+    };
 
     void CollectDescendantLabels(std::uint64_t root, std::wstring& output) {
         std::vector<std::uint64_t> pending{root};
@@ -1611,6 +1702,13 @@ private:
                                           L"thietlap", L"setting", L"pk"})) return -1000;
                 return 0;
             }
+            case ButtonRole::ShopEntry: {
+                if (info.textKey == L"muathucuoi") return 760;
+                if (ContainsCompact(key, {L"muathucuoi", L"mountshop", L"buymount",
+                                          L"shopmount", L"npcmount", L"mountstore"})) return 580;
+                if (ContainsCompact(key, {L"banvatpham", L"quicksell", L"trangbi"})) return -1000;
+                return 0;
+            }
             case ButtonRole::SellTab: {
                 if (info.textKey == L"banvatpham") return 700;
                 if (ContainsCompact(key, {L"banvatphamnhanh", L"quicksell"})) return -1000;
@@ -1622,6 +1720,20 @@ private:
                 if (info.textKey == L"banvatphamnhanh") return 720;
                 if (ContainsCompact(key, {L"banvatphamnhanh", L"quicksell",
                                           L"fastsell", L"sellquick"})) return 560;
+                return 0;
+            }
+            case ButtonRole::EquipmentTab: {
+                if (info.textKey == L"trangbi") return 760;
+                if (ContainsCompact(key, {L"trangbi", L"equipmenttab", L"bagequipment",
+                                          L"equipequipment", L"tabquip", L"equiptab"})) return 570;
+                if (ContainsCompact(key, {L"muavatpham", L"buyitem", L"shopitem"})) return -1000;
+                return 0;
+            }
+            case ButtonRole::Treatment: {
+                if (info.textKey == L"trilieu" || info.textKey == L"trithuong" ||
+                    info.textKey == L"hoiphuc") return 760;
+                if (ContainsCompact(key, {L"trilieu", L"trithuong", L"hoiphuc", L"treatment",
+                                          L"treat", L"heal", L"recoverhp", L"recover"})) return 560;
                 return 0;
             }
         }
@@ -1746,8 +1858,8 @@ private:
         if (!Remote(rva::UIToggleHandleSelectEvent, toggle, 1, 0, 0, ignored, 1800)) return false;
         Sleep(60);
         selected = 0;
-        Remote(rva::UIToggleGetSelected, toggle, 0, 0, 0, selected, 900);
-        return true;
+        if (!Remote(rva::UIToggleGetSelected, toggle, 0, 0, 0, selected, 900)) return false;
+        return (selected & 0xFFu) != 0;
     }
     bool CreateUiArgArray(std::uint64_t uiObject, std::uint64_t& array,
                           std::uint64_t& handle) {
@@ -1868,14 +1980,14 @@ private:
         ActionControl fight;
         std::wstring fightReason;
         if (!FindAction(ButtonRole::Fight, fight, fightReason, true)) {
-            ButtonInfo autoRoot;
+            ActionControl autoRoot;
             std::wstring autoReason;
-            if (!FindButton(ButtonRole::AutoRoot, autoRoot, autoReason, true)) {
-                detail = L"Không định vị được UIButton AUTO • " + autoReason;
+            if (!FindAction(ButtonRole::AutoRoot, autoRoot, autoReason, true)) {
+                detail = L"Không định vị được control AUTO (Button/Toggle/Rect-Lua) • " + autoReason;
                 return false;
             }
-            if (!InvokeButton(autoRoot.object)) {
-                detail = L"UIButton.HandleClickEvent() của AUTO không phản hồi • " + autoRoot.label;
+            if (!InvokeAction(autoRoot)) {
+                detail = L"Callback nội bộ của AUTO không phản hồi • " + autoRoot.info.label;
                 return false;
             }
             bool foundFight = false;
@@ -1912,14 +2024,14 @@ private:
         ActionControl stop;
         std::wstring stopReason;
         if (!FindAction(ButtonRole::Stop, stop, stopReason, true)) {
-            ButtonInfo autoRoot;
+            ActionControl autoRoot;
             std::wstring autoReason;
-            if (!FindButton(ButtonRole::AutoRoot, autoRoot, autoReason, true)) {
-                detail = L"Không định vị được UIButton AUTO để dừng • " + autoReason;
+            if (!FindAction(ButtonRole::AutoRoot, autoRoot, autoReason, true)) {
+                detail = L"Không định vị được control AUTO để dừng • " + autoReason;
                 return false;
             }
-            if (!InvokeButton(autoRoot.object)) {
-                detail = L"Không mở được menu AUTO để dừng • " + autoRoot.label;
+            if (!InvokeAction(autoRoot)) {
+                detail = L"Không mở được menu AUTO để dừng • " + autoRoot.info.label;
                 return false;
             }
             bool foundStop = false;
@@ -2016,39 +2128,109 @@ private:
         freeSpace = static_cast<std::int32_t>(value);
         return freeSpace >= 0 && freeSpace <= 10000;
     }
+    bool ReadNearestNpcIdentity(std::int32_t& roleID, std::wstring& name,
+                                std::wstring& detail) {
+        roleID = 0;
+        name.clear();
+        std::uint64_t npc = 0, role = 0, namePointer = 0;
+        if (!Remote(rva::LuaGetNearestNPC, 0, 0, 0, 0, npc, 1000) || !npc) {
+            detail = L"GetNearestNPC() chưa trả về NPC";
+            return false;
+        }
+        if (!Remote(rva::LuaMapObjectGetRoleID, npc, 0, 0, 0, role, 800) || role == 0) {
+            detail = L"NPC gần nhất không có RoleID hợp lệ";
+            return false;
+        }
+        if (Remote(rva::LuaMapObjectGetName, npc, 0, 0, 0, namePointer, 800) && namePointer)
+            name = process_.ReadIl2CppString(namePointer);
+        roleID = static_cast<std::int32_t>(role);
+        return roleID > 0;
+    }
+    bool ResolveNpcRoleID(const SellNpc& saved, std::int32_t& currentRoleID,
+                          std::wstring& detail) {
+        currentRoleID = 0;
+
+        // RoleID can be recreated after reconnect/map reload.  At the saved NPC coordinates,
+        // refresh the nearest NPC and accept it only when its name matches the saved NPC.  This
+        // keeps the fast/reliable v0.7.0 save path without clicking a different nearby NPC.
+        std::int32_t nearestRoleID = 0;
+        std::wstring nearestName, nearestDetail;
+        if (ReadNearestNpcIdentity(nearestRoleID, nearestName, nearestDetail)) {
+            const std::wstring savedKey = CompactMatch(saved.name);
+            const std::wstring nearestKey = CompactMatch(nearestName);
+            const bool sameName = !savedKey.empty() && !nearestKey.empty() && savedKey == nearestKey;
+            const bool sameRole = saved.roleID > 0 && saved.roleID == nearestRoleID;
+            if (sameName || sameRole) {
+                currentRoleID = nearestRoleID;
+                detail = L"Đã refresh NPC gần nhất: " +
+                         (nearestName.empty() ? saved.name : nearestName) + L" • RoleID " +
+                         std::to_wstring(currentRoleID);
+                return true;
+            }
+            detail = L"NPC gần nhất là “" +
+                     (nearestName.empty() ? L"không rõ tên" : nearestName) +
+                     L"”, khác NPC đã lưu “" + saved.name + L"”; không mở nhầm NPC";
+            return false;
+        }
+
+        // Compatibility fallback for the same running instance: v0.7.0 stored RoleID and this
+        // path is known to work when GetNearestNPC() temporarily returns null at the edge of its
+        // internal distance threshold.
+        if (saved.roleID > 0) {
+            currentRoleID = saved.roleID;
+            detail = L"Không refresh được NPC gần nhất; dùng RoleID đã lưu " +
+                     std::to_wstring(currentRoleID) + L" • " + nearestDetail;
+            return true;
+        }
+        detail = L"NPC chưa có RoleID hợp lệ • " + nearestDetail;
+        return false;
+    }
+    bool OpenNpc(const SellNpc& saved, std::wstring& detail) {
+        std::int32_t roleID = 0;
+        if (!ResolveNpcRoleID(saved, roleID, detail)) return false;
+        std::uint64_t ignored = 0;
+        if (!Remote(rva::LuaClickNPC, static_cast<std::uint32_t>(roleID),
+                    0, 0, 0, ignored, 1600)) {
+            detail = L"ClickNPC(" + std::to_wstring(roleID) + L") không phản hồi";
+            return false;
+        }
+        detail = L"Đã gọi ClickNPC(" + std::to_wstring(roleID) + L") • " + saved.name;
+        return true;
+    }
+    bool WaitAction(ButtonRole role, ActionControl& action, std::wstring& reason,
+                    int attempts = 10, int sleepMs = 160) {
+        for (int i = 0; i < attempts; ++i) {
+            if (i) Sleep(static_cast<DWORD>(sleepMs));
+            if (FindAction(role, action, reason, i == attempts - 1)) return true;
+        }
+        return false;
+    }
     bool OpenSellUi(std::wstring& detail) {
-        std::int32_t currentRoleID = sellNpc_.roleID;
-        if (sellNpc_.resID > 0) {
-            std::uint64_t npc = 0, role = 0;
-            if (!Remote(rva::LuaGetNearestNPCByResID, static_cast<std::uint32_t>(sellNpc_.resID),
-                        0, 0, 0, npc, 1200) || !npc ||
-                !Remote(rva::LuaMapObjectGetRoleID, npc, 0, 0, 0, role, 900) || role <= 0) {
-                detail = L"Không tìm thấy đúng NPC ResID=" + std::to_wstring(sellNpc_.resID) +
-                         L" ở vị trí hiện tại; không ClickNPC mù";
+        if (!OpenNpc(sellNpc_, detail)) return false;
+
+        std::wstring reason;
+        ActionControl shopEntry;
+        // The NPC dialog in this client exposes "Mua thú cưỡi" before the shop page.
+        // If the shop is already open (e.g. server/UI remembers the previous page), accept
+        // a visible SellTab instead of blindly clicking an unrelated control.
+        if (WaitAction(ButtonRole::ShopEntry, shopEntry, reason, 8, 150)) {
+            if (!InvokeAction(shopEntry)) {
+                detail = L"Đã mở NPC nhưng ‘Mua thú cưỡi’ không phản hồi • " + shopEntry.info.label;
                 return false;
             }
-            currentRoleID = static_cast<std::int32_t>(role);
-            sellNpc_.roleID = currentRoleID;
+            Sleep(260);
+        } else {
+            ActionControl alreadySell;
+            std::wstring sellProbe;
+            if (!FindAction(ButtonRole::SellTab, alreadySell, sellProbe, true)) {
+                detail = L"Đã ClickNPC nhưng chưa thấy ‘Mua thú cưỡi’/shop • " + reason;
+                return false;
+            }
         }
-        if (currentRoleID <= 0) {
-            detail = L"NPC bán đồ chưa có ResID/RoleID hợp lệ";
-            return false;
-        }
-        std::uint64_t ignored = 0;
-        if (!Remote(rva::LuaClickNPC, static_cast<std::uint32_t>(currentRoleID),
-                    0, 0, 0, ignored, 1600)) {
-            detail = L"ClickNPC(" + std::to_wstring(currentRoleID) + L") không phản hồi";
-            return false;
-        }
+
         ActionControl sellTab;
-        std::wstring reason;
-        bool found = false;
-        for (int i = 0; i < 10 && !found; ++i) {
-            Sleep(160);
-            found = FindAction(ButtonRole::SellTab, sellTab, reason, i == 9);
-        }
-        if (!found) {
-            detail = L"Đã mở NPC nhưng chưa định vị duy nhất mục ‘Bán vật phẩm’ • " + reason;
+        if (!WaitAction(ButtonRole::SellTab, sellTab, reason, 12, 150)) {
+            detail = L"Đã vào shop nhưng chưa định vị được ‘Bán vật phẩm’ • " + reason;
             return false;
         }
         if (!InvokeAction(sellTab)) {
@@ -2056,8 +2238,9 @@ private:
             return false;
         }
         Sleep(220);
+
         ActionControl quickSell;
-        if (!FindAction(ButtonRole::QuickSell, quickSell, reason, true)) {
+        if (!WaitAction(ButtonRole::QuickSell, quickSell, reason, 8, 140)) {
             detail = L"Đã vào Bán vật phẩm nhưng chưa thấy ‘Bán vật phẩm nhanh’ • " + reason;
             return false;
         }
@@ -2065,37 +2248,91 @@ private:
             detail = L"Không bật được ‘Bán vật phẩm nhanh’ • " + quickSell.info.label;
             return false;
         }
-        detail = L"Đã mở NPC " + sellNpc_.name + L" • Bán vật phẩm • Bán vật phẩm nhanh";
+        Sleep(180);
+
+        ActionControl equipment;
+        if (!WaitAction(ButtonRole::EquipmentTab, equipment, reason, 8, 140)) {
+            detail = L"Đã bật bán nhanh nhưng chưa thấy tab ‘Trang bị’ trong tay nải • " + reason;
+            return false;
+        }
+        if (!InvokeAction(equipment)) {
+            detail = L"Không chuyển được sang tab ‘Trang bị’ • " + equipment.info.label;
+            return false;
+        }
+        Sleep(220);
+        detail = L"NPC → Mua thú cưỡi → Bán vật phẩm → Bán nhanh → Trang bị";
         return true;
     }
-    bool TryCloseSellUi(std::wstring& detail) {
-        std::vector<ButtonInfo> buttons;
-        if (!ReadActiveButtonInfos(false, buttons)) return false;
-        struct CloseCandidate { std::uint64_t object; int score; std::wstring label; };
-        std::vector<CloseCandidate> candidates;
-        for (const ButtonInfo& info : buttons) {
-            const std::wstring closeKey = CompactMatch(info.name + L" " + info.text);
-            int score = 0;
-            if (info.textKey == L"dong" || info.textKey == L"close") score = 700;
-            else if (ContainsCompact(closeKey,
-                     {L"btnclose", L"buttonclose", L"closebutton", L"shopclose", L"storeclose"}))
-                score = 560;
-            if (score <= 0) continue;
-            std::wstring parentKey;
-            if (!ReadAncestorKey(info.object, parentKey)) continue;
-            if (!ContainsCompact(parentKey,
-                    {L"shop", L"store", L"sell", L"trade", L"npc", L"business", L"stall"}))
-                continue;
-            candidates.push_back({info.object, score, info.label});
-        }
+    bool IsCloseControl(const ButtonInfo& info, int& score) {
+        score = 0;
+        const std::wstring closeKey = CompactMatch(info.name + L" " + info.text + L" " +
+                                                   info.handler + L" " + info.descendants);
+        if (info.textKey == L"dong" || info.textKey == L"close" || info.textKey == L"x") score = 720;
+        else if (ContainsCompact(closeKey, {L"btnclose", L"buttonclose", L"closebutton",
+                                            L"shopclose", L"storeclose", L"bagclose",
+                                            L"inventoryclose", L"packageclose"})) score = 600;
+        if (score <= 0) return false;
+        std::wstring parentKey;
+        if (!ReadAncestorKey(info.object, parentKey)) return false;
+        if (!ContainsCompact(parentKey, {L"shop", L"store", L"sell", L"trade", L"npc",
+                                         L"business", L"bag", L"inventory", L"package",
+                                         L"itempack", L"pack"})) return false;
+        if (ContainsCompact(parentKey, {L"bag", L"inventory", L"package", L"itempack"})) score += 40;
+        return true;
+    }
+    bool CloseOneTradeOrBagUi(std::wstring& closedLabel) {
+        struct Candidate { ActionControl action; int score; };
+        std::vector<Candidate> candidates;
+        auto append = [&](const std::vector<ButtonInfo>& infos, ActionKind kind) {
+            for (const ButtonInfo& info : infos) {
+                int score = 0;
+                if (IsCloseControl(info, score)) candidates.push_back({{kind, info}, score});
+            }
+        };
+        std::vector<ButtonInfo> infos;
+        if (ReadActiveButtonInfos(true, infos)) append(infos, ActionKind::Button);
+        if (ReadActiveRectInfos(true, infos)) append(infos, ActionKind::RectLua);
+        if (ReadActiveToggleInfos(true, infos)) append(infos, ActionKind::Toggle);
         if (candidates.empty()) return false;
-        std::sort(candidates.begin(), candidates.end(), [](const CloseCandidate& a,
-                                                            const CloseCandidate& b) {
+        std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
             return a.score > b.score;
         });
-        if (candidates.size() > 1 && candidates[0].score == candidates[1].score) return false;
-        if (!InvokeButton(candidates.front().object)) return false;
-        detail += L" • đã đóng shop bằng UIButton: " + candidates.front().label;
+        if (candidates.size() > 1 && candidates[0].score == candidates[1].score &&
+            candidates[0].action.info.object != candidates[1].action.info.object) return false;
+        if (!InvokeAction(candidates.front().action)) return false;
+        closedLabel = candidates.front().action.info.label;
+        return true;
+    }
+    void CloseTradeAndBagUi(std::wstring& detail) {
+        int closed = 0;
+        for (int i = 0; i < 4; ++i) {
+            std::wstring label;
+            if (!CloseOneTradeOrBagUi(label)) break;
+            ++closed;
+            Sleep(140);
+        }
+        if (closed > 0) detail += L" • đã đóng " + std::to_wstring(closed) + L" cửa sổ shop/tay nải";
+    }
+    static std::wstring ItemAttemptKey(const ActionControl& item) {
+        return std::to_wstring(item.info.object) + L"|" + item.info.nameKey + L"|" +
+               CompactMatch(item.info.handler) + L"|" + item.info.textKey;
+    }
+    bool CollectSafeBagItems(std::vector<ActionControl>& candidates) {
+        candidates.clear();
+        std::vector<ButtonInfo> buttons;
+        if (ReadActiveButtonInfos(false, buttons)) {
+            for (const ButtonInfo& info : buttons)
+                if (IsSafeBagItemButton(info)) candidates.push_back({ActionKind::Button, info});
+        }
+        std::vector<ButtonInfo> rects;
+        if (ReadActiveRectInfos(false, rects)) {
+            for (const ButtonInfo& info : rects)
+                if (IsSafeBagItemRect(info)) candidates.push_back({ActionKind::RectLua, info});
+        }
+        std::sort(candidates.begin(), candidates.end(), [](const ActionControl& a,
+                                                            const ActionControl& b) {
+            return a.info.object < b.info.object;
+        });
         return true;
     }
     bool TrySellAtNpc(int& freeAfter, std::wstring& detail) {
@@ -2105,63 +2342,71 @@ private:
             detail = L"Không đọc được GetFreeBagSpace trước khi bán";
             return false;
         }
-        if (freeBefore > 0) {
-            freeAfter = freeBefore;
-            detail = L"Tay nải đã có " + std::to_wstring(freeBefore) + L" ô trống; không cần bán";
-            return true;
-        }
         if (!OpenSellUi(detail)) return false;
 
-        // The shop has no exported C# SellItem method in this build. Use only item
-        // controls proven to belong to the player's bag tree. UIButton calls its own
-        // click handler; UIRectTransform uses the verified Lua callback path and never
-        // receives a fabricated PointerEventData object.
+        std::map<std::wstring, int> failedAttempts;
+        std::set<std::wstring> permanentlySkipped;
         int bestFree = freeBefore;
-        int invoked = 0;
-        for (int attempt = 0; attempt < 90; ++attempt) {
-            std::vector<ButtonInfo> buttons;
-            if (!ReadActiveButtonInfos(false, buttons)) {
-                if (bestFree > freeBefore) break;
-                detail = L"Mất cây UIButton của tay nải; dừng bán an toàn";
-                return false;
-            }
+        int callbacks = 0;
+        int soldItems = 0;
+        int skippedItems = 0;
+        while (callbacks < 90) {
             std::vector<ActionControl> candidates;
-            for (const ButtonInfo& info : buttons)
-                if (IsSafeBagItemButton(info)) candidates.push_back({ActionKind::Button, info});
-            std::vector<ButtonInfo> rects;
-            if (ReadActiveRectInfos(false, rects)) {
-                for (const ButtonInfo& info : rects)
-                    if (IsSafeBagItemRect(info)) candidates.push_back({ActionKind::RectLua, info});
+            CollectSafeBagItems(candidates);
+            if (candidates.empty()) break;
+
+            const ActionControl* chosen = nullptr;
+            std::wstring chosenKey;
+            for (const ActionControl& item : candidates) {
+                const std::wstring key = ItemAttemptKey(item);
+                if (!permanentlySkipped.count(key)) {
+                    chosen = &item;
+                    chosenKey = key;
+                    break;
+                }
             }
-            if (candidates.empty()) {
-                if (bestFree > freeBefore) break;
-                detail = HasLikelyBagUiRect()
-                    ? L"Có UIRectTransform trong tay nải nhưng không có Lua click handler duy nhất/an toàn; không bấm mù"
-                    : L"Không nhận diện chắc chắn ô đồ trong cây tay nải; không bấm mù";
-                return false;
+            if (!chosen) break;  // every visible equipment slot has already failed 3 times.
+
+            if (!InvokeAction(*chosen)) {
+                const int failures = ++failedAttempts[chosenKey];
+                ++callbacks;
+                if (failures >= 3 && permanentlySkipped.insert(chosenKey).second) ++skippedItems;
+                Sleep(100);
+                continue;
             }
-            const ActionControl& item = candidates[static_cast<std::size_t>(attempt) % candidates.size()];
-            if (!InvokeAction(item)) {
-                if (bestFree > freeBefore) break;
-                detail = L"Ô đồ đã nhận diện nhưng callback nội bộ không phản hồi • " + item.info.label;
-                return false;
-            }
-            ++invoked;
-            Sleep(140);
+            ++callbacks;
+            Sleep(180);
             int currentFree = -1;
-            if (ReadFreeBagSpace(currentFree) && currentFree > bestFree)
+            if (ReadFreeBagSpace(currentFree) && currentFree > bestFree) {
                 bestFree = currentFree;
+                ++soldItems;
+                failedAttempts.erase(chosenKey);
+                // Sold cells can be recycled/reordered by the UI; rescan from scratch next loop.
+                Sleep(80);
+                continue;
+            }
+            const int failures = ++failedAttempts[chosenKey];
+            if (failures >= 3 && permanentlySkipped.insert(chosenKey).second) ++skippedItems;
         }
-        freeAfter = bestFree;
-        if (bestFree <= freeBefore) {
-            detail = L"Đã thử tối đa " + std::to_wstring(invoked) +
-                     L" ô nhưng GetFreeBagSpace chưa tăng; dừng chuỗi để tránh bấm mù";
+
+        int finalFree = bestFree;
+        int readFinal = -1;
+        if (ReadFreeBagSpace(readFinal)) finalFree = std::max(finalFree, readFinal);
+        freeAfter = finalFree;
+        std::wstring closeDetail;
+        CloseTradeAndBagUi(closeDetail);
+
+        if (soldItems <= 0 && finalFree <= freeBefore) {
+            detail = L"Không bán được trang bị nào • đã thử " + std::to_wstring(callbacks) +
+                     L" callback • bỏ qua " + std::to_wstring(skippedItems) +
+                     L" món sau 3 lần thất bại" + closeDetail;
             return false;
         }
-        detail = L"Đã chạy chuỗi bán nhanh " + std::to_wstring(invoked) +
-                 L" lượt • tay nải từ " + std::to_wstring(freeBefore) + L" → " +
-                 std::to_wstring(bestFree) + L" ô trống";
-        TryCloseSellUi(detail);
+        detail = L"Đã bán " + std::to_wstring(soldItems) + L" món trang bị • " +
+                 std::to_wstring(callbacks) + L" callback • bỏ qua " +
+                 std::to_wstring(skippedItems) + L" món lỗi 3 lần • tay nải " +
+                 std::to_wstring(freeBefore) + L" → " + std::to_wstring(finalFree) +
+                 L" ô trống" + closeDetail;
         return true;
     }
 
@@ -2350,6 +2595,148 @@ private:
                       : L"Gửi skill thất bại";
         return sent;
     }
+    struct BuffSnapshot {
+        std::map<int, std::uint64_t> durationById;
+    };
+    bool ReadBuffObject(std::uint64_t object, BuffSnapshot& out) {
+        if (!object) return false;
+        std::uint64_t idValue = 0, durationValue = 0;
+        if (!Remote(rva::LuaBuffGetBuffID, object, 0, 0, 0, idValue, 700)) return false;
+        const int id = static_cast<std::int32_t>(idValue);
+        if (id <= 0 || id > 100000000) return false;
+        Remote(rva::LuaBuffGetDurationTick, object, 0, 0, 0, durationValue, 700);
+        out.durationById[id] = durationValue;
+        return true;
+    }
+    bool ReadBuffSnapshot(BuffSnapshot& out) {
+        out.durationById.clear();
+        std::uint64_t collection = 0;
+        if (!Remote(rva::LuaGetBuffs, 0, 0, 0, 0, collection, 1400) || !collection) return false;
+
+        // The API return type is a managed collection. Support both common layouts used by
+        // this build (List<LuaBuffData> and Dictionary<*, LuaBuffData>) and validate every
+        // count/pointer before reading; never assume a layout after a failed sanity check.
+        std::uint64_t array = 0;
+        std::int32_t count = -1;
+        bool layoutValid = false;
+        if (process_.Read(collection + off::ListItems, array) && array &&
+            process_.Read(collection + off::ListSize, count) && count >= 0 && count <= 512) {
+            std::uint64_t arrayLength = 0;
+            if (process_.Read(array + off::ArrayLength, arrayLength) &&
+                arrayLength >= static_cast<std::uint64_t>(count) && arrayLength <= 4096) {
+                layoutValid = true;
+                for (int i = 0; i < count; ++i) {
+                    std::uint64_t value = 0;
+                    if (process_.Read(array + off::ArrayData + static_cast<std::uint64_t>(i) * 8,
+                                      value) && value) ReadBuffObject(value, out);
+                }
+            }
+        }
+        if (layoutValid) return true;
+
+        array = 0; count = -1;
+        if (process_.Read(collection + off::DictionaryEntries, array) && array &&
+            process_.Read(collection + off::DictionaryCount, count) && count >= 0 && count <= 512) {
+            layoutValid = true;
+            for (int i = 0; i < count; ++i) {
+                const std::uint64_t entry = array + off::ArrayData +
+                    static_cast<std::uint64_t>(i) * off::EntrySize;
+                std::uint64_t value = 0;
+                if (process_.Read(entry + off::EntryValue, value) && value) ReadBuffObject(value, out);
+            }
+        }
+        return layoutValid;
+    }
+    bool HasMappedBuff(int buffID) {
+        if (buffID <= 0) return false;
+        std::uint64_t value = 0;
+        return Remote(rva::LuaHasBuff, static_cast<std::uint32_t>(buffID), 0, 0, 0,
+                      value, 900) && (value & 0xFFu) != 0;
+    }
+    bool TryApplyAndVerifyBuff(int skillID, std::wstring& detail) {
+        if (skillID <= 0) return false;
+        const auto mapped = config_.buffMap.find(skillID);
+        if (mapped != config_.buffMap.end() && HasMappedBuff(mapped->second)) {
+            detail = L"Skill " + std::to_wstring(skillID) + L" đã có buff " +
+                     std::to_wstring(mapped->second);
+            return true;
+        }
+        BuffSnapshot before, after;
+        const bool haveBefore = ReadBuffSnapshot(before);
+        std::uint64_t ignored = 0;
+        if (!Remote(rva::LuaRequestUsingSkill, static_cast<std::uint32_t>(skillID),
+                    0, 0, 0, ignored, 1800)) {
+            detail = L"RequestUsingSkill(" + std::to_wstring(skillID) + L") thất bại";
+            return false;
+        }
+        Sleep(650);
+        const bool haveAfter = ReadBuffSnapshot(after);
+        if (mapped != config_.buffMap.end() && HasMappedBuff(mapped->second)) {
+            detail = L"Buff " + std::to_wstring(mapped->second) + L" đã xuất hiện";
+            return true;
+        }
+        if (haveBefore && haveAfter) {
+            int detected = 0;
+            for (const auto& [buffID, duration] : after.durationById) {
+                const auto old = before.durationById.find(buffID);
+                if (old == before.durationById.end() || duration > old->second) {
+                    if (detected != 0 && detected != buffID) {
+                        detected = -1;  // ambiguous: more than one buff changed.
+                        break;
+                    }
+                    detected = buffID;
+                }
+            }
+            if (detected > 0) {
+                config_.buffMap[skillID] = detected;
+                detail = L"Đã xác minh skill " + std::to_wstring(skillID) + L" → buff " +
+                         std::to_wstring(detected);
+                return true;
+            }
+        }
+        detail = L"Skill " + std::to_wstring(skillID) +
+                 L" chưa tạo/refresh buff có thể xác minh";
+        return false;
+    }
+    bool SendDefaultChatInternal(const std::wstring& message, std::wstring& detail) {
+        if (message.empty()) return false;
+        std::string utf8 = Utf8(message);
+        if (utf8.empty() || utf8.size() > 800 || !il2cppStringNew_ || !WriteScratch(0, utf8)) {
+            detail = L"Nội dung Auto chat rỗng/quá dài";
+            return false;
+        }
+        std::uint64_t managed = 0, handle = 0, ignored = 0;
+        if (!RemoteAbsolute(il2cppStringNew_, scratchBuffer_, 0, 0, 0, managed, 1000) || !managed ||
+            !RemoteAbsolute(il2cppGcHandleNew_, managed, 0, 0, 0, handle, 900) || !handle) {
+            detail = L"Không tạo được chuỗi managed cho Auto chat";
+            return false;
+        }
+        const bool sent = Remote(rva::UIFactorySendDefaultChat, managed, 0, 0, 0, ignored, 1800);
+        RemoteAbsolute(il2cppGcHandleFree_, handle, 0, 0, 0, ignored, 600);
+        detail = sent ? L"Đã gửi Auto chat bằng UIFactory.SendDefaultChat()"
+                      : L"UIFactory.SendDefaultChat() không phản hồi";
+        return sent;
+    }
+    bool TryTreatmentAtNpc(std::wstring& detail) {
+        if (!OpenNpc(healNpc_, detail)) return false;
+        ActionControl treatment;
+        std::wstring reason;
+        if (!WaitAction(ButtonRole::Treatment, treatment, reason, 10, 160)) {
+            detail = L"Đã mở NPC trị liệu nhưng chưa thấy nút Trị liệu/Hồi phục • " + reason;
+            CloseTradeAndBagUi(detail);
+            return false;
+        }
+        if (!InvokeAction(treatment)) {
+            detail = L"Nút Trị liệu không phản hồi • " + treatment.info.label;
+            CloseTradeAndBagUi(detail);
+            return false;
+        }
+        Sleep(450);
+        detail = L"Đã gọi trị liệu tại " + healNpc_.name;
+        CloseTradeAndBagUi(detail);
+        return true;
+    }
+
     bool TriggerAutoMenu(std::wstring& detail) {
         // Do not replace the real menu action with set_AutoFight.  Static
         // analysis shows that setter only writes PlayZone+0x20; the game's
@@ -2417,12 +2804,24 @@ private:
         auto transitionDeadline = Clock::time_point{};
         auto nextBagCheck = Clock::now();
         auto sellRetryAfter = Clock::time_point{};
+        auto healRetryAfter = Clock::now();
+        auto nextBuffCheck = Clock::now();
+        auto nextBuffAction = Clock::now();
+        auto nextAutoChat = Clock::now();
         bool trainTriggered = false;
         bool sellingTrip = false;
+        bool healingTrip = config_.healAtStart && healNpc_.roleID > 0;
         int sellFailures = 0;
+        int healFailures = 0;
+        bool buffCycle = false;
+        std::size_t buffIndex = 0;
+        int buffAttempts = 0;
         bool outsideTarget = false;
         bool deathLatched = false;
-        bool awaitingDauThai = false;
+        bool dauThaiClicked = false;
+        int deathStableScans = 0;
+        int aliveAfterDeathScans = 0;
+        int dauThaiRetries = 0;
         bool awaitingMapTransition = false;
         bool transitionSeen = false;
         bool mapGuard = false;
@@ -2465,7 +2864,7 @@ private:
                     LiveState live = State();
                     const auto now = Clock::now();
                     if (!recovering && live.mapReady && !live.waitingChangeMap && !live.dead &&
-                        config_.autoSell && !sellingTrip && now >= nextBagCheck) {
+                        config_.autoSell && !sellingTrip && !healingTrip && now >= nextBagCheck) {
                         int probedFree = -1;
                         if (ReadFreeBagSpace(probedFree)) {
                             live.freeBagSpace = probedFree;
@@ -2479,6 +2878,14 @@ private:
                             UpdateFreeBagSpace(-1);
                             nextBagCheck = now + std::chrono::seconds(10);
                         }
+                    }
+
+                    if (!recovering && live.mapReady && !live.waitingChangeMap && !live.dead &&
+                        config_.autoChat && !config_.autoChatMessage.empty() &&
+                        !sellingTrip && !healingTrip && now >= nextAutoChat) {
+                        std::wstring chatDetail;
+                        SendDefaultChatInternal(config_.autoChatMessage, chatDetail);
+                        nextAutoChat = now + std::chrono::minutes(config_.autoChatMinutes);
                     }
 
                     if (recovering) {
@@ -2543,34 +2950,74 @@ private:
                             trainTriggered = false;
                             awaitingRideCheck = false;
                             mountFightUntil = Clock::time_point{};
+                            aliveAfterDeathScans = 0;
                             if (!deathLatched) {
-                                DisableActions();
+                                // Critical repeated-PK guard: do NOT open AUTO/other UI on the death edge.
+                                // Stop only AutoPath, then wait for the death/map state to be stable before
+                                // touching the freshly-created death overlay. This avoids stale UIObject races.
+                                std::uint64_t ignored = 0;
+                                if (autoPathManager_)
+                                    Remote(rva::AutoPathStop, autoPathManager_, 0, 0, 0, ignored, 700);
                                 deathLatched = true;
-                                awaitingDauThai = false;
-                                dauThaiRetryAfter = now;
+                                dauThaiClicked = false;
+                                deathStableScans = 0;
+                                dauThaiRetries = 0;
+                                dauThaiRetryAfter = now + std::chrono::milliseconds(350);
                             }
-                            if (awaitingDauThai && now < dauThaiRetryAfter) {
+                            if (live.mapReady && !live.waitingChangeMap) ++deathStableScans;
+                            else deathStableScans = 0;
+
+                            if (dauThaiClicked && now < dauThaiRetryAfter) {
                                 UpdateLive(true, L"ĐANG ĐẦU THAI",
-                                           L"Đã gọi nút Đầu thai • chờ IsDeath tắt");
-                            } else if (now >= dauThaiRetryAfter) {
+                                           L"Đã gọi Đầu thai một lần • khóa toàn bộ UI/path cho tới khi IsDeath tắt");
+                            } else if (dauThaiClicked && now >= dauThaiRetryAfter && dauThaiRetries < 1 &&
+                                       deathStableScans >= 2) {
+                                // One single late retry is allowed only if the death UI is still truly active.
                                 std::wstring detail;
                                 const bool clicked = ClickInternalDauThai(detail);
-                                awaitingDauThai = clicked;
-                                dauThaiRetryAfter = now + std::chrono::seconds(clicked ? 10 : 2);
-                                UpdateLive(true, clicked ? L"ĐANG ĐẦU THAI"
-                                                        : L"NHÂN VẬT ĐÃ CHẾT", detail);
+                                ++dauThaiRetries;
+                                dauThaiRetryAfter = now + std::chrono::seconds(15);
+                                UpdateLive(true, L"ĐANG ĐẦU THAI",
+                                           detail + L" • retry an toàn " + std::to_wstring(dauThaiRetries) + L"/1");
+                                (void)clicked;
+                            } else if (!dauThaiClicked && deathStableScans >= 2 && now >= dauThaiRetryAfter) {
+                                std::wstring detail;
+                                const bool clicked = ClickInternalDauThai(detail);
+                                if (clicked) {
+                                    dauThaiClicked = true;
+                                    dauThaiRetryAfter = now + std::chrono::seconds(15);
+                                } else {
+                                    dauThaiRetryAfter = now + std::chrono::seconds(2);
+                                }
+                                UpdateLive(true, clicked ? L"ĐANG ĐẦU THAI" : L"NHÂN VẬT ĐÃ CHẾT", detail);
+                            } else {
+                                UpdateLive(true, L"NHÂN VẬT ĐÃ CHẾT",
+                                           L"Chờ IsDeath + MapReady ổn định 2 lần trước khi gọi Đầu thai");
                             }
                         } else if (deathLatched) {
-                            deathLatched = false;
-                            awaitingDauThai = false;
-                            mapGuard = true;
-                            readyScans = 0;
-                            nextNavigate = now;
-                            UpdateLive(true, L"ĐÃ ĐẦU THAI",
-                                       L"IsDeath đã tắt • kiểm tra map ổn định 2 lần");
-                        } else if (config_.autoSell && !sellingTrip &&
+                            ++aliveAfterDeathScans;
+                            if (aliveAfterDeathScans < 2) {
+                                UpdateLive(true, L"ĐÃ ĐẦU THAI",
+                                           L"IsDeath đã tắt • xác nhận sống ổn định lần 1/2; chưa gửi UI/path");
+                            } else {
+                                deathLatched = false;
+                                dauThaiClicked = false;
+                                deathStableScans = 0;
+                                dauThaiRetries = 0;
+                                mapGuard = true;
+                                readyScans = 0;
+                                nextNavigate = now;
+                                if (config_.healAtStart && healNpc_.roleID > 0) {
+                                    healingTrip = true;
+                                    healFailures = 0;
+                                    healRetryAfter = now;
+                                }
+                                UpdateLive(true, L"ĐÃ ĐẦU THAI",
+                                           L"Sống ổn định 2 lần • tiếp tục guard map trước khi ra bãi");
+                            }
+                        } else if (config_.autoSell && !sellingTrip && !healingTrip &&
                                    now >= nextBagCheck && live.freeBagSpace == 0 &&
-                                   (sellNpc_.resID > 0 || sellNpc_.roleID > 0)) {
+                                   sellNpc_.roleID > 0) {
                             DisableActions();
                             trainTriggered = false;
                             sellingTrip = true;
@@ -2583,6 +3030,41 @@ private:
                             sellRetryAfter = now;
                             UpdateLive(true, L"TAY NẢI ĐÃ FULL",
                                        L"GetFreeBagSpace=0 • dừng train và đi NPC " + sellNpc_.name);
+                        } else if (healingTrip &&
+                                   AtSpot(live, Spot{healNpc_.name, healNpc_.mapID,
+                                                    healNpc_.x, healNpc_.y})) {
+                            awaitingRideCheck = false;
+                            mountFightUntil = Clock::time_point{};
+                            if (live.autoPathing) {
+                                std::uint64_t ignored = 0;
+                                Remote(rva::AutoPathStop, autoPathManager_, 0, 0, 0, ignored);
+                            }
+                            if (live.riding) {
+                                if (now >= nextRideDecision) {
+                                    const bool sent = ToggleRide(false);
+                                    nextRideDecision = now + std::chrono::seconds(4);
+                                    UpdateLive(true, L"ĐÃ TỚI NPC TRỊ LIỆU",
+                                               sent ? L"Đã yêu cầu xuống ngựa • chờ 4 giây"
+                                                    : L"Xuống ngựa thất bại • thử lại sau 4 giây");
+                                }
+                            } else if (now >= healRetryAfter) {
+                                std::wstring detail;
+                                const bool healed = TryTreatmentAtNpc(detail);
+                                if (healed || ++healFailures >= 3) {
+                                    healingTrip = false;
+                                    outsideTarget = false;
+                                    nextNavigate = now;
+                                    bestDistance = LLONG_MAX;
+                                    lastProgress = now;
+                                    UpdateLive(true, healed ? L"ĐÃ TRỊ LIỆU" : L"BỎ QUA TRỊ LIỆU",
+                                               detail + (healed ? L" • quay lại bãi " + target_.name
+                                                                : L" • thất bại 3 lần; tiếp tục ra bãi"));
+                                } else {
+                                    healRetryAfter = now + std::chrono::seconds(4);
+                                    UpdateLive(true, L"TRỊ LIỆU CHƯA THÀNH CÔNG",
+                                               detail + L" • thử " + std::to_wstring(healFailures) + L"/3");
+                                }
+                            }
                         } else if (sellingTrip &&
                                    AtSpot(live, Spot{sellNpc_.name, sellNpc_.mapID,
                                                     sellNpc_.x, sellNpc_.y})) {
@@ -2595,10 +3077,10 @@ private:
                             if (live.riding) {
                                 if (now >= nextRideDecision) {
                                     const bool sent = ToggleRide(false);
-                                    nextRideDecision = now + std::chrono::seconds(6);
+                                    nextRideDecision = now + std::chrono::seconds(4);
                                     UpdateLive(true, L"ĐÃ TỚI NPC",
-                                               sent ? L"Đã yêu cầu xuống ngựa • chờ 6 giây"
-                                                    : L"Xuống ngựa thất bại • thử lại sau 6 giây");
+                                               sent ? L"Đã yêu cầu xuống ngựa • chờ 4 giây"
+                                                    : L"Xuống ngựa thất bại • thử lại sau 4 giây");
                                 }
                             } else if (now >= sellRetryAfter) {
                                 int freeAfter = -1;
@@ -2615,8 +3097,15 @@ private:
                                     nextNavigate = now;
                                     bestDistance = LLONG_MAX;
                                     lastProgress = now;
+                                    if (config_.healAtStart && healNpc_.roleID > 0) {
+                                        healingTrip = true;
+                                        healFailures = 0;
+                                        healRetryAfter = now;
+                                    }
                                     UpdateLive(true, L"ĐÃ BÁN ĐỒ",
-                                               detail + L" • quay lại bãi " + target_.name);
+                                               detail + (healingTrip
+                                                   ? L" • qua NPC trị liệu trước khi về bãi"
+                                                   : L" • quay lại bãi " + target_.name));
                                 } else {
                                     ++sellFailures;
                                     const bool exhausted90 = detail.find(L"tối đa") != std::wstring::npos;
@@ -2636,7 +3125,7 @@ private:
                             } else {
                                 UpdateLive(true, L"ĐÃ TỚI NPC", L"Đang chờ thử lại chuỗi bán an toàn");
                             }
-                        } else if (!sellingTrip && AtTarget(live)) {
+                        } else if (!sellingTrip && !healingTrip && AtTarget(live)) {
                             outsideTarget = false;
                             awaitingRideCheck = false;
                             mountFightUntil = Clock::time_point{};
@@ -2656,17 +3145,70 @@ private:
                                                        : L"Chưa tắt được AUTO → Đánh quái • sẽ thử lại");
                                 } else if (now >= nextRideDecision) {
                                     const bool sent = ToggleRide(false);
-                                    nextRideDecision = now + std::chrono::seconds(6);
+                                    nextRideDecision = now + std::chrono::seconds(4);
                                     UpdateLive(true, L"Đã đến bãi",
-                                               sent ? L"Đã yêu cầu xuống ngựa • chờ 6 giây kiểm tra"
-                                                    : L"Lệnh xuống ngựa thất bại • thử lại sau 6 giây");
+                                               sent ? L"Đã yêu cầu xuống ngựa • chờ 4 giây kiểm tra"
+                                                    : L"Lệnh xuống ngựa thất bại • thử lại sau 4 giây");
                                 } else {
                                     UpdateLive(true, L"Đã đến bãi",
                                                L"Đang chờ trạng thái ngựa phản hồi");
                                 }
                             } else {
                                 nextRideDecision = Clock::time_point{};
-                                if (now >= nextTrainAction) {
+                                const bool wantsBuff = config_.autoBuff && !config_.buffSkillIDs.empty();
+                                if (wantsBuff && (buffCycle || now >= nextBuffCheck)) {
+                                    if (!buffCycle && config_.activation == TrainActivationMode::AutoMenu &&
+                                        live.autoFight) {
+                                        std::wstring stopDetail;
+                                        const bool stopped = ClickInternalAutoStop(stopDetail);
+                                        nextBuffAction = now + std::chrono::milliseconds(350);
+                                        UpdateLive(true, L"CHUẨN BỊ BUFF",
+                                                   stopped ? L"Đã AUTO → Dừng trước chu kỳ buff"
+                                                           : L"Chưa tắt được AUTO; sẽ thử lại trước khi buff");
+                                    } else {
+                                        if (!buffCycle) {
+                                            buffCycle = true;
+                                            buffIndex = 0;
+                                            buffAttempts = 0;
+                                            nextBuffAction = now;
+                                            trainTriggered = false;
+                                        }
+                                        if (buffIndex >= config_.buffSkillIDs.size()) {
+                                            buffCycle = false;
+                                            nextBuffCheck = now + std::chrono::minutes(5);
+                                            nextTrainAction = now;
+                                            UpdateLive(true, L"BUFF XONG",
+                                                       L"Đã kiểm tra hết buff • lần tiếp theo sau 5 phút");
+                                        } else if (now >= nextBuffAction) {
+                                            const int buffSkill = config_.buffSkillIDs[buffIndex];
+                                            std::wstring buffDetail;
+                                            const bool verified = TryApplyAndVerifyBuff(buffSkill, buffDetail);
+                                            if (verified) {
+                                                ++buffIndex;
+                                                buffAttempts = 0;
+                                            } else {
+                                                ++buffAttempts;
+                                                if (buffAttempts >= 5) {
+                                                    buffDetail += L" • quá 5 lần chưa có hiệu ứng; bỏ qua skill này";
+                                                    ++buffIndex;
+                                                    buffAttempts = 0;
+                                                }
+                                            }
+                                            nextBuffAction = now + std::chrono::milliseconds(850);
+                                            if (buffIndex >= config_.buffSkillIDs.size()) {
+                                                buffCycle = false;
+                                                nextBuffCheck = now + std::chrono::minutes(5);
+                                                nextTrainAction = now;
+                                                buffDetail += L" • hoàn tất lượt buff; check lại sau 5 phút";
+                                            }
+                                            UpdateLive(true, buffCycle ? L"ĐANG BUFF" : L"BUFF XONG",
+                                                       buffDetail);
+                                        } else {
+                                            UpdateLive(true, L"ĐANG BUFF",
+                                                       L"Đang chờ xác minh hiệu ứng buff");
+                                        }
+                                    }
+                                } else if (now >= nextTrainAction) {
                                     bool sent = false;
                                     std::wstring detail;
                                     switch (config_.activation) {
@@ -2702,10 +3244,13 @@ private:
                                 }
                             }
                         } else {
-                            const Spot destination = sellingTrip
-                                ? Spot{sellNpc_.name, sellNpc_.mapID, sellNpc_.x, sellNpc_.y}
-                                : target_;
+                            const Spot destination = healingTrip
+                                ? Spot{healNpc_.name, healNpc_.mapID, healNpc_.x, healNpc_.y}
+                                : sellingTrip
+                                    ? Spot{sellNpc_.name, sellNpc_.mapID, sellNpc_.x, sellNpc_.y}
+                                    : target_;
                             trainTriggered = false;
+                            buffCycle = false;
                             nextTrainAction = now;
                             if (!outsideTarget) {
                                 // Stop combat/path immediately before returning to the destination.
@@ -2822,7 +3367,7 @@ private:
                                     std::chrono::seconds(config_.retrySeconds);
                             } else {
                                 UpdateLive(true, L"Đang ra bãi",
-                                           (sellingTrip ? L"NPC " : L"Đích ") + destination.name +
+                                           (healingTrip ? L"NPC trị liệu " : sellingTrip ? L"NPC bán đồ " : L"Đích ") + destination.name +
                                            L" • Map " + std::to_wstring(destination.mapID) +
                                            L" • " + std::to_wstring(destination.x) + L"," +
                                            std::to_wstring(destination.y));
@@ -2842,6 +3387,7 @@ private:
     Spot target_;
     TrainConfig config_;
     SellNpc sellNpc_;
+    SellNpc healNpc_;
     ProcessMemory process_;
     ModuleInfo module_;
     std::unique_ptr<RemoteExecutor> executor_;
@@ -2884,7 +3430,9 @@ enum ControlIdV5 {
     V5_DELETE_SPOT, V5_SPOTS, V5_MODE, V5_TOLERANCE, V5_RETRY,
     V5_CAL_CHAT, V5_ACTIVATION, V5_SKILL, V5_SCAN_SKILLS, V5_START,
     V5_STOP, V5_STATE, V5_COORDS, V5_FLAGS, V5_DETAIL, V5_TAB,
-    V5_AUTO_SELL, V5_BAG_MINUTES, V5_SELL_NPC, V5_SAVE_NPC
+    V5_AUTO_SELL, V5_BAG_MINUTES, V5_SELL_NPC, V5_SAVE_NPC,
+    V5_HEAL_AT_START, V5_HEAL_NPC, V5_SAVE_HEAL_NPC,
+    V5_AUTO_BUFF, V5_BUFF_SKILLS, V5_AUTO_CHAT, V5_CHAT_MESSAGE, V5_CHAT_MINUTES
 };
 
 struct GameRuntimeV5 {
@@ -2925,7 +3473,7 @@ public:
         window_ = CreateWindowExW(
             0, klass.lpszClassName, kTitle,
             WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-            CW_USEDEFAULT, CW_USEDEFAULT, 1080, 775, nullptr, nullptr,
+            CW_USEDEFAULT, CW_USEDEFAULT, 1080, 885, nullptr, nullptr,
             instance, this);
         if (!window_) return 1;
         ShowWindow(window_, show);
@@ -2984,8 +3532,10 @@ private:
     }
 
     HWND Button(const wchar_t* text, int x, int y, int width, int height, int id) {
+        const int scaledWidth = std::max(70, (width * 3) / 5);
+        const int scaledHeight = std::max(20, (height * 3) / 5);
         return Make(L"BUTTON", text, BS_PUSHBUTTON | WS_TABSTOP,
-                    x, y, width, height, id, boldFont_);
+                    x, y, scaledWidth, scaledHeight, id, buttonFont_);
     }
 
     void AddColumn(HWND list, const wchar_t* text, int width, int index,
@@ -3019,12 +3569,16 @@ private:
                                 VIETNAMESE_CHARSET, OUT_DEFAULT_PRECIS,
                                 CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                                 DEFAULT_PITCH, L"Segoe UI");
+        buttonFont_ = CreateFontW(-9, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+                                  VIETNAMESE_CHARSET, OUT_DEFAULT_PRECIS,
+                                  CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                                  DEFAULT_PITCH, L"Segoe UI");
         titleFont_ = CreateFontW(-21, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
                                  VIETNAMESE_CHARSET, OUT_DEFAULT_PRECIS,
                                  CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                                  DEFAULT_PITCH, L"Segoe UI");
 
-        Label(L"THẦN LONG MOBILE • AUTO TRAIN v0.7.2", 16, 5, 650, 31, titleFont_);
+        Label(L"THẦN LONG MOBILE • AUTO TRAIN v0.8.0", 16, 5, 650, 31, titleFont_);
         Button(L"↻  QUÉT CỬA SỔ GAME", 855, 10, 189, 34, V5_REFRESH);
 
         tab_ = Make(WC_TABCONTROLW, L"", TCS_TABS | TCS_SINGLELINE | WS_TABSTOP,
@@ -3055,8 +3609,8 @@ private:
         coordsLabel_ = Label(L"Map -- • X -- • Y --", 152, 247, 202, 26,
                              boldFont_, V5_COORDS);
         flagsLabel_ = Label(L"Ngựa: -- • Di chuyển: -- • Chết: -- • Map: -- • Túi đồ trống: -- ô",
-                            360, 247, 550, 26, smallFont_, V5_FLAGS);
-        Button(L"ĐỌC LẠI VỊ TRÍ", 918, 247, 126, 26, V5_PROBE);
+                            335, 247, 615, 26, smallFont_, V5_FLAGS);
+        Button(L"ĐỌC LẠI VỊ TRÍ", 958, 247, 126, 26, V5_PROBE);
 
         Label(L"TÊN BÃI", 16, 280, 72, 24, boldFont_);
         spotName_ = Make(L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL | WS_TABSTOP,
@@ -3119,22 +3673,43 @@ private:
         Label(L"phút", 220, 538, 38, 29, smallFont_);
         sellNpcCombo_ = Make(WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP,
                              263, 537, 425, 180, V5_SELL_NPC);
-        Button(L"LƯU NPC GẦN NHẤT", 698, 537, 190, 30, V5_SAVE_NPC);
-        
-        detailLabel_ = Label(
-            L"Sẵn sàng. Quét game, chọn từng dòng để chỉnh riêng, rồi tick cửa sổ cần chạy.",
-            16, 574, 1028, 42, font_, V5_DETAIL);
+        Button(L"LƯU NPC BÁN ĐỒ GẦN NHẤT", 698, 537, 300, 30, V5_SAVE_NPC);
+
+        healAtStartCheck_ = Make(L"BUTTON", L"Trị liệu khi ra bãi",
+                                 BS_AUTOCHECKBOX | WS_TABSTOP,
+                                 16, 572, 160, 28, V5_HEAL_AT_START, font_);
+        healNpcCombo_ = Make(WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP,
+                             184, 571, 504, 180, V5_HEAL_NPC);
+        Button(L"LƯU NPC TRỊ LIỆU GẦN NHẤT", 698, 571, 300, 30, V5_SAVE_HEAL_NPC);
+
+        autoBuffCheck_ = Make(L"BUTTON", L"Auto buff", BS_AUTOCHECKBOX | WS_TABSTOP,
+                              16, 606, 95, 28, V5_AUTO_BUFF, font_);
+        Label(L"Chọn nhiều skill buff (Ctrl/Shift):", 116, 604, 210, 25, smallFont_);
+        buffSkillList_ = Make(L"LISTBOX", L"",
+                              LBS_EXTENDEDSEL | LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_TABSTOP,
+                              330, 604, 600, 72, V5_BUFF_SKILLS, smallFont_, WS_EX_CLIENTEDGE);
+
+        autoChatCheck_ = Make(L"BUTTON", L"Auto chat", BS_AUTOCHECKBOX | WS_TABSTOP,
+                              16, 684, 95, 28, V5_AUTO_CHAT, font_);
+        chatMessage_ = Make(L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL | WS_TABSTOP,
+                            116, 684, 600, 27, V5_CHAT_MESSAGE, font_, WS_EX_CLIENTEDGE);
+        Label(L"mỗi", 726, 684, 32, 27, smallFont_);
+        chatMinutes_ = Make(L"EDIT", L"5", WS_BORDER | ES_NUMBER | WS_TABSTOP,
+                            758, 684, 44, 27, V5_CHAT_MINUTES, font_, WS_EX_CLIENTEDGE);
+        Label(L"phút", 807, 684, 36, 27, smallFont_);
+
+        detailLabel_ = Label(L"Sẵn sàng.", 16, 718, 1028, 34, font_, V5_DETAIL);
         startButton_ = Button(L"▶  BẮT ĐẦU CỬA SỔ ĐÃ TICK",
-                              16, 626, 646, 52, V5_START);
+                              16, 758, 646, 52, V5_START);
         stopButton_ = Button(L"■  TẠM DỪNG CỬA SỔ ĐÃ TICK",
-                             675, 626, 369, 52, V5_STOP);
+                             675, 758, 369, 52, V5_STOP);
 
         buildingPage_ = 2;
         Make(L"STATIC", L"GIỚI THIỆU", SS_CENTER | SS_CENTERIMAGE,
              150, 145, 780, 46, 0, titleFont_);
         Make(L"STATIC", L"Phần mềm được thiết kế bởi Thắng Nguyễn - ĐỒ LONG",
              SS_CENTER | SS_CENTERIMAGE, 150, 205, 780, 48, 0, boldFont_);
-        Make(L"STATIC", L"Phiên bản 0.7.2",
+        Make(L"STATIC", L"Phiên bản 0.8.0",
              SS_CENTER | SS_CENTERIMAGE, 150, 270, 780, 35, 0, smallFont_);
         buildingPage_ = 0;
         SelectPage(0);
@@ -3197,8 +3772,9 @@ private:
         return found == npcs_.end() ? nullptr : &*found;
     }
 
-    void PopulateNpcs(const std::wstring& selectedName = L"") {
-        SendMessageW(sellNpcCombo_, CB_RESETCONTENT, 0, 0);
+    void PopulateNpcCombo(HWND combo, const std::wstring& selectedName) {
+        if (!combo) return;
+        SendMessageW(combo, CB_RESETCONTENT, 0, 0);
         int selected = CB_ERR;
         for (std::size_t i = 0; i < npcs_.size(); ++i) {
             const std::wstring label = npcs_[i].name + L"  [ID " +
@@ -3206,13 +3782,18 @@ private:
                 std::to_wstring(npcs_[i].mapID) + L" • " +
                 std::to_wstring(npcs_[i].x) + L"," + std::to_wstring(npcs_[i].y) + L"]";
             const int index = static_cast<int>(SendMessageW(
-                sellNpcCombo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label.c_str())));
-            SendMessageW(sellNpcCombo_, CB_SETITEMDATA, index, static_cast<LPARAM>(i));
+                combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label.c_str())));
+            SendMessageW(combo, CB_SETITEMDATA, index, static_cast<LPARAM>(i));
             if (!selectedName.empty() && _wcsicmp(npcs_[i].name.c_str(), selectedName.c_str()) == 0)
                 selected = index;
         }
         if (selected == CB_ERR && !npcs_.empty()) selected = 0;
-        SendMessageW(sellNpcCombo_, CB_SETCURSEL, selected, 0);
+        SendMessageW(combo, CB_SETCURSEL, selected, 0);
+    }
+    void PopulateNpcs(const std::wstring& sellSelected = L"",
+                      const std::wstring& healSelected = L"") {
+        PopulateNpcCombo(sellNpcCombo_, sellSelected);
+        PopulateNpcCombo(healNpcCombo_, healSelected);
     }
 
     void ShowDetail(const std::wstring& text) {
@@ -3271,6 +3852,30 @@ private:
             }
         }
         SendMessageW(skillCombo_, CB_SETCURSEL, selection, 0);
+        PopulateBuffSkills(runtime);
+    }
+
+    void PopulateBuffSkills(GameRuntimeV5& runtime) {
+        if (!buffSkillList_) return;
+        SendMessageW(buffSkillList_, LB_RESETCONTENT, 0, 0);
+        std::set<int> selected(runtime.config.buffSkillIDs.begin(), runtime.config.buffSkillIDs.end());
+        if (runtime.skills.empty()) {
+            for (int id : runtime.config.buffSkillIDs) {
+                const std::wstring label = L"Buff skill đã lưu [ID " + std::to_wstring(id) + L"]";
+                const int row = static_cast<int>(SendMessageW(buffSkillList_, LB_ADDSTRING, 0,
+                    reinterpret_cast<LPARAM>(label.c_str())));
+                SendMessageW(buffSkillList_, LB_SETITEMDATA, row, id);
+                SendMessageW(buffSkillList_, LB_SETSEL, TRUE, row);
+            }
+            return;
+        }
+        for (const SkillOption& skill : runtime.skills) {
+            const std::wstring label = skill.name + L"  [ID " + std::to_wstring(skill.id) + L"]";
+            const int row = static_cast<int>(SendMessageW(buffSkillList_, LB_ADDSTRING, 0,
+                reinterpret_cast<LPARAM>(label.c_str())));
+            SendMessageW(buffSkillList_, LB_SETITEMDATA, row, skill.id);
+            if (selected.count(skill.id)) SendMessageW(buffSkillList_, LB_SETSEL, TRUE, row);
+        }
     }
 
     void UpdateState(const LiveState& live) {
@@ -3341,6 +3946,26 @@ private:
             if (data != CB_ERR && data >= 0 && static_cast<std::size_t>(data) < npcs_.size())
                 runtime.config.sellNpcName = npcs_[static_cast<std::size_t>(data)].name;
         }
+        runtime.config.healAtStart = SendMessageW(healAtStartCheck_, BM_GETCHECK, 0, 0) == BST_CHECKED;
+        runtime.config.healNpcName.clear();
+        const int healIndex = static_cast<int>(SendMessageW(healNpcCombo_, CB_GETCURSEL, 0, 0));
+        if (healIndex != CB_ERR) {
+            const LRESULT data = SendMessageW(healNpcCombo_, CB_GETITEMDATA, healIndex, 0);
+            if (data != CB_ERR && data >= 0 && static_cast<std::size_t>(data) < npcs_.size())
+                runtime.config.healNpcName = npcs_[static_cast<std::size_t>(data)].name;
+        }
+        runtime.config.autoBuff = SendMessageW(autoBuffCheck_, BM_GETCHECK, 0, 0) == BST_CHECKED;
+        runtime.config.buffSkillIDs.clear();
+        const int buffRows = static_cast<int>(SendMessageW(buffSkillList_, LB_GETCOUNT, 0, 0));
+        for (int row = 0; row < buffRows; ++row) {
+            if (SendMessageW(buffSkillList_, LB_GETSEL, row, 0) <= 0) continue;
+            const LRESULT id = SendMessageW(buffSkillList_, LB_GETITEMDATA, row, 0);
+            if (id != LB_ERR && id > 0) runtime.config.buffSkillIDs.push_back(static_cast<int>(id));
+        }
+        runtime.config.autoChat = SendMessageW(autoChatCheck_, BM_GETCHECK, 0, 0) == BST_CHECKED;
+        runtime.config.autoChatMessage = Text(chatMessage_);
+        runtime.config.autoChatMinutes = std::clamp(_wtoi(Text(chatMinutes_).c_str()), 1, 180);
+        SetWindowTextW(chatMinutes_, std::to_wstring(runtime.config.autoChatMinutes).c_str());
         SetWindowTextW(bagMinutes_, std::to_wstring(runtime.config.bagCheckMinutes).c_str());
         SetWindowTextW(tolerance_, std::to_wstring(runtime.config.tolerance).c_str());
         SetWindowTextW(retry_, std::to_wstring(runtime.config.retrySeconds).c_str());
@@ -3371,6 +3996,12 @@ private:
             PopulateNpcs();
             SetWindowTextW(spotName_, L"");
             SendMessageW(autoSellCheck_, BM_SETCHECK, BST_UNCHECKED, 0);
+            SendMessageW(healAtStartCheck_, BM_SETCHECK, BST_UNCHECKED, 0);
+            SendMessageW(autoBuffCheck_, BM_SETCHECK, BST_UNCHECKED, 0);
+            SendMessageW(autoChatCheck_, BM_SETCHECK, BST_UNCHECKED, 0);
+            SetWindowTextW(chatMessage_, L"");
+            SetWindowTextW(chatMinutes_, L"5");
+            SendMessageW(buffSkillList_, LB_RESETCONTENT, 0, 0);
             UpdateState(LiveState{});
             loadingUi_ = false;
             return;
@@ -3393,10 +4024,18 @@ private:
         SetWindowTextW(bagMinutes_, std::to_wstring(runtime->config.bagCheckMinutes).c_str());
         SendMessageW(autoSellCheck_, BM_SETCHECK,
                      runtime->config.autoSell ? BST_CHECKED : BST_UNCHECKED, 0);
+        SendMessageW(healAtStartCheck_, BM_SETCHECK,
+                     runtime->config.healAtStart ? BST_CHECKED : BST_UNCHECKED, 0);
+        SendMessageW(autoBuffCheck_, BM_SETCHECK,
+                     runtime->config.autoBuff ? BST_CHECKED : BST_UNCHECKED, 0);
+        SendMessageW(autoChatCheck_, BM_SETCHECK,
+                     runtime->config.autoChat ? BST_CHECKED : BST_UNCHECKED, 0);
+        SetWindowTextW(chatMessage_, runtime->config.autoChatMessage.c_str());
+        SetWindowTextW(chatMinutes_, std::to_wstring(runtime->config.autoChatMinutes).c_str());
         SetWindowTextW(spotName_, runtime->selectedSpot.c_str());
         PopulateSkills(*runtime);
         PopulateSpots(runtime->selectedSpot);
-        PopulateNpcs(runtime->config.sellNpcName);
+        PopulateNpcs(runtime->config.sellNpcName, runtime->config.healNpcName);
         UpdateState(runtime->last);
         loadingUi_ = false;
     }
@@ -3676,7 +4315,7 @@ private:
                    L".");
     }
 
-    void SaveNearestNpc() {
+    void SaveNearestNpc(bool treatment) {
         SaveSelectedUi();
         GameRuntimeV5* runtime = SelectedRuntime();
         if (!runtime) {
@@ -3698,13 +4337,14 @@ private:
             ShowManualDetail(L"Không ghi được ThanLongAutoTrain.npcs.txt cạnh EXE.");
             return;
         }
-        runtime->config.sellNpcName = npc.name;
+        if (treatment) runtime->config.healNpcName = npc.name;
+        else runtime->config.sellNpcName = npc.name;
         SaveRuntime(*runtime);
-        PopulateNpcs(npc.name);
-        ShowManualDetail(L"Đã lưu NPC thật: " + npc.name + L" • ID " +
-                         std::to_wstring(npc.roleID) + L" • Map " +
-                         std::to_wstring(npc.mapID) + L" • " +
-                         std::to_wstring(npc.x) + L"," + std::to_wstring(npc.y));
+        PopulateNpcs(runtime->config.sellNpcName, runtime->config.healNpcName);
+        ShowManualDetail(std::wstring(L"Đã lưu NPC ") + (treatment ? L"trị liệu: " : L"bán đồ: ") +
+                         npc.name + L" • ID " + std::to_wstring(npc.roleID) + L" • Map " +
+                         std::to_wstring(npc.mapID) + L" • " + std::to_wstring(npc.x) + L"," +
+                         std::to_wstring(npc.y));
     }
 
     bool ValidateRuntime(GameRuntimeV5& runtime, std::wstring& error) {
@@ -3726,7 +4366,20 @@ private:
         }
         if (runtime.config.autoSell && !FindNpc(runtime.config.sellNpcName)) {
             error = L"PID " + std::to_wstring(runtime.game.pid) +
-                    L": đã bật Tự bán đồ nhưng chưa chọn/lưu NPC";
+                    L": đã bật Tự bán đồ nhưng chưa chọn/lưu NPC bán đồ";
+            return false;
+        }
+        if (runtime.config.healAtStart && !FindNpc(runtime.config.healNpcName)) {
+            error = L"PID " + std::to_wstring(runtime.game.pid) +
+                    L": đã bật Trị liệu nhưng chưa chọn/lưu NPC trị liệu";
+            return false;
+        }
+        if (runtime.config.autoBuff && runtime.config.buffSkillIDs.empty()) {
+            error = L"PID " + std::to_wstring(runtime.game.pid) + L": Auto buff chưa chọn skill";
+            return false;
+        }
+        if (runtime.config.autoChat && runtime.config.autoChatMessage.empty()) {
+            error = L"PID " + std::to_wstring(runtime.game.pid) + L": Auto chat chưa có nội dung";
             return false;
         }
         return true;
@@ -3754,8 +4407,10 @@ private:
             if (!spot) continue;
             const SellNpc* npc = runtime->config.autoSell
                 ? FindNpc(runtime->config.sellNpcName) : nullptr;
+            const SellNpc* healNpc = runtime->config.healAtStart
+                ? FindNpc(runtime->config.healNpcName) : nullptr;
             runtime->session->Start(runtime->game, *spot, runtime->config,
-                                    npc ? *npc : SellNpc{});
+                                    npc ? *npc : SellNpc{}, healNpc ? *healNpc : SellNpc{});
             runtime->last = runtime->session->State();
             ++started;
         }
@@ -3841,7 +4496,7 @@ private:
         SaveSelectedUi();
         KillTimer(window_, 1);
         for (auto& entry : runtimes_) entry.second->session->Stop();
-        for (HFONT font : {font_, smallFont_, boldFont_, titleFont_})
+        for (HFONT font : {font_, smallFont_, boldFont_, buttonFont_, titleFont_})
             if (font) DeleteObject(font);
     }
 
@@ -3858,7 +4513,8 @@ private:
                     case V5_DELETE_SPOT: DeleteSpot(); return 0;
                     case V5_CAL_CHAT: CalibrateChat(); return 0;
                     case V5_SCAN_SKILLS: ProbeSkillsSelected(); return 0;
-                    case V5_SAVE_NPC: SaveNearestNpc(); return 0;
+                    case V5_SAVE_NPC: SaveNearestNpc(false); return 0;
+                    case V5_SAVE_HEAL_NPC: SaveNearestNpc(true); return 0;
                     case V5_START: StartChecked(); return 0;
                     case V5_STOP: StopChecked(); return 0;
                 }
@@ -3905,12 +4561,20 @@ private:
     HWND autoSellCheck_ = nullptr;
     HWND bagMinutes_ = nullptr;
     HWND sellNpcCombo_ = nullptr;
+    HWND healAtStartCheck_ = nullptr;
+    HWND healNpcCombo_ = nullptr;
+    HWND autoBuffCheck_ = nullptr;
+    HWND buffSkillList_ = nullptr;
+    HWND autoChatCheck_ = nullptr;
+    HWND chatMessage_ = nullptr;
+    HWND chatMinutes_ = nullptr;
     HWND detailLabel_ = nullptr;
     HWND startButton_ = nullptr;
     HWND stopButton_ = nullptr;
     HFONT font_ = nullptr;
     HFONT smallFont_ = nullptr;
     HFONT boldFont_ = nullptr;
+    HFONT buttonFont_ = nullptr;
     HFONT titleFont_ = nullptr;
     std::map<DWORD, std::unique_ptr<GameRuntimeV5>> runtimes_;
     std::vector<DWORD> gameOrder_;

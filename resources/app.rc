@@ -4,8 +4,8 @@
 1 RT_MANIFEST "app.manifest"
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 0,7,2,0
- PRODUCTVERSION 0,7,2,0
+ FILEVERSION 0,8,0,0
+ PRODUCTVERSION 0,8,0,0
  FILEFLAGSMASK 0x3fL
  FILEFLAGS 0
  FILEOS VOS_NT_WINDOWS32
@@ -18,11 +18,11 @@ BEGIN
     BEGIN
       VALUE "CompanyName", "Thang Nguyen - DO LONG\0"
       VALUE "FileDescription", "Than Long Mobile - Auto Train\0"
-      VALUE "FileVersion", "0.7.2.0\0"
+      VALUE "FileVersion", "0.8.0.0\0"
       VALUE "InternalName", "ThanLongAutoTrain\0"
-      VALUE "OriginalFilename", "ThanLongAutoTrain_v0.7.2.exe\0"
+      VALUE "OriginalFilename", "ThanLongAutoTrain_v0.8.0.exe\0"
       VALUE "ProductName", "Than Long Mobile - Auto Train\0"
-      VALUE "ProductVersion", "0.7.2.0\0"
+      VALUE "ProductVersion", "0.8.0.0\0"
     END
   END
   BLOCK "VarFileInfo"
