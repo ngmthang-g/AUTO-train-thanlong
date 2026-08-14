@@ -24,7 +24,7 @@ extern "C" unsigned char RemoteWorkerStart[];
 extern "C" unsigned char RemoteWorkerEnd[];
 
 using Clock = std::chrono::steady_clock;
-constexpr wchar_t kTitle[] = L"Thần Long Mobile - Auto Train v0.8.5";
+constexpr wchar_t kTitle[] = L"Thần Long Mobile - Auto Train v0.8.6";
 constexpr wchar_t kModule[] = L"GameAssembly.dll";
 
 namespace rva {
@@ -544,11 +544,18 @@ static std::int32_t BuiltinNpcResID(const std::wstring& name) {
     const std::wstring key = CompactMatch(name);
     if (key == L"makieuminh") return 373;
     if (key == L"dothanhdang") return 339;
+    // Config.unity3d: <NPC ID="463" Name="Long Phá Thiên" .../>.
+    // NPCData binds that template to normal Lạc Dương (Map 3); the same NPC template is
+    // reused by the user's Lạc Dương Liên Server scene (runtime Map 10000).
+    if (key == L"longphathien") return 463;
     return 0;
 }
 
 static std::int32_t BuiltinNpcMapID(const std::wstring& name) {
-    return BuiltinNpcResID(name) > 0 ? 5 : 0;
+    const std::wstring key = CompactMatch(name);
+    if (key == L"longphathien") return 10000;
+    if (key == L"makieuminh" || key == L"dothanhdang") return 5;
+    return 0;
 }
 
 struct NormalizedPoint {
@@ -3428,6 +3435,13 @@ private:
         auto nextBuffAction = Clock::now();
         auto nextAutoChat = Clock::now();
         auto actionBarrierUntil = Clock::time_point{};
+        // NPC UI is an exclusive action domain. While treatment/shop callbacks are being
+        // processed, do not interleave map/mount/AUTO/AutoPath probes. After the UI is closed,
+        // leave the client completely quiet for a short period, then require the normal two
+        // stable RefreshLive scans before navigation is allowed to resume.
+        auto npcUiQuietUntil = Clock::time_point{};
+        std::wstring npcUiQuietPhase;
+        std::wstring npcUiQuietDetail;
         bool trainTriggered = false;
         bool autoCombatConfirmed = false;
         int autoActivationFailures = 0;
@@ -3460,9 +3474,20 @@ private:
                     break;
                 }
                 error.clear();
+                const auto cycleNow = Clock::now();
                 const bool windowHung = game_.window && IsWindow(game_.window) &&
                                         IsHungAppWindow(game_.window);
-                if (windowHung) {
+                if (cycleNow < npcUiQuietUntil) {
+                    // Important: no IL2CPP status probes here. The NPC Lua UI/server response may
+                    // still be destroying panels and changing task state; probing map/mount/AUTO in
+                    // this window was the source of “Mất phản hồi trạng thái chuyển map” immediately
+                    // after treatment/selling and could leave the client unstable.
+                    UpdateLive(true,
+                               npcUiQuietPhase.empty() ? L"CHỜ NPC HOÀN TẤT" : npcUiQuietPhase,
+                               npcUiQuietDetail.empty()
+                                   ? L"Đang giữ yên toàn bộ AutoPath/ngựa/AUTO/map-check sau thao tác NPC"
+                                   : npcUiQuietDetail);
+                } else if (windowHung) {
                     recovering = true;
                     healthyScans = 0;
                     trainTriggered = false;
@@ -3677,19 +3702,48 @@ private:
                                                     : L"Xuống ngựa thất bại • thử lại sau 4 giây");
                                 }
                             } else if (now >= healRetryAfter) {
+                                // EXCLUSIVE NPC MODE: from this point until TryTreatmentAtNpc has
+                                // closed its UI, this worker performs no navigation/mount/AUTO action.
+                                StopPathOnly();
+                                trainTriggered = false;
+                                buffCycle = false;
+                                awaitingRideCheck = false;
+                                mountFightUntil = Clock::time_point{};
+                                awaitingMapTransition = false;
+                                transitionSeen = false;
+                                mapGuard = false;
+                                readyScans = 0;
+                                UpdateLive(true, L"TRỊ LIỆU ĐỘC QUYỀN",
+                                           L"Khóa AutoPath/ngựa/AUTO/map-check • chỉ xử lý chuỗi NPC trị liệu");
                                 std::wstring detail;
                                 const bool healed = TryTreatmentAtNpc(detail);
+                                // UI was just closed/destroyed. Do not immediately interrogate map or
+                                // mount state; give Lua/server state 900 ms of silence, then reuse the
+                                // existing recovery gate which requires two stable RefreshLive scans.
+                                const auto npcDone = Clock::now();
+                                npcUiQuietUntil = npcDone + std::chrono::milliseconds(900);
+                                npcUiQuietPhase = healed ? L"ĐÃ TRỊ LIỆU • CHỜ GAME ỔN ĐỊNH"
+                                                         : L"TRỊ LIỆU LỖI • CHỜ GAME ỔN ĐỊNH";
+                                npcUiQuietDetail = detail + L" • tạm khóa mọi lệnh 0.9 giây rồi xác minh trạng thái 2 lần";
+                                recovering = true;
+                                healthyScans = 0;
+                                actionBarrierUntil = npcUiQuietUntil;
+                                nextNavigate = npcUiQuietUntil;
+                                nextConfirm = npcUiQuietUntil;
+                                nextRideDecision = npcUiQuietUntil;
+                                lastProgress = npcDone;
+                                bestDistance = LLONG_MAX;
                                 if (healed || ++healFailures >= 3) {
                                     healingTrip = false;
                                     outsideTarget = false;
-                                    nextNavigate = now;
+                                    nextNavigate = npcUiQuietUntil;
                                     bestDistance = LLONG_MAX;
-                                    lastProgress = now;
+                                    lastProgress = npcDone;
                                     UpdateLive(true, healed ? L"ĐÃ TRỊ LIỆU" : L"BỎ QUA TRỊ LIỆU",
                                                detail + (healed ? L" • quay lại bãi " + target_.name
                                                                 : L" • thất bại 3 lần; tiếp tục ra bãi"));
                                 } else {
-                                    healRetryAfter = now + std::chrono::seconds(4);
+                                    healRetryAfter = npcUiQuietUntil + std::chrono::seconds(3);
                                     UpdateLive(true, L"TRỊ LIỆU CHƯA THÀNH CÔNG",
                                                detail + L" • thử " + std::to_wstring(healFailures) + L"/3");
                                 }
@@ -3712,9 +3766,36 @@ private:
                                                     : L"Xuống ngựa thất bại • thử lại sau 4 giây");
                                 }
                             } else if (now >= sellRetryAfter) {
+                                // EXCLUSIVE NPC MODE: the whole shop chain owns this PID until the
+                                // shop/bag UI has been closed. No mount/map/AUTO/AutoPath request may
+                                // be emitted in parallel with item clicks or server inventory updates.
+                                StopPathOnly();
+                                trainTriggered = false;
+                                buffCycle = false;
+                                awaitingRideCheck = false;
+                                mountFightUntil = Clock::time_point{};
+                                awaitingMapTransition = false;
+                                transitionSeen = false;
+                                mapGuard = false;
+                                readyScans = 0;
+                                UpdateLive(true, L"BÁN ĐỒ ĐỘC QUYỀN",
+                                           L"Khóa AutoPath/ngựa/AUTO/map-check • chỉ xử lý shop và tay nải");
                                 int freeAfter = -1;
                                 std::wstring detail;
                                 const bool sold = TrySellAtNpc(freeAfter, detail);
+                                const auto npcDone = Clock::now();
+                                npcUiQuietUntil = npcDone + std::chrono::milliseconds(900);
+                                npcUiQuietPhase = sold ? L"ĐÃ ĐÓNG SHOP • CHỜ GAME ỔN ĐỊNH"
+                                                       : L"SHOP LỖI • CHỜ GAME ỔN ĐỊNH";
+                                npcUiQuietDetail = detail + L" • tạm khóa mọi lệnh 0.9 giây rồi xác minh trạng thái 2 lần";
+                                recovering = true;
+                                healthyScans = 0;
+                                actionBarrierUntil = npcUiQuietUntil;
+                                nextNavigate = npcUiQuietUntil;
+                                nextConfirm = npcUiQuietUntil;
+                                nextRideDecision = npcUiQuietUntil;
+                                lastProgress = npcDone;
+                                bestDistance = LLONG_MAX;
                                 if (sold && freeAfter > 0) {
                                     sellFailures = 0;
                                     UpdateFreeBagSpace(freeAfter);
@@ -3722,10 +3803,10 @@ private:
                                     outsideTarget = false;
                                     awaitingRideCheck = false;
                                     mountFightUntil = Clock::time_point{};
-                                    nextBagCheck = now + std::chrono::minutes(config_.bagCheckMinutes);
-                                    nextNavigate = now;
+                                    nextBagCheck = npcDone + std::chrono::minutes(config_.bagCheckMinutes);
+                                    nextNavigate = npcUiQuietUntil;
                                     bestDistance = LLONG_MAX;
-                                    lastProgress = now;
+                                    lastProgress = npcDone;
                                     if (config_.healAtStart && healNpc_.roleID > 0) {
                                         healingTrip = true;
                                         healFailures = 0;
@@ -3745,7 +3826,7 @@ private:
                                                    L" lần; dừng PID này để tránh thao tác mù");
                                         running_ = false;
                                     } else {
-                                        sellRetryAfter = now + std::chrono::seconds(8);
+                                        sellRetryAfter = npcUiQuietUntil + std::chrono::seconds(7);
                                         UpdateLive(true, L"BÁN ĐỒ TẠM DỪNG AN TOÀN",
                                                    detail + L" • lỗi " +
                                                    std::to_wstring(sellFailures) + L"/3");
@@ -4253,7 +4334,7 @@ private:
                                  CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                                  DEFAULT_PITCH, L"Segoe UI");
 
-        Label(L"THẦN LONG MOBILE • AUTO TRAIN v0.8.5", 16, 5, 650, 31, titleFont_);
+        Label(L"THẦN LONG MOBILE • AUTO TRAIN v0.8.6", 16, 5, 650, 31, titleFont_);
         Button(L"↻  QUÉT CỬA SỔ GAME", 855, 10, 189, 34, V5_REFRESH);
 
         tab_ = Make(WC_TABCONTROLW, L"", TCS_TABS | TCS_SINGLELINE | WS_TABSTOP,
@@ -4384,7 +4465,7 @@ private:
              150, 145, 780, 46, 0, titleFont_);
         Make(L"STATIC", L"Phần mềm được thiết kế bởi Thắng Nguyễn - ĐỒ LONG",
              SS_CENTER | SS_CENTERIMAGE, 150, 205, 780, 48, 0, boldFont_);
-        Make(L"STATIC", L"Phiên bản 0.8.5",
+        Make(L"STATIC", L"Phiên bản 0.8.6",
              SS_CENTER | SS_CENTERIMAGE, 150, 270, 780, 35, 0, smallFont_);
         buildingPage_ = 0;
         SelectPage(0);

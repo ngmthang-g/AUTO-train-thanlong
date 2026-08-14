@@ -1,4 +1,4 @@
-# AUDIT v0.8.5
+# AUDIT v0.8.6
 
 - Added `UIButton.get_ClickHandler()` RVA `0x52DF50`; binary signature is a direct `[this+0x100]` string getter.
 - AUTO production path no longer invokes `TopIcon.AutoTrainClick` out of button-event context. It replays `AutoFightClick -> AutoTrainClick` using fresh active UIButton instances.
