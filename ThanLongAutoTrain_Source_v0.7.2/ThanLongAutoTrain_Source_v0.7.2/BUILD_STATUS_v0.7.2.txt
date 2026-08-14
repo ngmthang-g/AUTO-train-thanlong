@@ -1,0 +1,22 @@
+THAN LONG AUTO TRAIN v0.7.2 - BUILD STATUS
+Date: 2026-08-14
+
+SOURCE STATUS: STATIC CHECK PASS / READY FOR WINDOWS BUILD + RUNTIME TEST
+
+Changes:
+- Legacy background-key train mode removed completely.
+- Direct AUTO backing-state setter removed.
+- AUTO mode stops through AUTO -> Dung before sell/path/no-train transitions.
+- Mount wait is 4 seconds; failed mount triggers ~10 seconds combat clear, then AUTO -> Dung and retry.
+- DauThai resolver matches Dau thai only; no second death-button fallback.
+- Bag status layout widened/shifted left; displays "Túi đồ trống: N ô" fully in the UI.
+- About text updated to "Phần mềm được thiết kế bởi Thắng Nguyễn - ĐỒ LONG".
+- Non-functional static description rows removed.
+- Obsolete internal-test wrappers/dead paths removed.
+
+Static checks:
+- main.cpp C++17 -Wall -Wextra -Werror: PASS.
+- remote_worker.S -> x86-64 Windows COFF: PASS.
+
+Expected Windows output:
+  dist\ThanLongAutoTrain_v0.7.2.exe

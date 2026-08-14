@@ -1,9 +1,0 @@
-51228e69c8b8ea245e9084e4602699bb54811f45c27d5225dbec5fe173c174ef  ./AUDIT.md
-1e5cb7fc4736b1ae38b1b55cf008f9c9bc5cc098fe7bfb38f573e1ff0cded7f8  ./BUILD_STATUS_v0.7.1.txt
-16edc3c9fc00aa6f3751b2b85ddf0ea50d1f2429cdbcb5369b68d2f763056458  ./README.md
-eca586f2b7c8f183ebca57e129f4120ac157b9754b92df0c11b45d53668d975d  ./build.cmd
-df0d2429db7b4b72f25e958d1f94d5e24b36b590d508d90bb1ef1974c90b029a  ./resources/app.ico
-74ac9f3de1e30cb912ed6a892aaeedf45bea0b81cf415bd1ac9ad799304f17d7  ./resources/app.manifest
-8bf5e98d294f58bd4654dd75b2bc0e53e0dff2450e472fa43e4bddb97e680803  ./resources/app.rc
-8a41221355ff8dd067629b2682307a1d8bb527638b4205c80aa3d83f6a6ca48b  ./src/main.cpp
-2f42a0bf8eeda4e9fbe97d971326adb3a4f96ef46466d40f56d1a1b18adc5cb0  ./src/remote_worker.S
