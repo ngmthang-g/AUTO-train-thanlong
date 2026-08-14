@@ -1,33 +1,11 @@
-# Audit v0.8.3
+# AUDIT v0.8.4
 
-## NPC
-
-- `ClickNPC(int)` dùng ResID, không dùng RoleID.
-- RoleID tĩnh namespace 1,000,000,000 được chuyển thành candidate ResID rồi xác minh bằng `GetNearestNPC(resID)` + RoleID/Name trước khi dùng.
-- `SessionData.NPCs/MovingNPCs` chỉ còn fallback cho NPC đặc biệt/di động; không còn là đường bắt buộc khiến NPC tĩnh fail.
-- Saved ResID được xác minh lại trước `ClickNPC`.
-- NPC bán đồ và NPC trị liệu lưu ở hai file riêng.
-
-## Navigation / AUTO
-
-- Navigation không bị khóa bởi raw `AutoFight=ON`.
-- Không loop `AUTO → Dừng` khi chưa tới bãi.
-- AUTO UI chỉ được activation ở đúng bãi + map stable + đã xuống ngựa.
-- AUTO activation phải xác minh `EnableAutoF1=ON` mới coi là thành công.
-- Không dùng `AutoSetFlag(int)` như mode selector; native analysis cho thấy nó liên quan auto-fight range.
-- Không gọi UIRect pointer callback với event giả/null cho AUTO combat.
-
-## Cross-server
-
-- Map 10000 → TLT: 15600,8250; target known 10005.
-- Map 10000 → KVD: 8195,1190; target MapID chưa có nên match tên KVD.
-- Map 10000 → PLT: 1215,8475; target MapID chưa có nên match tên PLT.
-- Sau confirm portal phải chờ map transition + MapReady ổn định rồi mới đi target.
-
-## Safety
-
-- Death branch không gọi AUTO UI ở death edge.
-- Remote worker packet hỗ trợ 5 native args theo Win64 ABI.
-- C++17 syntax check `-Wall -Wextra -Werror`: PASS trong audit environment.
+- Built-in NPC IDs are sourced from client Config, not inferred from RoleID.
+- AUTO start/stop use exact TopIcon Lua actions from Interface asset.
+- `EnableAutoF1` verification semantics corrected: Train => false, stopped => true.
+- Auto chat opens through exact BottomIcon Lua action and is gated to stable train position.
+- AUTO-stop -> navigation has a 700 ms quiet barrier so Lua/UI and AutoPath/mount/portal commands are not issued in the same worker turn.
+- Cross-server target IDs: 10005 / 10007 / 10004.
+- C++17 `-Wall -Wextra -Werror` syntax check: PASS in validation environment.
 - Clang Static Analyzer: 0 diagnostics.
-- `remote_worker.S` assemble Windows x64 COFF: PASS.
+- `remote_worker.S` x86-64 Windows COFF assembly: PASS.

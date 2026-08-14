@@ -1,0 +1,6 @@
+ThanLongAutoTrain v0.8.4
+SOURCE STATUS: READY FOR WINDOWS BUILD / RUNTIME TEST
+C++17 -Wall -Wextra -Werror: PASS (syntax validation)
+Clang Static Analyzer: 0 diagnostics
+remote_worker.S -> x86-64 Windows COFF: PASS
+Runtime-sensitive changes: built-in NPC IDs, direct TopIcon Lua AUTO action, corrected EnableAutoF1 semantics, chat action barrier.

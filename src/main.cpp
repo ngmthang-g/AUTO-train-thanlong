@@ -24,7 +24,7 @@ extern "C" unsigned char RemoteWorkerStart[];
 extern "C" unsigned char RemoteWorkerEnd[];
 
 using Clock = std::chrono::steady_clock;
-constexpr wchar_t kTitle[] = L"Thần Long Mobile - Auto Train v0.8.3";
+constexpr wchar_t kTitle[] = L"Thần Long Mobile - Auto Train v0.8.4";
 constexpr wchar_t kModule[] = L"GameAssembly.dll";
 
 namespace rva {
@@ -65,6 +65,7 @@ constexpr std::uint64_t LuaGetSelectedTarget = 0x67B610;
 constexpr std::uint64_t SelectedTargetGetRoleID = 0x526830;
 constexpr std::uint64_t LuaIsSelectTargetDie = 0x678260;
 constexpr std::uint64_t LuaIsMapReady = 0x677E60;
+constexpr std::uint64_t LuaFindUI = 0x6A5DF0;
 constexpr std::uint64_t LuaMainFindUI = 0x6A5F90;
 constexpr std::uint64_t UIObjectGetName = 0x530240;
 constexpr std::uint64_t UIObjectGetParent = 0x530270;
@@ -174,7 +175,7 @@ static wchar_t FoldVietnameseChar(wchar_t c) {
         case L'ư': case L'ừ': case L'ứ': case L'ự': case L'ử': case L'ữ': return L'u';
         case L'Ỳ': case L'Ý': case L'Ỵ': case L'Ỷ': case L'Ỹ':
         case L'ỳ': case L'ý': case L'ỵ': case L'ỷ': case L'ỹ': return L'y';
-        case L'Đ': case L'đ': return L'd';
+        case L'Đ': case L'đ': case L'Ð': case L'ð': return L'd';
         default:
             if (c >= 0x0300 && c <= 0x036F) return 0;
             return static_cast<wchar_t>(towlower(c));
@@ -536,6 +537,19 @@ struct SellNpc {
     std::int32_t y = 0;
 };
 
+// IDs recovered directly from the decrypted client Config.unity3d, not inferred from RoleID.
+// Both records are in NPC/NPCData for MapID 5 in this exact client build.
+static std::int32_t BuiltinNpcResID(const std::wstring& name) {
+    const std::wstring key = CompactMatch(name);
+    if (key == L"makieuminh") return 373;
+    if (key == L"dothanhdang") return 339;
+    return 0;
+}
+
+static std::int32_t BuiltinNpcMapID(const std::wstring& name) {
+    return BuiltinNpcResID(name) > 0 ? 5 : 0;
+}
+
 struct NormalizedPoint {
     int x = -1;
     int y = -1;
@@ -677,6 +691,11 @@ static std::vector<SellNpc> LoadNpcsFrom(const std::wstring& path) {
                           _wtoi(parts[2].c_str()), _wtoi(parts[3].c_str()),
                           _wtoi(parts[4].c_str())};
         } else return;
+        const std::int32_t builtinResID = BuiltinNpcResID(npc.name);
+        if (builtinResID > 0) {
+            npc.resID = builtinResID;
+            if (npc.mapID <= 0) npc.mapID = BuiltinNpcMapID(npc.name);
+        }
         if (!npc.name.empty() && npc.roleID > 0 && npc.mapID > 0) result.push_back(std::move(npc));
     };
     for (wchar_t c : text) {
@@ -1011,9 +1030,12 @@ public:
             if (temporary) Cleanup();
             return false;
         }
-        std::int32_t currentResID = 0;
+        std::int32_t currentResID = BuiltinNpcResID(currentName);
         std::wstring resDetail;
-        if (!ResolveNpcResIDByRoleID(currentRoleID, currentName, currentResID, resDetail)) {
+        if (currentResID > 0) {
+            resDetail = L"ID lấy trực tiếp từ Config.unity3d của client: ResID " +
+                        std::to_wstring(currentResID);
+        } else if (!ResolveNpcResIDByRoleID(currentRoleID, currentName, currentResID, resDetail)) {
             error = L"Đã thấy NPC “" +
                     (currentName.empty() ? std::to_wstring(currentRoleID) : currentName) +
                     L"” nhưng chưa lấy được ResID thật • " + resDetail;
@@ -1122,6 +1144,7 @@ private:
             {rva::SelectedTargetGetRoleID,{0x48,0x83,0xEC,0x28,0x80,0x3D,0xD7,0x0C,0x2A,0x03,0x00,0x75}},
             {rva::LuaIsSelectTargetDie, {0x40,0x53,0x48,0x83,0xEC,0x20,0x80,0x3D,0x58,0xF3,0x14,0x03}},
             {rva::LuaIsMapReady,        {0x48,0x83,0xEC,0x28,0x80,0x3D,0xC8,0x01,0x15,0x03,0x00,0x75}},
+            {rva::LuaFindUI,            {0x40,0x53,0x48,0x83,0xEC,0x20,0x80,0x3D,0xBF,0x17,0x12,0x03}},
             {rva::LuaMainFindUI,        {0x40,0x53,0x48,0x83,0xEC,0x20,0x80,0x3D,0x1F,0x16,0x12,0x03}},
             {rva::UIObjectGetName,      {0x48,0x83,0xEC,0x28,0x48,0x8B,0x49,0x30,0x48,0x85,0xC9,0x74}},
             {rva::UIObjectGetParent,    {0x40,0x53,0x48,0x83,0xEC,0x20,0x80,0x3D,0x09,0x73,0x29,0x03}},
@@ -1978,6 +2001,61 @@ private:
         RemoteAbsolute(il2cppGcHandleFree_, argsHandle, 0, 0, 0, freeIgnored, 600);
         return called;
     }
+    bool CreateEmptyUiArgArray(std::uint64_t& array, std::uint64_t& handle) {
+        array = handle = 0;
+        if (!systemObjectClass_ || !il2cppArrayNew_ ||
+            !RemoteAbsolute(il2cppArrayNew_, systemObjectClass_, 0, 0, 0, array, 1200) || !array ||
+            !RemoteAbsolute(il2cppGcHandleNew_, array, 0, 0, 0, handle, 900) || !handle)
+            return false;
+        return true;
+    }
+    bool CreateManagedUtf8(const char* text, std::uint64_t& managed, std::uint64_t& handle) {
+        managed = handle = 0;
+        if (!text || !*text || !WriteScratch(0, std::string(text)) || !il2cppStringNew_ ||
+            !RemoteAbsolute(il2cppStringNew_, scratchBuffer_, 0, 0, 0, managed, 1000) || !managed ||
+            !RemoteAbsolute(il2cppGcHandleNew_, managed, 0, 0, 0, handle, 900) || !handle)
+            return false;
+        return true;
+    }
+    bool InvokeMainUiScriptNoArgs(const char* uiName, const char* functionName,
+                                  std::wstring& detail) {
+        std::uint64_t uiNameObj = 0, uiNameHandle = 0, functionObj = 0, functionHandle = 0;
+        std::uint64_t ui = 0, executor = 0, args = 0, argsHandle = 0, result = 0;
+        auto freeHandle = [&](std::uint64_t handle) {
+            if (!handle) return;
+            std::uint64_t ignored = 0;
+            RemoteAbsolute(il2cppGcHandleFree_, handle, 0, 0, 0, ignored, 600);
+        };
+        if (!CreateManagedUtf8(uiName, uiNameObj, uiNameHandle)) {
+            detail = L"Không tạo được tên Lua UI";
+            return false;
+        }
+        bool found = Remote(rva::LuaFindUI, uiNameObj, 0, 0, 0, ui, 1000) && ui;
+        if (!found)
+            found = Remote(rva::LuaMainFindUI, uiNameObj, 0, 0, 0, ui, 1000) && ui;
+        if (!found) {
+            freeHandle(uiNameHandle);
+            detail = L"Không tìm thấy Lua UI " + Wide(uiName);
+            return false;
+        }
+        if (!CreateManagedUtf8(functionName, functionObj, functionHandle) ||
+            !Remote(rva::MonoBehaviourExecutorGetInstance, 0, 0, 0, 0, executor, 900) || !executor ||
+            !CreateEmptyUiArgArray(args, argsHandle)) {
+            freeHandle(functionHandle);
+            freeHandle(uiNameHandle);
+            detail = L"Không chuẩn bị được Lua action " + Wide(functionName);
+            return false;
+        }
+        const bool called = Remote5(rva::MonoBehaviourExecutorExecuteUiObject,
+                                    executor, ui, functionObj, args, 0, result, 2400);
+        freeHandle(argsHandle);
+        freeHandle(functionHandle);
+        freeHandle(uiNameHandle);
+        detail = called ? L"Đã gọi Lua action " + Wide(uiName) + L"." + Wide(functionName)
+                        : L"Lua action không phản hồi: " + Wide(uiName) + L"." + Wide(functionName);
+        return called;
+    }
+
     bool InvokeAction(const ActionControl& action) {
         if (action.kind == ActionKind::Toggle) return InvokeToggle(action.info.object);
         if (action.kind == ActionKind::RectLua) return InvokeRectLua(action.info.object);
@@ -2103,104 +2181,47 @@ private:
         return true;
     }
     bool ClickInternalAutoFight(std::wstring& detail) {
-        // Restore the v0.7.x order that was empirically better on this client:
-        // if the AUTO submenu is already alive, use its Đánh quái control directly.
-        // Only open the root when the submenu control is not currently present.
-        // This also avoids being trapped by a stale EnableAutoF1=ON flag.
-        ActionControl fight;
-        std::wstring fightReason;
-        bool foundFight = FindButtonOrToggle(ButtonRole::Fight, fight, fightReason, false);
-        if (!foundFight)
-            foundFight = FindButtonOrToggle(ButtonRole::Fight, fight, fightReason, true);
-
-        std::wstring rootDetail;
-        if (!foundFight) {
-            if (!OpenAutoRootButton(rootDetail)) {
-                detail = L"Chưa thấy Đánh quái và không mở được AUTO • " + rootDetail;
-                return false;
-            }
-            for (int attempt = 0; attempt < 8 && !foundFight; ++attempt) {
-                Sleep(180);
-                foundFight = FindButtonOrToggle(ButtonRole::Fight, fight, fightReason,
-                                                attempt >= 5);
-            }
-            if (!foundFight) {
-                detail = rootDetail +
-                         L" • AUTO đã mở nhưng chưa thấy Đánh quái dạng UIButton/UIToggle • " +
-                         fightReason;
-                return false;
-            }
-        }
-
-        if (!InvokeButtonOrToggle(fight)) {
-            detail = L"Đã thấy Đánh quái nhưng callback Button/Toggle không phản hồi • " +
-                     fight.info.label;
+        // Interface.unity3d proves the exact quick-action path:
+        // TopIcon.AutoTrainClick() -> AutoFight_Main.StartAutoFight(C_AutoModel.Train).
+        // Calling that Lua action directly avoids opening/scanning the transient AUTO submenu.
+        std::wstring callDetail;
+        if (!InvokeMainUiScriptNoArgs("TopIcon", "AutoTrainClick", callDetail)) {
+            detail = L"Không gọi được AUTO → Đánh quái trực tiếp • " + callDetail;
             return false;
         }
-
-        bool verified = false;
-        for (int i = 0; i < 6 && !verified; ++i) {
+        // The Lua source sets Game.EnableAutoF1=false when Train starts. Older builds treated
+        // ON as proof of training, which was backwards and caused false "đã bật" reports.
+        bool running = false;
+        for (int i = 0; i < 8 && !running; ++i) {
             Sleep(180);
-            std::uint64_t enabled = 0;
-            verified = Remote(rva::LuaGetAutoFightEnabled, 0, 0, 0, 0, enabled, 900) &&
-                       (enabled & 0xFFu) != 0;
+            std::uint64_t enableF1 = 1;
+            running = Remote(rva::LuaGetAutoFightEnabled, 0, 0, 0, 0, enableF1, 900) &&
+                      (enableF1 & 0xFFu) == 0;
         }
-        if (!verified && fight.kind == ActionKind::Toggle) {
-            std::uint64_t ignored = 0;
-            Remote(rva::UIToggleHandleSelectEvent, fight.info.object, 1, 0, 0, ignored, 1600);
-            for (int i = 0; i < 4 && !verified; ++i) {
-                Sleep(180);
-                std::uint64_t enabled = 0;
-                verified = Remote(rva::LuaGetAutoFightEnabled, 0, 0, 0, 0, enabled, 900) &&
-                           (enabled & 0xFFu) != 0;
-            }
-        }
-
-        const std::wstring kind = fight.kind == ActionKind::Toggle
-            ? L"UIToggle.set_Selected/HandleSelectEvent"
-            : L"UIButton.HandleClickEvent()";
-        detail = verified
-            ? L"Đã bật AUTO → Đánh quái bằng " + kind + L" • AutoFight=ON • " + fight.info.label
-            : L"Đã gọi Đánh quái bằng " + kind +
-              L" nhưng AutoFight vẫn OFF; không coi là đã bật";
-        return verified;
+        detail = running
+            ? L"Đã gọi TopIcon.AutoTrainClick → StartAutoFight(Train) • EnableAutoF1=OFF đúng Lua gốc"
+            : L"Đã gọi AutoTrainClick nhưng EnableAutoF1 chưa chuyển OFF; không coi là đã bật";
+        return running;
     }
     bool ClickInternalAutoStop(std::wstring& detail) {
-        ActionControl stop;
-        std::wstring stopReason;
-        bool foundStop = FindButtonOrToggle(ButtonRole::Stop, stop, stopReason, false);
-        if (!foundStop) {
-            std::wstring rootDetail;
-            if (!OpenAutoRootButton(rootDetail)) {
-                detail = L"Không mở được AUTO để Dừng • " + rootDetail;
-                return false;
-            }
-            for (int attempt = 0; attempt < 6 && !foundStop; ++attempt) {
-                Sleep(150);
-                foundStop = FindButtonOrToggle(ButtonRole::Stop, stop, stopReason,
-                                               attempt == 5);
-            }
-            if (!foundStop) {
-                detail = rootDetail +
-                         L" • AUTO đã mở nhưng chưa thấy Dừng dạng UIButton/UIToggle • " +
-                         stopReason;
-                return false;
-            }
-        }
-        if (!InvokeButtonOrToggle(stop)) {
-            detail = L"Control Dừng Button/Toggle không phản hồi • " + stop.info.label;
+        // Exact client action from Interface.unity3d: TopIcon.AutoStopClick() ->
+        // AutoFight_Main.StartAutoFight(C_AutoModel.None). The auto loop then restores
+        // Game.EnableAutoF1=true through StopAllCurrentTask().
+        std::wstring callDetail;
+        if (!InvokeMainUiScriptNoArgs("TopIcon", "AutoStopClick", callDetail)) {
+            detail = L"Không gọi được AUTO → Dừng trực tiếp • " + callDetail;
             return false;
         }
         bool stopped = false;
-        for (int i = 0; i < 5 && !stopped; ++i) {
-            Sleep(160);
-            std::uint64_t enabled = 1;
-            stopped = Remote(rva::LuaGetAutoFightEnabled, 0, 0, 0, 0, enabled, 900) &&
-                      (enabled & 0xFFu) == 0;
+        for (int i = 0; i < 12 && !stopped; ++i) {
+            Sleep(180);
+            std::uint64_t enableF1 = 0;
+            stopped = Remote(rva::LuaGetAutoFightEnabled, 0, 0, 0, 0, enableF1, 900) &&
+                      (enableF1 & 0xFFu) != 0;
         }
         detail = stopped
-            ? L"Đã AUTO → Dừng và xác nhận AutoFight=OFF • " + stop.info.label
-            : L"Đã gọi Dừng nhưng AutoFight vẫn ON; không coi là đã dừng • " + stop.info.label;
+            ? L"Đã gọi TopIcon.AutoStopClick → StartAutoFight(None) • EnableAutoF1=ON"
+            : L"Đã gọi AutoStopClick nhưng game chưa ổn định về trạng thái dừng";
         return stopped;
     }
     bool ReadAncestorKey(std::uint64_t object, std::wstring& key) {
@@ -2352,6 +2373,13 @@ private:
             detail = L"RoleID NPC không hợp lệ";
             return false;
         }
+        const std::int32_t builtin = BuiltinNpcResID(name);
+        if (builtin > 0) {
+            resID = builtin;
+            detail = L"ResID " + std::to_wstring(resID) +
+                     L" lấy từ database Config.unity3d của chính client";
+            return true;
+        }
 
         // Static NPC RoleID on this client uses the 1,000,000,000 namespace.  The two
         // live failures reported by the user are 1000000346 and 1000000378, while native
@@ -2391,6 +2419,27 @@ private:
     bool ResolveSavedNpcResID(const SellNpc& saved, std::int32_t& resID,
                               std::wstring& detail) {
         resID = saved.resID;
+
+        // Known static NPCs are sourced from the decrypted Config.unity3d. Validate the
+        // nearby NPC by name, then use the config ID directly; RoleID is a runtime object ID
+        // and is not arithmetically convertible to this ResID.
+        const std::int32_t builtin = BuiltinNpcResID(saved.name);
+        if (builtin > 0) {
+            std::int32_t nearestRoleID = 0;
+            std::wstring nearestName, nearestDetail;
+            if (!ReadNearestNpcIdentity(nearestRoleID, nearestName, nearestDetail)) {
+                detail = L"Chưa thấy NPC gần nhân vật để xác minh “" + saved.name + L"” • " + nearestDetail;
+                return false;
+            }
+            if (CompactMatch(nearestName) != CompactMatch(saved.name)) {
+                detail = L"NPC gần nhất “" + nearestName + L"” khác NPC cần mở “" + saved.name + L"”";
+                return false;
+            }
+            resID = builtin;
+            detail = L"Đã xác minh tên NPC gần nhất • dùng ResID " + std::to_wstring(resID) +
+                     L" từ Config.unity3d";
+            return true;
+        }
 
         // Prefer a previously saved ResID only when the game's own nearest-NPC query
         // proves that it still maps back to the saved RoleID/name.
@@ -2728,7 +2777,9 @@ private:
         state_.roleID = static_cast<std::int32_t>(roleIDValue);
         state_.characterName = characterName;
         state_.riding = (riding & 0xFFu) != 0;
-        state_.autoFight = (autoFight & 0xFFu) != 0;
+        // Interface Lua semantics: StartAutoFight(Train) sets EnableAutoF1=false;
+        // StopAllCurrentTask restores it to true. Expose autoFight as the inferred combat state.
+        state_.autoFight = (autoFight & 0xFFu) == 0;
         state_.moving = (moving & 0xFFu) != 0;
         state_.autoPathing = (pathing & 0xFFu) != 0;
         state_.dead = (dead & 0xFFu) != 0;
@@ -3051,14 +3102,11 @@ private:
         std::uint64_t input = 0;
         std::wstring inputReason;
         if (!FindChatInput(input, inputReason)) {
-            ActionControl open;
-            std::wstring openReason;
-            if (!FindChatOpen(open, openReason)) {
-                detail = L"Không mở được kênh Chat bằng control nội bộ • " + openReason;
-                return false;
-            }
-            if (!InvokeAction(open)) {
-                detail = L"Control Chat không phản hồi • " + open.info.label;
+            // Interface.unity3d exposes the exact HUD action. It calls GUI.CallUI("ChatBox")
+            // when the panel is absent, so do not scan/click the visible Chat icon.
+            std::wstring openDetail;
+            if (!InvokeMainUiScriptNoArgs("BottomIcon", "ButtonOpenChatBoxClicked", openDetail)) {
+                detail = L"Không mở được ChatBox bằng Lua action thật • " + openDetail;
                 return false;
             }
             bool foundInput = false;
@@ -3078,22 +3126,22 @@ private:
             return false;
         }
 
-        ActionControl send;
-        std::wstring sendReason;
-        if (!FindChatPanelAction(ButtonRole::ChatSend, send, sendReason, 10) ||
-            !InvokeAction(send)) {
-            detail = setDetail + L" • không gọi được Gửi tin nhắn • " + sendReason;
+        // Exact ChatBox Lua callbacks recovered from Interface.unity3d. Resolve the script
+        // again for every step instead of keeping transient UIButton pointers.
+        std::wstring sendDetail;
+        if (!InvokeMainUiScriptNoArgs("ChatBox", "ButtonSendMessageClicked", sendDetail)) {
+            detail = setDetail + L" • không gọi được ChatBox.ButtonSendMessageClicked • " +
+                     sendDetail;
             return false;
         }
-        Sleep(180);
+        Sleep(220);
 
-        ActionControl close;
-        std::wstring closeReason;
-        const bool foundClose = FindChatPanelAction(ButtonRole::ChatClose, close, closeReason, 6);
-        const bool closed = foundClose && InvokeAction(close);
-        detail = L"Đã mở Chat → nhập nội dung → Gửi tin nhắn" +
-                 std::wstring(closed ? L" → đóng bảng Chat"
-                                     : L"; gửi xong nhưng chưa xác nhận được nút đóng Chat");
+        std::wstring closeDetail;
+        const bool closed = InvokeMainUiScriptNoArgs("ChatBox", "ButtonCloseClicked", closeDetail);
+        detail = L"Đã BottomIcon mở ChatBox → nhập UIInput → ButtonSendMessageClicked" +
+                 std::wstring(closed ? L" → ButtonCloseClicked"
+                                     : L"; gửi xong nhưng chưa đóng được ChatBox • ") +
+                 (closed ? L"" : closeDetail);
         return true;
     }
     bool TryTreatmentAtNpc(std::wstring& detail) {
@@ -3186,14 +3234,14 @@ private:
             routeName = L"Thanh Liên Trại";
             return true;
         }
-        // The user has not supplied the two destination MapIDs yet, so do not invent them.
-        // Match their saved spot/map names and route through the exact portal coordinates given.
-        if (ContainsCompact(key, {L"khovinhdao", L"khovinh", L"kvd"})) {
+        if (finalTarget.mapID == 10007 ||
+            ContainsCompact(key, {L"khovinhdao", L"khovinh", L"kvd"})) {
             portal = {L"Cổng Khô Vinh Đạo", 10000, 8195, 1190};
             routeName = L"Khô Vinh Đạo";
             return true;
         }
-        if (ContainsCompact(key, {L"phamlientrai", L"phamlien", L"plt"})) {
+        if (finalTarget.mapID == 10004 ||
+            ContainsCompact(key, {L"phamlientrai", L"phamlien", L"plt"})) {
             portal = {L"Cổng Phàm Liên Trại", 10000, 1215, 8475};
             routeName = L"Phàm Liên Trại";
             return true;
@@ -3228,6 +3276,7 @@ private:
         auto nextBuffCheck = Clock::now();
         auto nextBuffAction = Clock::now();
         auto nextAutoChat = Clock::now();
+        auto actionBarrierUntil = Clock::time_point{};
         bool trainTriggered = false;
         bool autoCombatConfirmed = false;
         int autoActivationFailures = 0;
@@ -3304,11 +3353,17 @@ private:
                     }
 
                     if (!recovering && live.mapReady && !live.waitingChangeMap && !live.dead &&
+                        AtTarget(live) && !live.moving && !live.autoPathing && !live.riding &&
                         config_.autoChat && !config_.autoChatMessage.empty() &&
                         !sellingTrip && !healingTrip && now >= nextAutoChat) {
                         std::wstring chatDetail;
-                        SendChatViaUiInternal(config_.autoChatMessage, chatDetail);
+                        const bool chatSent = SendChatViaUiInternal(config_.autoChatMessage, chatDetail);
                         nextAutoChat = now + std::chrono::minutes(config_.autoChatMinutes);
+                        // Chat mutates/destroys UI objects. Give Unity one quiet second and do not issue
+                        // AutoPath/mount/AUTO/NPC actions in the same worker iteration.
+                        actionBarrierUntil = now + std::chrono::seconds(1);
+                        nextNavigate = actionBarrierUntil;
+                        UpdateLive(true, chatSent ? L"AUTO CHAT XONG" : L"AUTO CHAT LỖI", chatDetail);
                     }
 
                     if (recovering) {
@@ -3325,7 +3380,7 @@ private:
                         }
                     }
 
-                    if (!recovering) {
+                    if (!recovering && now >= actionBarrierUntil) {
                         if (live.mapID > 0 && lastObservedMap > 0 &&
                             live.mapID != lastObservedMap) {
                             mapGuard = true;
@@ -3710,9 +3765,20 @@ private:
                                     wasAutoConfirmed && live.mapReady && !live.waitingChangeMap) {
                                     std::wstring stopDetail;
                                     ClickInternalAutoStop(stopDetail);
+
+                                    // Do not issue AutoPath/mount/portal work in the same worker turn as
+                                    // the Lua AUTO-stop action.  Give the game a short quiet window to
+                                    // finish its UI/Lua state transition first; this avoids two independent
+                                    // control requests racing each other on the same client.
+                                    const auto quietUntil = Clock::now() + std::chrono::milliseconds(700);
+                                    actionBarrierUntil = std::max(actionBarrierUntil, quietUntil);
+                                    nextNavigate = quietUntil;
+                                    nextConfirm = quietUntil;
+                                    nextRideDecision = quietUntil;
+                                } else {
+                                    nextNavigate = now;
                                 }
                                 outsideTarget = true;
-                                nextNavigate = now;
                             }
                             const long long distance = DistanceSquaredTo(live, destination);
                             if (distance != LLONG_MAX &&
@@ -4036,7 +4102,7 @@ private:
                                  CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                                  DEFAULT_PITCH, L"Segoe UI");
 
-        Label(L"THẦN LONG MOBILE • AUTO TRAIN v0.8.3", 16, 5, 650, 31, titleFont_);
+        Label(L"THẦN LONG MOBILE • AUTO TRAIN v0.8.4", 16, 5, 650, 31, titleFont_);
         Button(L"↻  QUÉT CỬA SỔ GAME", 855, 10, 189, 34, V5_REFRESH);
 
         tab_ = Make(WC_TABCONTROLW, L"", TCS_TABS | TCS_SINGLELINE | WS_TABSTOP,
@@ -4167,7 +4233,7 @@ private:
              150, 145, 780, 46, 0, titleFont_);
         Make(L"STATIC", L"Phần mềm được thiết kế bởi Thắng Nguyễn - ĐỒ LONG",
              SS_CENTER | SS_CENTERIMAGE, 150, 205, 780, 48, 0, boldFont_);
-        Make(L"STATIC", L"Phiên bản 0.8.3",
+        Make(L"STATIC", L"Phiên bản 0.8.4",
              SS_CENTER | SS_CENTERIMAGE, 150, 270, 780, 35, 0, smallFont_);
         buildingPage_ = 0;
         SelectPage(0);
