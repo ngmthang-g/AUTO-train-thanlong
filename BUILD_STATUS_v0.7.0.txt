@@ -1,0 +1,36 @@
+THAN LONG AUTO TRAIN v0.7.0 - BUILD STATUS
+Date: 2026-08-14
+
+SOURCE STATUS: READY FOR WINDOWS BUILD / RUNTIME TEST
+
+Completed in v0.7.0:
+- Removed the two internal test buttons from the UI.
+- AUTO -> Danh quai / Dung resolver now supports real UIButton and UIToggle controls.
+- Added GetFreeBagSpace() bag checks with configurable interval per RoleID/PID.
+- Bag probe runs once at Start, then only when the configured interval is due; it is blocked while the game is hung, dead, or changing maps.
+- Added shared saved NPC list with real nearest-NPC RoleID + Name + current MapID/X/Y.
+- Full bag state: stop train/path -> navigate to NPC -> ClickNPC(real ID) -> Ban vat pham -> Ban vat pham nhanh.
+- Safe bag item UIButton resolver; no screen-coordinate or blind item clicking.
+- Selling continues up to 90 safe item-cell invokes instead of returning after the first freed slot.
+- After a successful sell sequence, the tool tries to close only a uniquely identified Close/Dong UIButton belonging to the shop tree, then returns to the train spot.
+- UIRectTransform.HandlePointerClick is NOT invoked with fake/null PointerEventData.
+
+Static checks completed in this environment:
+- main.cpp: C++17 syntax/semantic check PASS.
+- main.cpp: -Wall -Wextra -Werror PASS with a minimal Win32 SDK stub used only for static compilation checks.
+- remote_worker.S: assembled successfully as x86-64 Windows COFF object with Clang target x86_64-w64-windows-gnu.
+- New IL2CPP RVA prefixes are validated in source, including UIObject.get_Parent and UIToggle.get_Selected.
+- version/resource/manifest/build target are all 0.7.0.
+
+WINDOWS EXE STATUS: NOT GENERATED IN THIS CONTAINER
+Reason: this Linux container has Clang/lld-link but no Windows SDK/MinGW import libraries and no Zig executable/toolchain. A renamed v0.6 EXE or a partially linked PE would be fake, so none is included.
+
+Build on Windows:
+1. Install Zig and make `zig` available in PATH.
+2. Run build.cmd.
+3. Expected output: dist\ThanLongAutoTrain_v0.7.0.exe
+
+Runtime items that still require the real game/server:
+- Confirm whether AUTO -> Danh quai is UIButton or UIToggle on the live UI and verify EnableAutoF1 becomes ON.
+- Confirm LUU NPC GAN NHAT returns the intended NPC's RoleID/Name.
+- Confirm shop inventory item cells resolve as safe UIButton controls. If they are UIRectTransform, v0.7 deliberately stops the sell chain rather than fabricating PointerEventData.
