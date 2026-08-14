@@ -17,7 +17,7 @@ if /I not "%ZIG_VERSION%"=="0.15.2" (
 
 if not exist dist mkdir dist
 del /q dist\*.exe dist\*.dll dist\*.res dist\*.lib dist\*.a >nul 2>nul
-del /q ThanLongNewCoreBridge.dll ThanLongNewCoreBridge.lib libThanLongNewCoreBridge.a ThanLongAutoTrain_NewCore_v1.0.2.exe app.res >nul 2>nul
+del /q ThanLongNewCoreBridge.dll ThanLongNewCoreBridge.lib libThanLongNewCoreBridge.a ThanLongAutoTrain_NewCore_v1.0.3.exe app.res >nul 2>nul
 
 echo [1/3] Resource...
 pushd resources
@@ -48,18 +48,18 @@ echo [3/3] Controller EXE...
 zig c++ -target x86_64-windows-gnu -O2 -std=c++17 -DUNICODE -D_UNICODE -Wall -Wextra -Werror -municode -static -s ^
   src\controller\main.cpp app.res ^
   -Wl,--subsystem,windows -lcomctl32 -luser32 -lkernel32 -lgdi32 ^
-  -o ThanLongAutoTrain_NewCore_v1.0.2.exe
+  -o ThanLongAutoTrain_NewCore_v1.0.3.exe
 if errorlevel 1 goto :fail
-if not exist ThanLongAutoTrain_NewCore_v1.0.2.exe (
+if not exist ThanLongAutoTrain_NewCore_v1.0.3.exe (
   echo LOI: compiler khong tao EXE
   goto :fail
 )
-move /y ThanLongAutoTrain_NewCore_v1.0.2.exe dist\ThanLongAutoTrain_NewCore_v1.0.2.exe >nul
+move /y ThanLongAutoTrain_NewCore_v1.0.3.exe dist\ThanLongAutoTrain_NewCore_v1.0.3.exe >nul
 move /y app.res dist\app.res >nul
 
 echo.
 echo BUILD THANH CONG:
-echo   dist\ThanLongAutoTrain_NewCore_v1.0.2.exe
+echo   dist\ThanLongAutoTrain_NewCore_v1.0.3.exe
 echo   dist\ThanLongNewCoreBridge.dll
 exit /b 0
 

@@ -1,10 +1,14 @@
-# First runtime test (do this before migrating any donor feature)
+# FIRST RUNTIME TEST - v1.0.3
 
-1. Build `build.cmd`; keep the EXE and `ThanLongNewCoreBridge.dll` in the same `dist` folder.
-2. Start one game client and enter a normal map. Do not test multi-client first.
-3. Run NewCore as Administrator, scan, tick that client, press Start.
-4. Required result: `MainThread = UnitySync`. If it says `NO`/`FAULTED`, stop there; the bridge blocks mutation by design.
-5. If UnitySync is proven, verify only the migrated AUTO -> Đánh quái / Dừng cycle first.
-6. Let that minimal cycle run repeatedly/for a long session before enabling any sell/heal/revive/buff donor migration.
+Bản này KHÔNG gọi game action.
 
-Do not bypass SAFE PAUSE or main-thread proof to make a failed test “work”; that would recreate the v0.9.0 failure mode.
+PASS mong đợi:
+- Bridge = LOADED
+- Hook/Window TID: hai số giống nhau
+- IL2CPP = 14/14
+- FG MainThread = Mx Fy (không còn ?)
+- UnityDispatcher = Mx Fy (không còn ?)
+- Trạng thái = VALIDATOR PASS
+- MainThread = LOCKED (đúng thiết kế ở phase này)
+
+Nếu FAIL: gửi toàn bộ log. Không thử spam nút.

@@ -6,48 +6,34 @@
 namespace tlcore {
 
 constexpr std::uint32_t kMagic = 0x544C4E43u; // TLNC
-constexpr std::uint32_t kProtocolVersion = 0x00010000u;
+constexpr std::uint32_t kProtocolVersion = 0x00010003u;
 constexpr UINT kWakeMessage = WM_APP + 0x4A1;
 constexpr wchar_t kMappingPrefix[] = L"Local\\ThanLongNewCore_";
 
 enum class BridgeCommand : std::uint32_t {
     None = 0,
-    Probe = 1,
-    StartAutoFight = 2,
-    StopAutoFight = 3,
-    ClickNpc = 4,
+    ValidateNative = 1,
+    InspectFgMainThread = 2,
+    InspectUnityDispatcher = 3,
 };
 
-enum SnapshotValid : std::uint32_t {
-    ValidMainThread = 1u << 0,
-    ValidMapReady   = 1u << 1,
-    ValidAutoFight  = 1u << 2,
-    ValidDead       = 1u << 3,
-    ValidRiding     = 1u << 4,
-    ValidMoving     = 1u << 5,
-    ValidBag        = 1u << 6,
-    ValidPosition   = 1u << 7,
-    ValidRole       = 1u << 8,
-    ValidMapId      = 1u << 9,
+enum FoundationValid : std::uint32_t {
+    ValidHookThread       = 1u << 0,
+    ValidIl2CppExports    = 1u << 1,
+    ValidFgMainThreadType = 1u << 2,
+    ValidUnityDispatcher  = 1u << 3,
 };
 
-struct GameSnapshot {
+struct FoundationSnapshot {
     std::uint32_t validMask = 0;
-    std::uint32_t mainThreadProof = 0; // 1=UnitySynchronizationContext (strict proof)
-    std::uint32_t mainThreadId = 0;
+    std::uint32_t hookThreadId = 0;
     std::uint32_t windowThreadId = 0;
-    std::int32_t mapId = 0;
-    std::int32_t x = 0;
-    std::int32_t y = 0;
-    std::int32_t roleId = 0;
-    std::int32_t freeBagSpace = -1;
-    std::uint8_t mapReady = 0;
-    std::uint8_t autoFight = 0;
-    std::uint8_t dead = 0;
-    std::uint8_t riding = 0;
-    std::uint8_t moving = 0;
-    std::uint8_t reserved8[3]{};
-    wchar_t characterName[64]{};
+    std::uint32_t resolvedExports = 0;
+    std::uint32_t requiredExports = 0;
+    std::uint32_t fgMainThreadMethodCount = 0;
+    std::uint32_t fgMainThreadFieldCount = 0;
+    std::uint32_t unityDispatcherMethodCount = 0;
+    std::uint32_t unityDispatcherFieldCount = 0;
 };
 
 struct BridgeRequest {
@@ -60,8 +46,8 @@ struct BridgeRequest {
 struct BridgeResponse {
     std::int32_t ok = 0;
     std::int32_t errorCode = 0;
-    GameSnapshot snapshot{};
-    wchar_t detail[320]{};
+    FoundationSnapshot snapshot{};
+    wchar_t detail[1024]{};
 };
 
 struct SharedBlock {

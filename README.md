@@ -1,60 +1,25 @@
-# Thần Long Auto - NewCore v1.0.2
+# Thần Long Auto - NewCore v1.0.3 Foundation Validator
 
-Đây là nhánh clean rebuild, không phải bản vá v0.9.0.
+Bản này là **Phase 1 read-only** của NewCore. Mục tiêu duy nhất: xác minh bridge/hook và bóc đúng metadata của hai type liên quan main-thread trước khi mở bất kỳ action game nào.
 
-## Nguyên tắc lõi đã áp dụng
+## Luật cứng
 
-- Không còn `remote_worker.S` / `CreateRemoteThread` để chạy action game.
-- Bridge DLL được Windows nạp vào đúng thread cửa sổ game bằng `WH_GETMESSAGE`.
-- Trước mọi action, bridge phải chứng minh main-thread bằng `UnitySynchronizationContext` (fail-closed; không suy đoán từ tên class/thread khác).
-- IL2CPP method được resolve runtime bằng class/method metadata; không dùng RVA cứng làm action engine.
-- Mỗi client có `Session` riêng, FSM riêng, `ActionQueue` riêng.
-- Tối đa 1 action đang hoạt động trên mỗi client.
-- FSM chờ POST condition từ snapshot thật; không dùng Sleep để đoán UI/state.
-- Mất snapshot, map chưa ready, nhân vật chết, main-thread proof mất hoặc POST fail => SAFE PAUSE, không spam retry.
+- Không `CreateRemoteThread`.
+- Không `remote_worker.S`.
+- Không `il2cpp_thread_attach` để biến worker thành "main thread" giả.
+- Không `runtime_invoke` trong v1.0.3.
+- Không AUTO / Sell / Heal / Revive / ClickNPC.
+- Một client = một session = tối đa một probe đang chạy.
+- Timeout => fail-closed, không retry spam.
+- Nếu HWND/TID thay đổi sau scan, session cũ bị bỏ; không giữ hook/thread stale.
 
-## Phạm vi bản nền này
+## Chạy test
 
-Đã migrate lên lõi mới:
+1. Build bằng `build.cmd` với Zig 0.15.2.
+2. Mở game và vào nhân vật.
+3. Mở tool, tick đúng client.
+4. Bấm **Kiểm tra nền**.
+5. Chờ trạng thái `VALIDATOR PASS` hoặc `VALIDATOR FAIL`.
+6. Gửi lại toàn bộ log ở ô dưới cho bước tiếp theo.
 
-- Quét nhiều client.
-- Main-thread bridge.
-- Runtime IL2CPP resolver.
-- Snapshot: main-thread proof, map ready, MapID, AUTO state, dead/riding/moving/bag khi API resolve được. X/Y chỉ hiện khi resolver tìm được accessor/field phản chiếu hợp lệ; không fallback offset cứng.
-- `AUTO -> Đánh quái` / `AUTO -> Dừng` qua Lua `AutoFight_Main.StartAutoFight(Train/None)` trên main thread.
-- `ClickNPC(ResID)` đã có command bridge để dùng cho state NPC tiếp theo.
-
-Chưa bật production trong v1.0.2 nền:
-
-- AutoPath/mount.
-- Đầu thai/hồi sinh.
-- Trị liệu.
-- Sell Engine.
-- Buff/skill engine.
-
-Các phần này cố ý chưa bê nguyên v0.9.0 sang. Chúng phải được migrate từng state vào cùng FSM sau khi main-thread bridge chạy ổn định; donor logic/offset/API từ v0.9.0 vẫn được giữ trong tài liệu dưới `docs/`.
-
-## Build
-
-Cần Zig 0.15.2:
-
-```bat
-build.cmd
-```
-
-Output:
-
-- `dist/ThanLongAutoTrain_NewCore_v1.0.2.exe`
-- `dist/ThanLongNewCoreBridge.dll`
-
-Hoặc push GitHub rồi chạy workflow `Build NewCore Windows x64`.
-
-## Test bắt buộc trước khi migrate feature khác
-
-1. Mở game và vào map.
-2. Mở NewCore bằng quyền Admin nếu game chạy Admin.
-3. Quét client, tick đúng client.
-4. Bấm Bắt đầu.
-5. Cột `MainThread` phải là `UnitySync`. Nếu `NO`, engine fail-closed và không action.
-6. Chạy AUTO cơ bản lâu để xác minh còn diss hay không.
-7. Chỉ sau khi nền này ổn định mới migrate sell/heal/revive vào FSM.
+`MainThread` cố ý hiển thị `LOCKED` trong bản này. PASS validator **không có nghĩa** action đã được phép chạy; nó chỉ cho phép chúng ta xác định chính xác dispatcher/main-thread mechanism tiếp theo.
