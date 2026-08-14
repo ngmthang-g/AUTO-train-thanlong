@@ -1,67 +1,33 @@
-name: Build Windows x64
-
+name: Build NewCore Windows x64
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
-      - master
-
+    branches: [main, master]
 permissions:
   contents: read
-
 jobs:
   build:
     runs-on: windows-latest
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
     steps:
-      - name: Checkout source
-        uses: actions/checkout@v4
-
-      - name: Setup Zig
-        uses: mlugg/setup-zig@v2
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
         with:
           version: 0.15.2
-
       - name: Build
         shell: cmd
         run: build.cmd
-
-      - name: Verify build output
-        id: verify
+      - name: Verify
         shell: pwsh
         run: |
-          $ErrorActionPreference = 'Stop'
-          $candidates = @(Get-ChildItem -Path 'dist' -Filter 'ThanLongAutoTrain_v*.exe' -File)
-
-          if ($candidates.Count -eq 0) {
-            Write-Host 'Contents of dist:'
-            if (Test-Path 'dist') { Get-ChildItem -Path 'dist' -Force | Format-Table -AutoSize }
-            throw 'Build completed without any dist/ThanLongAutoTrain_v*.exe output.'
-          }
-
-          if ($candidates.Count -gt 1) {
-            Write-Host 'Multiple versioned EXEs found:'
-            $candidates | Select-Object Name, Length, LastWriteTime | Format-Table -AutoSize
-            throw 'Expected exactly one versioned ThanLongAutoTrain EXE.'
-          }
-
-          $exe = $candidates[0]
-          $hash = (Get-FileHash -Algorithm SHA256 -Path $exe.FullName).Hash.ToLowerInvariant()
-          Write-Host "Built: $($exe.FullName)"
-          Write-Host "Size : $($exe.Length) bytes"
-          Write-Host "SHA256: $hash"
-
-          "exe_path=$($exe.FullName)" >> $env:GITHUB_OUTPUT
-          "exe_name=$($exe.Name)" >> $env:GITHUB_OUTPUT
-          "sha256=$hash" >> $env:GITHUB_OUTPUT
-
-      - name: Upload EXE
-        uses: actions/upload-artifact@v4
+          $ErrorActionPreference='Stop'
+          $exe='dist/ThanLongAutoTrain_NewCore_v1.0.0.exe'
+          $dll='dist/ThanLongNewCoreBridge.dll'
+          if (!(Test-Path $exe)) { throw 'Missing EXE' }
+          if (!(Test-Path $dll)) { throw 'Missing bridge DLL' }
+          Get-FileHash -Algorithm SHA256 $exe,$dll | Format-Table -AutoSize
+      - uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.verify.outputs.exe_name }}
-          path: dist/ThanLongAutoTrain_v*.exe
-          if-no-files-found: error
-          retention-days: 30
+          name: ThanLongAutoTrain_NewCore_v1.0.0
+          path: |
+            dist/ThanLongAutoTrain_NewCore_v1.0.0.exe
+            dist/ThanLongNewCoreBridge.dll

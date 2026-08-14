@@ -1,0 +1,21 @@
+THAN LONG AUTO NEWCORE v1.0.0 - STATIC AUDIT
+Date: 2026-08-15
+
+PASS
+- bridge.cpp: strict Clang C++17 syntax check, -Wall -Wextra -Werror -Wpedantic.
+- controller/main.cpp: strict Clang C++17 syntax check, -Wall -Wextra -Werror -Wpedantic.
+- All 27 IL2CPP exports required by bridge.cpp exist in the supplied GameAssembly.dll.
+- Required metadata names found in supplied global-metadata.dat:
+  LuaSystemAPI_Game, LuaSystemAPI_GUI, MonoBehaviourExecutor,
+  get_RoleData, IsMapReady, IsMoving, GetFreeBagSpace,
+  get_EnableAutoF1, ClickNPC, FindUI, MainFindUI,
+  ExecuteScriptFunction, UnitySynchronizationContext.
+- No CreateRemoteThread, remote_worker.S, il2cpp_thread_attach or Sleep() in NewCore src/ action path.
+- app.ico normalized to a valid multi-size Windows ICO.
+- app.manifest XML parsed successfully and version updated to 1.0.0.0.
+- Windows build forces UNICODE/_UNICODE.
+
+IMPORTANT
+- This environment cannot launch the user's Windows game client, so runtime main-thread proof and real disconnect/crash rate cannot be measured here.
+- The included build.cmd / GitHub workflow are supplied for native Windows x64 build; an actual Windows/Zig link could not be run in this Linux container.
+- Advanced sell/heal/revive/buff/path/mount donor features are intentionally not activated in this Safe Foundation until the main-thread bridge is validated against the real client.
