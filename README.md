@@ -1,4 +1,4 @@
-# Thần Long Auto - NewCore v1.0.1
+# Thần Long Auto - NewCore v1.0.2
 
 Đây là nhánh clean rebuild, không phải bản vá v0.9.0.
 
@@ -24,7 +24,7 @@
 - `AUTO -> Đánh quái` / `AUTO -> Dừng` qua Lua `AutoFight_Main.StartAutoFight(Train/None)` trên main thread.
 - `ClickNPC(ResID)` đã có command bridge để dùng cho state NPC tiếp theo.
 
-Chưa bật production trong v1.0.1 nền:
+Chưa bật production trong v1.0.2 nền:
 
 - AutoPath/mount.
 - Đầu thai/hồi sinh.
@@ -44,7 +44,7 @@ build.cmd
 
 Output:
 
-- `dist/ThanLongAutoTrain_NewCore_v1.0.1.exe`
+- `dist/ThanLongAutoTrain_NewCore_v1.0.2.exe`
 - `dist/ThanLongNewCoreBridge.dll`
 
 Hoặc push GitHub rồi chạy workflow `Build NewCore Windows x64`.

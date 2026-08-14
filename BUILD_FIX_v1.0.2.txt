@@ -1,0 +1,7 @@
+v1.0.2 BUILD FIX
+
+- Fixed Zig/Clang -Wcast-function-type-mismatch errors from GetProcAddress.
+- No direct FARPROC -> typed function pointer reinterpret_cast remains in resolver or controller.
+- ResolveProcAddress copies the Windows function pointer representation with memcpy and checks pointer size at compile time.
+- Controller hook export resolution uses the same safe helper.
+- -Wall -Wextra -Werror remains enabled; warnings are not globally disabled.

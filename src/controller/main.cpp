@@ -3,6 +3,7 @@
 #include <tlhelp32.h>
 #include <cstdint>
 #include <cwchar>
+#include <cstring>
 #include <map>
 #include <memory>
 #include <string>
@@ -17,7 +18,17 @@ using namespace tlcore;
 using Clock = std::chrono::steady_clock;
 
 namespace {
-constexpr wchar_t kTitle[] = L"Thần Long Auto - NewCore v1.0.0";
+template <typename T>
+bool ResolveProcAddress(HMODULE module, const char* name, T& out) {
+    out = nullptr;
+    FARPROC raw = GetProcAddress(module, name);
+    if (!raw) return false;
+    static_assert(sizeof(raw) == sizeof(out), "Windows function pointer size mismatch");
+    std::memcpy(&out, &raw, sizeof(out));
+    return out != nullptr;
+}
+
+constexpr wchar_t kTitle[] = L"Thần Long Auto - NewCore v1.0.2";
 constexpr wchar_t kModule[] = L"GameAssembly.dll";
 constexpr int IDC_LIST = 1001;
 constexpr int IDC_SCAN = 1002;
@@ -91,8 +102,10 @@ public:
         const std::wstring bridgePath = ExeDirectory() + L"\\ThanLongNewCoreBridge.dll";
         localBridge_ = LoadLibraryW(bridgePath.c_str());
         if (!localBridge_) { error = L"Thiếu ThanLongNewCoreBridge.dll"; Close(); return false; }
-        auto proc = reinterpret_cast<HOOKPROC>(GetProcAddress(localBridge_, "TlGetMessageHook"));
-        if (!proc) { error = L"Bridge không export TlGetMessageHook"; Close(); return false; }
+        HOOKPROC proc = nullptr;
+        if (!ResolveProcAddress(localBridge_, "TlGetMessageHook", proc)) {
+            error = L"Bridge không export TlGetMessageHook"; Close(); return false;
+        }
         hook_ = SetWindowsHookExW(WH_GETMESSAGE, proc, localBridge_, game.threadId);
         if (!hook_) { error = L"SetWindowsHookEx thất bại; thử chạy quyền Admin"; Close(); return false; }
         if (!PostThreadMessageW(game.threadId, kWakeMessage, 0, 0)) {

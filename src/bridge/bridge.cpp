@@ -24,6 +24,16 @@ using Il2CppObject = void;
 using Il2CppArray = void;
 using Il2CppChar = std::uint16_t;
 
+template <typename T>
+bool ResolveProcAddress(HMODULE module, const char* name, T& out) {
+    out = nullptr;
+    FARPROC raw = GetProcAddress(module, name);
+    if (!raw) return false;
+    static_assert(sizeof(raw) == sizeof(out), "Windows function pointer size mismatch");
+    std::memcpy(&out, &raw, sizeof(out));
+    return out != nullptr;
+}
+
 struct Il2CppApi {
     HMODULE gameAssembly = nullptr;
     Il2CppDomain* (__cdecl* domain_get)() = nullptr;
@@ -58,7 +68,7 @@ struct Il2CppApi {
         if (gameAssembly) return true;
         gameAssembly = GetModuleHandleW(L"GameAssembly.dll");
         if (!gameAssembly) return false;
-#define RESOLVE(name) name = reinterpret_cast<decltype(name)>(GetProcAddress(gameAssembly, "il2cpp_" #name)); if (!name) return false
+#define RESOLVE(name) if (!ResolveProcAddress(gameAssembly, "il2cpp_" #name, name)) return false
         RESOLVE(domain_get);
         RESOLVE(domain_assembly_open);
         RESOLVE(assembly_get_image);
@@ -71,8 +81,7 @@ struct Il2CppApi {
         RESOLVE(method_get_flags);
         RESOLVE(method_get_param);
         RESOLVE(type_get_name);
-        free_fn = reinterpret_cast<decltype(free_fn)>(GetProcAddress(gameAssembly, "il2cpp_free"));
-        if (!free_fn) return false;
+        if (!ResolveProcAddress(gameAssembly, "il2cpp_free", free_fn)) return false;
         RESOLVE(runtime_invoke);
         RESOLVE(object_unbox);
         RESOLVE(object_get_class);
