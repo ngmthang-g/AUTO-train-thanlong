@@ -1,69 +1,67 @@
-name: Build Windows EXE
+name: Build Windows x64
 
 on:
   workflow_dispatch:
   push:
-    branches: [ "main", "master" ]
-    paths:
-      - "src/**"
-      - "resources/**"
-      - "build.cmd"
-      - ".github/workflows/build-windows.yml"
-  pull_request:
-    paths:
-      - "src/**"
-      - "resources/**"
-      - "build.cmd"
-      - ".github/workflows/build-windows.yml"
+    branches:
+      - main
+      - master
 
 permissions:
   contents: read
 
 jobs:
   build:
-    name: Windows x64 / Zig 0.15.2
     runs-on: windows-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Download Zig 0.15.2
-        shell: powershell
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Build
+        shell: cmd
+        run: build.cmd
+
+      - name: Verify build output
+        id: verify
+        shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $zigVersion = '0.15.2'
-          $zip = Join-Path $env:RUNNER_TEMP "zig-$zigVersion.zip"
-          $dir = Join-Path $env:RUNNER_TEMP "zig-$zigVersion"
-          Invoke-WebRequest -Uri "https://ziglang.org/download/$zigVersion/zig-x86_64-windows-$zigVersion.zip" -OutFile $zip
-          Expand-Archive -Path $zip -DestinationPath $dir -Force
-          $zigHome = Join-Path $dir "zig-x86_64-windows-$zigVersion"
-          if (-not (Test-Path (Join-Path $zigHome 'zig.exe'))) {
-            throw "zig.exe was not found after extracting Zig $zigVersion"
+          $candidates = @(Get-ChildItem -Path 'dist' -Filter 'ThanLongAutoTrain_v*.exe' -File)
+
+          if ($candidates.Count -eq 0) {
+            Write-Host 'Contents of dist:'
+            if (Test-Path 'dist') { Get-ChildItem -Path 'dist' -Force | Format-Table -AutoSize }
+            throw 'Build completed without any dist/ThanLongAutoTrain_v*.exe output.'
           }
-          $zigHome | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
-      - name: Verify Zig
-        shell: cmd
-        run: zig version
+          if ($candidates.Count -gt 1) {
+            Write-Host 'Multiple versioned EXEs found:'
+            $candidates | Select-Object Name, Length, LastWriteTime | Format-Table -AutoSize
+            throw 'Expected exactly one versioned ThanLongAutoTrain EXE.'
+          }
 
-      - name: Build release EXE
-        shell: cmd
-        run: call build.cmd
+          $exe = $candidates[0]
+          $hash = (Get-FileHash -Algorithm SHA256 -Path $exe.FullName).Hash.ToLowerInvariant()
+          Write-Host "Built: $($exe.FullName)"
+          Write-Host "Size : $($exe.Length) bytes"
+          Write-Host "SHA256: $hash"
 
-      - name: Verify output
-        shell: powershell
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $exe = 'dist/ThanLongAutoTrain_v0.7.0.exe'
-          if (-not (Test-Path $exe)) { throw "Build completed without expected output: $exe" }
-          Get-Item $exe | Format-List Name,Length,LastWriteTime
-          Get-FileHash $exe -Algorithm SHA256 | Format-List
+          "exe_path=$($exe.FullName)" >> $env:GITHUB_OUTPUT
+          "exe_name=$($exe.Name)" >> $env:GITHUB_OUTPUT
+          "sha256=$hash" >> $env:GITHUB_OUTPUT
 
-      - name: Upload Windows EXE
+      - name: Upload EXE
         uses: actions/upload-artifact@v4
         with:
-          name: ThanLongAutoTrain-v0.7.0-windows-x64
-          path: dist/ThanLongAutoTrain_v0.7.0.exe
+          name: ${{ steps.verify.outputs.exe_name }}
+          path: dist/ThanLongAutoTrain_v*.exe
           if-no-files-found: error
           retention-days: 30
