@@ -69,6 +69,137 @@ private:
         return count;
     }
 
+    void SetControlFsmState(ControlFsmState next, const std::wstring& why) {
+        if (controlState_ == next) return;
+        const ControlFsmState before = controlState_;
+        controlState_ = next;
+        events_.push_back(
+            L"PID " + std::to_wstring(game_.pid) +
+            L": FSM • " + ControlFsmStateName(before) + L" → " +
+            ControlFsmStateName(next) + L" • " + why);
+    }
+
+    SafetyGuardContext BuildSafetyGuardContext() const {
+        SafetyGuardContext ctx{};
+        ctx.bridgeAttached = bridge_.Attached();
+        ctx.mainThreadProven = (snapshot_.validMask & ValidUnityMainThread) != 0;
+        ctx.scannerQualified = qualificationStableScans_ >= kQualificationStableScans;
+        ctx.observerStable =
+            (gameSnapshot_.validMask & kRequiredObserverStableMask) == kRequiredObserverStableMask;
+        ctx.transitionActive = transitionLatched_;
+        ctx.scannerHealthy = scannerFailures_ == 0;
+        ctx.roleID = gameSnapshot_.roleID;
+        ctx.mapID = gameSnapshot_.mapID;
+        ctx.dead = gameSnapshot_.dead != 0;
+        return ctx;
+    }
+
+    void DrainDryRunActionQueue() {
+        ActionIntent intent{};
+        if (!actionQueue_.Pop(intent)) return;
+        if (kGameplayMutationEnabled) {
+            Fail(L"Compile-time mutation invariant bị phá; fail-closed");
+            return;
+        }
+        events_.push_back(
+            L"PID " + std::to_wstring(game_.pid) +
+            L": DISPATCHER GATE • intent=" + ActionIntentName(intent.kind) +
+            L" • BLOCKED: kGameplayMutationEnabled=false; không phát BridgeCommand/action game");
+        events_.push_back(
+            L"PID " + std::to_wstring(game_.pid) +
+            L": ACTION QUEUE • depth=" + std::to_wstring(actionQueue_.Depth()) +
+            L"/1 active=" + std::to_wstring(actionQueue_.Active()) +
+            L" • dry-run envelope đã tiêu thụ an toàn");
+    }
+
+    void ConsiderReviveDryRun() {
+        ActionIntent intent{};
+        intent.kind = ActionIntentKind::Revive;
+        intent.roleID = gameSnapshot_.roleID;
+        intent.mapID = gameSnapshot_.mapID;
+        intent.snapshotSequence = gameSnapshot_.sequence;
+
+        const SafetyGuardDecision decision = SafetyGuard::Evaluate(intent, BuildSafetyGuardContext());
+        if (!decision.preconditionsPass) {
+            const std::wstring reason = decision.reason;
+            if (reason != lastGuardBlockReason_) {
+                lastGuardBlockReason_ = reason;
+                events_.push_back(
+                    L"PID " + std::to_wstring(game_.pid) +
+                    L": SAFETY GUARD BLOCK • intent=Revive • reason=" + reason +
+                    L" • mutation vẫn KHÓA");
+            }
+            return;
+        }
+
+        lastGuardBlockReason_.clear();
+        if (reviveDryRunIssued_) return;
+        events_.push_back(
+            L"PID " + std::to_wstring(game_.pid) +
+            L": SAFETY GUARD PASS(dry-run) • intent=Revive • PRE stable=1 dead=1 transition=0 scanner=60/60"
+            L" • mutation permission=LOCKED");
+
+        if (!actionQueue_.TryEnqueue(intent)) {
+            Fail(L"ActionQueue invariant lỗi: depth vượt MAX=1");
+            return;
+        }
+        reviveDryRunIssued_ = true;
+        events_.push_back(
+            L"PID " + std::to_wstring(game_.pid) +
+            L": ACTION QUEUE • depth=" + std::to_wstring(actionQueue_.Depth()) +
+            L"/1 active=" + std::to_wstring(actionQueue_.Active()) +
+            L" • accepted DRY-RUN intent=Revive seq=" +
+            std::to_wstring(intent.snapshotSequence));
+        DrainDryRunActionQueue();
+    }
+
+    void UpdateControlScaffold() {
+        if (state_ == FoundationState::Faulted) {
+            actionQueue_.Clear();
+            SetControlFsmState(ControlFsmState::Faulted, L"foundation/scanner fault");
+            return;
+        }
+        if (transitionLatched_) {
+            actionQueue_.Clear();
+            lastGuardBlockReason_.clear();
+            SetControlFsmState(ControlFsmState::MapTransition,
+                               L"transition active; queue cleared; fail-closed");
+            return;
+        }
+        if (!haveGameSnapshot_) {
+            actionQueue_.Clear();
+            SetControlFsmState(ControlFsmState::SafePaused, L"chưa có snapshot");
+            return;
+        }
+
+        const bool observerStable =
+            (gameSnapshot_.validMask & kRequiredObserverStableMask) == kRequiredObserverStableMask;
+        if (scannerFailures_ != 0 || !observerStable) {
+            actionQueue_.Clear();
+            SetControlFsmState(ControlFsmState::SafePaused,
+                               L"scanner/observer chưa đủ điều kiện");
+            return;
+        }
+
+        if (gameSnapshot_.dead) {
+            SetControlFsmState(ControlFsmState::DeadDetected,
+                               L"snapshot dead=1; tạo candidate nhưng chưa mutate");
+            ConsiderReviveDryRun();
+            return;
+        }
+
+        reviveDryRunIssued_ = false;
+        lastGuardBlockReason_.clear();
+        if (qualificationStableScans_ < kQualificationStableScans) {
+            SetControlFsmState(ControlFsmState::ScannerQualifying,
+                               L"chờ scanner qualification 60/60");
+            return;
+        }
+
+        SetControlFsmState(ControlFsmState::IdleStable,
+                           L"scanner qualified + alive + stable; không có action candidate");
+    }
+
     void ObserveAutoPathProbe(const GameSnapshot& game) {
         if (game.autoPathProbeMask != lastAutoPathProbeMask_ || !autoPathProbeLogged_) {
             lastAutoPathProbeMask_ = game.autoPathProbeMask;

@@ -23,7 +23,7 @@
             CreateWindowW(L"BUTTON", L"Ngắt bridge", WS_CHILD | WS_VISIBLE,
                           296, 284, 130, 34, hwnd, reinterpret_cast<HMENU>(IDC_DISCONNECT), nullptr, nullptr);
             CreateWindowW(L"STATIC",
-                          L"Phase 4: CONTINUOUS READ-ONLY SCANNER 500 ms. Donor guard map-transition; action game vẫn khóa.",
+                          L"v1.0.12: SafetyGuard + ActionQueue MAX=1 + FSM DRY-RUN. Gameplay mutation khóa compile-time.",
                           WS_CHILD | WS_VISIBLE, 448, 292, 720, 26, hwnd, nullptr, nullptr, nullptr);
             g_log = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL |
                                     ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL,

@@ -13,8 +13,10 @@
 #include <algorithm>
 #include <chrono>
 #include "../common/protocol.h"
+#include "control_scaffold.h"
 
 using namespace tlcore;
+using namespace tlcontrol;
 using Clock = std::chrono::steady_clock;
 
 namespace {
@@ -29,7 +31,7 @@ bool ResolveProcAddress(HMODULE module, const char* name, T& out) {
     return out != nullptr;
 }
 
-constexpr wchar_t kTitle[] = L"Thần Long Auto - NewCore v1.0.11 Unified Map Transition Guard";
+constexpr wchar_t kTitle[] = L"Thần Long Auto - NewCore v1.0.12 SafetyGuard + ActionQueue Dry-Run";
 constexpr wchar_t kModule[] = L"GameAssembly.dll";
 constexpr int IDC_LIST = 1001;
 constexpr int IDC_SCAN = 1002;

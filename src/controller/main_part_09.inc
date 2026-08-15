@@ -24,6 +24,9 @@
             qualificationStableScans_ = 0;
             recoveryCandidateValid_ = false;
             postTransitionStableScans_ = 0;
+            actionQueue_.Clear();
+            SetControlFsmState(ControlFsmState::SafePaused,
+                               L"scanner query failure; queue cleared; fail-closed");
             if (scannerFailures_ == 1) ++scannerRecoveries_;
             detail_ = response.detail;
             if (scannerFailures_ >= 3) {
@@ -71,4 +74,8 @@
             transitionLatched_ = true;
             recoveryCandidateValid_ = false;
             postTransitionStableScans_ = 0;
+            actionQueue_.Clear();
+            lastGuardBlockReason_.clear();
+            SetControlFsmState(ControlFsmState::MapTransition,
+                               L"source=flags; queue cleared; fail-closed");
             if (state_ != FoundationState::WaitingStableMap) {
