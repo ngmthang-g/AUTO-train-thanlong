@@ -1,0 +1,30 @@
+THAN LONG AUTO NEWCORE v1.1.0 - INTEGRATED ACCEPTANCE + HARMLESS HOOK ACTION ENVELOPE
+Date: 2026-08-15
+
+STATUS
+- Scanner/Observer gate accepted from v1.0.10/v1.0.11 runtime evidence.
+- Gameplay mutation compile-time FALSE.
+- ActionQueue capacity compile-time MAX=1.
+- Protocol 0x00010102.
+- ReadGameSnapshot remains command 5.
+- Command 6 = ProveHookActionEnvelope, infrastructure-only; no gameplay method call.
+- Harmless proof requires scanner 60/60 + stable observer + alive + identity stable + MainThread proven.
+- Controller lifecycle: SafetyGuard PASS -> queue queued -> active -> command 6 -> POST token/sequence/thread verification -> CompleteActive.
+- Bridge lifecycle: re-prove Unity main thread -> echo token -> increment bridge-local counter -> return callback/managed thread identity.
+- Any token/sequence/thread mismatch fails closed and clears queue/bridge.
+- Integrated control self-test: 48 checks locally PASS; authoritative Windows CI required after final squash.
+- Metadata-only action resolver v3 retained.
+- MainThread.get_Instance + Execute(System.Action) metadata gate retained.
+- UnityMainThreadDispatcher.get_Instance + Enqueue(System.Action) + static Dispatch(System.Action) metadata gate retained.
+- MonoBehaviourExecutor remains namespace-discovered by optional class enumeration.
+- Dynamic Lua combat/sell actions remain donor-only/unresolved.
+
+FORBIDDEN IN HARMLESS ENVELOPE
+- ClickNPC
+- HandleClickEvent
+- StartAutoFight
+- RequestSellItem
+- StartPath / StopPath
+- direct runtime_invoke
+
+GitHub Actions Windows Zig 0.15.2 is authoritative before artifact use.

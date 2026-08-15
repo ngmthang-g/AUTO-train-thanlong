@@ -11,13 +11,14 @@
         nextSnapshotDue_ = now + std::chrono::milliseconds(500);
     }
 
-    bool Send(BridgeCommand command, const wchar_t* label, bool logEvent = true) {
+    bool Send(BridgeCommand command, const wchar_t* label, bool logEvent = true,
+              std::uint64_t u64Arg0 = 0) {
         if (pending_ != BridgeCommand::None) {
             Fail(L"Invariant lỗi: có hơn 1 command đang chạy");
             return false;
         }
         std::wstring error;
-        if (!bridge_.Begin(command, error)) {
+        if (!bridge_.Begin(command, error, u64Arg0)) {
             Fail(std::wstring(label) + L": " + error);
             return false;
         }
@@ -42,6 +43,7 @@
     void Fail(const std::wstring& why) {
         pending_ = BridgeCommand::None;
         actionQueue_.Clear();
+        g_harmlessProofTrackers.erase(game_.pid);
         bridge_.Close();
         SetControlFsmState(ControlFsmState::Faulted, L"fail-closed; queue cleared");
         Enter(FoundationState::Faulted, why);

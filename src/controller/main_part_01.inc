@@ -31,7 +31,7 @@ bool ResolveProcAddress(HMODULE module, const char* name, T& out) {
     return out != nullptr;
 }
 
-constexpr wchar_t kTitle[] = L"Thần Long Auto - NewCore v1.0.12 SafetyGuard + ActionQueue Dry-Run";
+constexpr wchar_t kTitle[] = L"Thần Long Auto - NewCore v1.1.0 Integrated Acceptance";
 constexpr wchar_t kModule[] = L"GameAssembly.dll";
 constexpr int IDC_LIST = 1001;
 constexpr int IDC_SCAN = 1002;
@@ -39,6 +39,20 @@ constexpr int IDC_VALIDATE = 1003;
 constexpr int IDC_DISCONNECT = 1004;
 constexpr int IDC_LOG = 1005;
 constexpr UINT_PTR TIMER_ID = 1;
+bool g_controlSelfTestPass = false;
+
+struct HarmlessProofTracker {
+    bool issued = false;
+    bool passed = false;
+    std::uint64_t activeToken = 0;
+    std::uint64_t nextToken = 1;
+    std::uint32_t lastSequence = 0;
+    std::uint32_t expectedHookThreadId = 0;
+    std::int32_t expectedManagedThreadId = 0;
+    std::int32_t expectedUnityMainThreadId = 0;
+};
+
+std::map<DWORD, HarmlessProofTracker> g_harmlessProofTrackers;
 
 std::wstring ExeDirectory() {
     wchar_t path[MAX_PATH]{};

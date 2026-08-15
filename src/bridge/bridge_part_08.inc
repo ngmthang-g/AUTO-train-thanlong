@@ -15,6 +15,9 @@
     return true;
 }
 
+#include "action_capability_probe.inc"
+#include "harmless_action_envelope.inc"
+
 void SetDetail(BridgeResponse& response, const wchar_t* text) {
     CopyText(response.detail, _countof(response.detail), text ? text : L"");
 }
@@ -60,10 +63,30 @@ void ProcessRequest() {
             ok = DescribeType("", "UnityMainThreadDispatcher", ValidUnityDispatcher,
                               snap.unityDispatcherMethodCount, snap.unityDispatcherFieldCount,
                               snap, detail, _countof(detail)); response.errorCode = ok ? 0 : 2301; break;
-        case BridgeCommand::ProveUnityMainThread:
-            ok = ProveUnityMainThread(snap, detail, _countof(detail)); response.errorCode = ok ? 0 : 2401; break;
+        case BridgeCommand::ProveUnityMainThread: {
+            ok = ProveUnityMainThread(snap, detail, _countof(detail));
+            response.errorCode = ok ? 0 : 2401;
+            if (ok) {
+                wchar_t capabilityDetail[768]{};
+                ActionCapabilitySnapshot capabilities{};
+                const bool capabilityProbeOk =
+                    ProbeActionCapabilities(capabilities, capabilityDetail, _countof(capabilityDetail));
+                response.actionCapabilities = capabilities;
+                AppendText(detail, _countof(detail), L" | ");
+                AppendText(detail, _countof(detail), capabilityDetail);
+                if (!capabilityProbeOk) {
+                    AppendText(detail, _countof(detail), L" • capability probe incomplete; action remains LOCKED");
+                }
+            }
+            break;
+        }
         case BridgeCommand::ReadGameSnapshot:
             ok = ReadGameSnapshot(snap, game, detail, _countof(detail)); response.errorCode = ok ? 0 : 2501; break;
+        case BridgeCommand::ProveHookActionEnvelope:
+            ok = ProveHarmlessActionEnvelope(g_shared->request, snap, response.infrastructureProof,
+                                              detail, _countof(detail));
+            response.errorCode = ok ? 0 : 2601;
+            break;
         default:
             CopyText(detail, _countof(detail), L"Command không hợp lệ"); response.errorCode = 2003; break;
     }

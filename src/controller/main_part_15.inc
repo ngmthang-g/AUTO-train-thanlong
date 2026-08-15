@@ -1,6 +1,6 @@
                     if (it != g_sessions.end()) it->second->ValidateWanted();
                 }
-                Log(L"Bắt đầu foundation + scanner + SafetyGuard/ActionQueue/FSM dry-run cho các client đã tick");
+                Log(L"Bắt đầu integrated acceptance runtime: foundation + scanner + control-plane; gameplay mutation vẫn khóa");
                 return 0;
             }
             if (LOWORD(wp) == IDC_DISCONNECT) {

@@ -23,11 +23,21 @@
             CreateWindowW(L"BUTTON", L"Ngắt bridge", WS_CHILD | WS_VISIBLE,
                           296, 284, 130, 34, hwnd, reinterpret_cast<HMENU>(IDC_DISCONNECT), nullptr, nullptr);
             CreateWindowW(L"STATIC",
-                          L"v1.0.12: SafetyGuard + ActionQueue MAX=1 + FSM DRY-RUN. Gameplay mutation khóa compile-time.",
+                          L"v1.1.0: Integrated FSM/Guard/Queue/Watchdog/Postcondition self-test. Gameplay mutation vẫn khóa.",
                           WS_CHILD | WS_VISIBLE, 448, 292, 720, 26, hwnd, nullptr, nullptr, nullptr);
             g_log = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL |
                                     ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL,
                                     12, 332, 1160, 250, hwnd, reinterpret_cast<HMENU>(IDC_LOG), nullptr, nullptr);
+
+            const IntegratedSelfTestResult selfTest = RunIntegratedControlSelfTest();
+            g_controlSelfTestPass = selfTest.Pass();
+            Log(std::wstring(L"CONTROL SELF TEST ") +
+                (g_controlSelfTestPass ? L"PASS" : L"FAIL") +
+                L" • " + std::to_wstring(selfTest.passed) + L"/" +
+                std::to_wstring(selfTest.total) + L" • failed=" +
+                std::to_wstring(selfTest.failed) +
+                L" • FSM/SafetyGuard/Queue/Watchdog/Postcondition/DispatcherGate");
+
             SetTimer(hwnd, TIMER_ID, 100, nullptr);
             ScanGames();
             return 0;
@@ -38,5 +48,9 @@
                 return 0;
             }
             if (LOWORD(wp) == IDC_VALIDATE) {
+                if (!g_controlSelfTestPass) {
+                    Log(L"CONTROL SELF TEST FAIL • foundation bị khóa fail-closed");
+                    return 0;
+                }
                 for (DWORD pid : CheckedPids()) {
                     auto it = g_sessions.find(pid);

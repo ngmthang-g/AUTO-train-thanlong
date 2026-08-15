@@ -11,6 +11,10 @@
             Send(BridgeCommand::ReadGameSnapshot, L"ReadGameSnapshot");
             return;
         }
+        if (completed == BridgeCommand::ProveHookActionEnvelope) {
+            HandleHarmlessProofResponse(response);
+            return;
+        }
     }
 
     bool PopEvent(std::wstring& out) {
@@ -92,6 +96,115 @@ private:
         ctx.mapID = gameSnapshot_.mapID;
         ctx.dead = gameSnapshot_.dead != 0;
         return ctx;
+    }
+
+    void HandleHarmlessProofResponse(const BridgeResponse& response) {
+        auto& tracker = g_harmlessProofTrackers[game_.pid];
+        if (!tracker.issued || tracker.activeToken == 0 || actionQueue_.Active() != 1) {
+            Fail(L"HARMLESS POST FAIL: không có active infrastructure intent; fail-closed");
+            return;
+        }
+        if ((response.snapshot.validMask & ValidUnityMainThread) == 0) {
+            Fail(L"HARMLESS POST FAIL: bridge không re-prove Unity main thread; fail-closed");
+            return;
+        }
+
+        InfrastructureProofObserved observed{};
+        observed.token = response.infrastructureProof.token;
+        observed.sequence = response.infrastructureProof.sequence;
+        observed.callbackThreadId = response.infrastructureProof.callbackThreadId;
+        observed.currentManagedThreadId = response.infrastructureProof.currentManagedThreadId;
+        observed.unityMainManagedThreadId = response.infrastructureProof.unityMainManagedThreadId;
+        observed.completed = response.infrastructureProof.completed != 0;
+
+        if (!InfrastructureProofPostconditionSatisfied(
+                tracker.activeToken,
+                tracker.lastSequence,
+                tracker.expectedHookThreadId,
+                tracker.expectedManagedThreadId,
+                tracker.expectedUnityMainThreadId,
+                observed)) {
+            Fail(L"HARMLESS POST FAIL: token/sequence/thread identity không khớp PRE; fail-closed");
+            return;
+        }
+        if (!actionQueue_.CompleteActive()) {
+            Fail(L"HARMLESS POST FAIL: ActionQueue active completion invariant lỗi");
+            return;
+        }
+
+        tracker.lastSequence = observed.sequence;
+        tracker.passed = true;
+        tracker.issued = false;
+        tracker.activeToken = 0;
+        lastGuardBlockReason_.clear();
+        SetControlFsmState(ControlFsmState::IdleStable,
+                           L"harmless hook/main-thread envelope POST verified; gameplay mutation vẫn khóa");
+        detail_ = L"HARMLESS DISPATCHER PROOF PASS • token/seq/thread POST verified • queue 0/1 • gameplay mutation LOCKED";
+        events_.push_back(L"PID " + std::to_wstring(game_.pid) + L": " + detail_);
+        nextSnapshotDue_ = Clock::now();
+    }
+
+    void ConsiderHarmlessProof() {
+        auto& tracker = g_harmlessProofTrackers[game_.pid];
+        if (tracker.passed || tracker.issued) return;
+
+        ActionIntent intent{};
+        intent.kind = ActionIntentKind::HarmlessInfrastructureProof;
+        intent.roleID = gameSnapshot_.roleID;
+        intent.mapID = gameSnapshot_.mapID;
+        intent.snapshotSequence = gameSnapshot_.sequence;
+        intent.token = tracker.nextToken++;
+        if (intent.token == 0) intent.token = tracker.nextToken++;
+
+        const SafetyGuardDecision guard = SafetyGuard::Evaluate(intent, BuildSafetyGuardContext());
+        if (!guard.preconditionsPass) {
+            const std::wstring reason = guard.reason;
+            if (reason != lastGuardBlockReason_) {
+                lastGuardBlockReason_ = reason;
+                events_.push_back(
+                    L"PID " + std::to_wstring(game_.pid) +
+                    L": HARMLESS SAFETY GUARD BLOCK • reason=" + reason +
+                    L" • no command sent");
+            }
+            return;
+        }
+
+        if (!actionQueue_.TryEnqueue(intent)) {
+            Fail(L"HARMLESS PROOF: ActionQueue TryEnqueue vượt MAX=1");
+            return;
+        }
+        ActionIntent active{};
+        if (!actionQueue_.BeginNext(active) ||
+            active.kind != ActionIntentKind::HarmlessInfrastructureProof ||
+            active.token != intent.token) {
+            Fail(L"HARMLESS PROOF: queued→active invariant lỗi");
+            return;
+        }
+        const DispatchDecision dispatch = InfrastructureDispatcherGate::Evaluate(active.kind);
+        if (!dispatch.allowed) {
+            Fail(L"HARMLESS PROOF: infrastructure dispatcher gate từ chối unexpectedly");
+            return;
+        }
+
+        tracker.issued = true;
+        tracker.activeToken = active.token;
+        tracker.expectedHookThreadId = snapshot_.hookThreadId;
+        tracker.expectedManagedThreadId = snapshot_.currentManagedThreadId;
+        tracker.expectedUnityMainThreadId = snapshot_.unityMainManagedThreadId;
+        lastGuardBlockReason_.clear();
+
+        SetControlFsmState(ControlFsmState::ActionPrepared,
+                           L"harmless infrastructure intent queued→active; PRE PASS");
+        events_.push_back(
+            L"PID " + std::to_wstring(game_.pid) +
+            L": ACTION QUEUE • depth=" + std::to_wstring(actionQueue_.Depth()) +
+            L"/1 active=" + std::to_wstring(actionQueue_.Active()) +
+            L" • harmless token=" + std::to_wstring(active.token));
+
+        if (!Send(BridgeCommand::ProveHookActionEnvelope,
+                  L"ProveHookActionEnvelope", true, active.token)) return;
+        SetControlFsmState(ControlFsmState::AwaitingPostcondition,
+                           L"harmless command sent on proven hook/main thread; chờ token/seq/thread POST");
     }
 
     void DrainDryRunActionQueue() {
@@ -196,8 +309,13 @@ private:
             return;
         }
 
+        if (!g_harmlessProofTrackers[game_.pid].passed) {
+            ConsiderHarmlessProof();
+            return;
+        }
+
         SetControlFsmState(ControlFsmState::IdleStable,
-                           L"scanner qualified + alive + stable; không có action candidate");
+                           L"scanner qualified + harmless dispatcher proof PASS + alive + stable");
     }
 
     void ObserveAutoPathProbe(const GameSnapshot& game) {
