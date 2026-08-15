@@ -1,0 +1,90 @@
+name: Build Simple Route Windows x64
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - agent/simple-route-v1.0.0
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Reconstruct route-only source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $src='simple-route/source'
+          $work='simple-route/work'
+          New-Item -ItemType Directory -Force "$work/src","$work/resources" | Out-Null
+          $parts = Get-ChildItem "$src/main.cpp.gz.b64.*" | Sort-Object Name
+          if ($parts.Count -ne 5) { throw "Expected 5 main source parts, got $($parts.Count)" }
+          $b64 = ($parts | ForEach-Object { [IO.File]::ReadAllText($_.FullName).Trim() }) -join ''
+          $gzBytes = [Convert]::FromBase64String($b64)
+          $ms = [IO.MemoryStream]::new($gzBytes)
+          $gz = [IO.Compression.GZipStream]::new($ms,[IO.Compression.CompressionMode]::Decompress)
+          $out = [IO.File]::Create("$work/src/main.cpp")
+          $gz.CopyTo($out)
+          $out.Dispose(); $gz.Dispose(); $ms.Dispose()
+          Copy-Item "$src/remote_worker.S" "$work/src/remote_worker.S"
+          Copy-Item "$src/app.rc" "$work/resources/app.rc"
+          Copy-Item "$src/app.manifest" "$work/resources/app.manifest"
+          Copy-Item "$src/build.cmd" "$work/build.cmd"
+          Copy-Item "$src/README.md" "$work/README.md"
+          Copy-Item "$src/ROUTE_SCOPE_AUDIT.md" "$work/ROUTE_SCOPE_AUDIT.md"
+          $hash=(Get-FileHash -Algorithm SHA256 "$work/src/main.cpp").Hash.ToLowerInvariant()
+          Write-Host "Reconstructed main.cpp SHA256=$hash"
+          if ($hash -ne '0ea16a1f86df36cd70b3458f159e1b98aaa1ee116238f5dbbf75bf501e5f57c0') { throw 'main.cpp transport hash mismatch' }
+
+      - name: Build + route-only audit
+        shell: cmd
+        working-directory: simple-route/work
+        run: build.cmd
+
+      - name: Package clean source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $work='simple-route/work'
+          $zip="$work/ThanLongAutoRoute_Source_v1.0.0.zip"
+          if(Test-Path $zip){Remove-Item $zip -Force}
+          Compress-Archive -Path "$work/src","$work/resources","$work/build.cmd","$work/README.md","$work/ROUTE_SCOPE_AUDIT.md" -DestinationPath $zip -CompressionLevel Optimal
+
+      - name: Verify
+        id: verify
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $exe='simple-route/work/dist/ThanLongAutoRoute_v1.0.0.exe'
+          $src='simple-route/work/ThanLongAutoRoute_Source_v1.0.0.zip'
+          if (!(Test-Path $exe)) { throw 'Missing route EXE' }
+          if (!(Test-Path $src)) { throw 'Missing source ZIP' }
+          $eh=(Get-FileHash -Algorithm SHA256 $exe).Hash.ToLowerInvariant()
+          $sh=(Get-FileHash -Algorithm SHA256 $src).Hash.ToLowerInvariant()
+          Write-Host "EXE SHA256: $eh"
+          Write-Host "SOURCE SHA256: $sh"
+          "exe_sha256=$eh" >> $env:GITHUB_OUTPUT
+          "source_sha256=$sh" >> $env:GITHUB_OUTPUT
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ThanLongAutoRoute_v1.0.0
+          path: |
+            simple-route/work/dist/ThanLongAutoRoute_v1.0.0.exe
+            simple-route/work/ThanLongAutoRoute_Source_v1.0.0.zip
+            simple-route/work/README.md
+            simple-route/work/ROUTE_SCOPE_AUDIT.md
+          if-no-files-found: error
