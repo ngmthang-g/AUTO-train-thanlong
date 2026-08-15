@@ -1,97 +1,77 @@
-    const FoundationSnapshot& Snapshot() const { return snapshot_; }
-    const GameSnapshot& GameState() const { return gameSnapshot_; }
-    const std::wstring& Detail() const { return detail_; }
-    bool BridgeLoaded() const { return bridge_.LoadedInTarget(); }
-
-    void ValidateWanted() {
-        if (state_ == FoundationState::Attaching ||
-            state_ == FoundationState::ValidatingNative ||
-            state_ == FoundationState::InspectingFgMainThread ||
-            state_ == FoundationState::InspectingUnityDispatcher ||
-            state_ == FoundationState::ProvingUnityMainThread ||
-            state_ == FoundationState::ReadingSnapshot) return;
-        report_.clear();
-        snapshot_ = {};
-        gameSnapshot_ = {};
-        previousGameSnapshot_ = {};
-        haveGameSnapshot_ = false;
-        scannerFailures_ = 0;
-        transitionLatched_ = false;
-        postTransitionStableScans_ = 0;
-        nextSnapshotDue_ = Clock::time_point{};
-        Enter(FoundationState::Attaching, L"Bắt đầu kiểm tra nền read-only");
+            error = L"Bridge không export TlGetMessageHook";
+            Close();
+            return false;
+        }
+        hook_ = SetWindowsHookExW(WH_GETMESSAGE, proc, localBridge_, game.threadId);
+        if (!hook_) {
+            error = L"SetWindowsHookEx thất bại; thử chạy tool cùng quyền với game";
+            Close();
+            return false;
+        }
+        if (!PostThreadMessageW(game.threadId, kWakeMessage, 0, 0)) {
+            error = L"Không đánh thức được message thread game";
+            Close();
+            return false;
+        }
+        attached_ = true;
+        return true;
     }
 
-    void Disconnect() {
-        bridge_.Close();
-        pending_ = BridgeCommand::None;
-        snapshot_ = {};
-        gameSnapshot_ = {};
-        previousGameSnapshot_ = {};
-        haveGameSnapshot_ = false;
-        scannerFailures_ = 0;
-        transitionLatched_ = false;
-        postTransitionStableScans_ = 0;
-        nextSnapshotDue_ = Clock::time_point{};
-        report_.clear();
-        Enter(FoundationState::Stopped, L"Đã ngắt bridge; scanner dừng; không có action game nào được gọi");
+    void Close() {
+        if (hook_) UnhookWindowsHookEx(hook_);
+        hook_ = nullptr;
+        if (localBridge_) FreeLibrary(localBridge_);
+        localBridge_ = nullptr;
+        if (shared_) UnmapViewOfFile(shared_);
+        shared_ = nullptr;
+        if (mapping_) CloseHandle(mapping_);
+        mapping_ = nullptr;
+        attached_ = false;
+        outstandingSeq_ = 0;
     }
 
-    void Tick() {
-        if (state_ == FoundationState::Stopped || state_ == FoundationState::Faulted) return;
-        const auto now = Clock::now();
+    bool Attached() const { return attached_ && hook_ && shared_; }
+    bool Busy() const { return outstandingSeq_ != 0; }
+    bool LoadedInTarget() const { return shared_ && shared_->bridgeLoaded != 0; }
 
-        if (state_ == FoundationState::Attaching) {
-            std::wstring error;
-            if (!bridge_.Attach(game_, error)) {
-                Fail(error);
-                return;
-            }
-            Enter(FoundationState::ValidatingNative,
-                  L"Bridge hook đã đăng ký; chuẩn bị kiểm tra native-only");
-            if (!Send(BridgeCommand::ValidateNative, L"ValidateNative")) return;
+    bool Begin(BridgeCommand command, std::wstring& error) {
+        if (!Attached()) {
+            error = L"Bridge chưa attach";
+            return false;
         }
-
-        if (IsScannerState(state_) && pending_ == BridgeCommand::None) {
-            if (now < nextSnapshotDue_) return;
-            if (!Send(BridgeCommand::ReadGameSnapshot, L"ReadGameSnapshot", false)) return;
+        if (Busy()) {
+            error = L"Đang có probe khác; không chạy song song";
+            return false;
         }
-
-        if (pending_ == BridgeCommand::None) return;
-
-        BridgeResponse response{};
-        const auto poll = bridge_.Poll(response);
-        if (poll == BridgeClient::PollResult::Pending || poll == BridgeClient::PollResult::Idle) return;
-        if (poll == BridgeClient::PollResult::Timeout) {
-            Fail(L"Probe timeout; fail-closed, không retry spam");
-            return;
+        const LONG next = shared_->requestSeq + 1;
+        shared_->request = {};
+        shared_->request.command = static_cast<std::uint32_t>(command);
+        MemoryBarrier();
+        InterlockedExchange(&shared_->requestSeq, next);
+        outstandingSeq_ = next;
+        sentAt_ = Clock::now();
+        if (!PostThreadMessageW(game_.threadId, kWakeMessage, 0, 0)) {
+            outstandingSeq_ = 0;
+            error = L"PostThreadMessage thất bại";
+            return false;
         }
+        return true;
+    }
 
-        const BridgeCommand completed = pending_;
-        pending_ = BridgeCommand::None;
-        snapshot_.validMask |= response.snapshot.validMask;
-        if (response.snapshot.hookThreadId) snapshot_.hookThreadId = response.snapshot.hookThreadId;
-        if (response.snapshot.windowThreadId) snapshot_.windowThreadId = response.snapshot.windowThreadId;
-        if (response.snapshot.resolvedExports) snapshot_.resolvedExports = response.snapshot.resolvedExports;
-        if (response.snapshot.requiredExports) snapshot_.requiredExports = response.snapshot.requiredExports;
-        if (response.snapshot.fgMainThreadMethodCount) snapshot_.fgMainThreadMethodCount = response.snapshot.fgMainThreadMethodCount;
-        if (response.snapshot.fgMainThreadFieldCount) snapshot_.fgMainThreadFieldCount = response.snapshot.fgMainThreadFieldCount;
-        if (response.snapshot.unityDispatcherMethodCount) snapshot_.unityDispatcherMethodCount = response.snapshot.unityDispatcherMethodCount;
-        if (response.snapshot.unityDispatcherFieldCount) snapshot_.unityDispatcherFieldCount = response.snapshot.unityDispatcherFieldCount;
-        if (response.snapshot.currentManagedThreadId) snapshot_.currentManagedThreadId = response.snapshot.currentManagedThreadId;
-        if (response.snapshot.unityMainManagedThreadId) snapshot_.unityMainManagedThreadId = response.snapshot.unityMainManagedThreadId;
+    enum class PollResult { Idle, Pending, Complete, Timeout };
 
-        if (completed == BridgeCommand::ReadGameSnapshot) {
-            HandleSnapshotResponse(response, now);
-            return;
+    PollResult Poll(BridgeResponse& out) {
+        if (!Busy()) return PollResult::Idle;
+        if (shared_->completedSeq == outstandingSeq_) {
+            MemoryBarrier();
+            out = shared_->response;
+            outstandingSeq_ = 0;
+            return PollResult::Complete;
         }
-
-        AppendReport(response.detail);
-        if (!response.ok) {
-            Fail(L"Bridge validator lỗi " + std::to_wstring(response.errorCode) + L": " + std::wstring(response.detail));
-            return;
+        if (Clock::now() - sentAt_ > std::chrono::seconds(5)) {
+            outstandingSeq_ = 0;
+            return PollResult::Timeout;
         }
+        return PollResult::Pending;
+    }
 
-        if (completed == BridgeCommand::ValidateNative) {
-            Enter(FoundationState::InspectingFgMainThread,
-                  L"Native PASS; inspect metadata FGStudio.Engine.Utilities.MainThread");

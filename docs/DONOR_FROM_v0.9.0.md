@@ -1,4 +1,4 @@
-# Donor state migration from Legacy v0.9.0 (pre-NewCore) -> NewCore v1.0.8
+# Donor state migration from Legacy v0.9.0 (pre-NewCore) -> NewCore v1.0.9
 
 ## Nguyên tắc
 
@@ -6,7 +6,7 @@
 
 Legacy v0.9.0 là donor đã runtime-test cho **state semantics / state-machine guards**. NewCore không sao chép executor `Remote()` hoặc remote worker.
 
-| State | Legacy v0.9.0 donor | NewCore v1.0.8 |
+| State | Legacy v0.9.0 donor | NewCore v1.0.9 |
 |---|---|---|
 | MapID | RoleData / donor offset | managed `get_MapID()` |
 | X/Y | RoleData +0x54/+0x58 | managed getters/backing object only |
@@ -21,7 +21,7 @@ Legacy v0.9.0 là donor đã runtime-test cho **state semantics / state-machine 
 
 ## Guard được port nguyên ý nghĩa
 
-Donor đọc `MapReady/WaitingChangeMap` trước và return sớm khi scene đang chuyển. v1.0.8 áp dụng lại đúng guard này trước mọi Leader/AutoPath read.
+Donor đọc `MapReady/WaitingChangeMap` trước và return sớm khi scene đang chuyển. v1.0.9 áp dụng lại đúng guard này trước mọi Leader/AutoPath read.
 
 ## Những thứ tuyệt đối không port
 
