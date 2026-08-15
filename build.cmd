@@ -13,26 +13,44 @@ echo Zig: %ZIG_VERSION%
 
 if not exist dist mkdir dist
 del /q dist\*.exe dist\*.dll dist\*.res dist\*.lib dist\*.a >nul 2>nul
-del /q ThanLongNewCoreBridge.dll BridgeSelfTest.exe ThanLongAutoTrain_NewCore_v1.0.12.exe app.res >nul 2>nul
+del /q ThanLongNewCoreBridge.dll BridgeSelfTest.exe ControlSelfTest.exe ThanLongAutoTrain_NewCore_v1.1.0.exe app.res >nul 2>nul
 
-echo [1/6] Architecture safety audit...
+echo [1/8] Architecture + mutation safety audit...
 findstr /S /I /N /C:"CreateRemoteThread" src\*.cpp src\*.h src\*.inc >nul 2>nul
 if not errorlevel 1 goto :forbid_remote
 findstr /S /I /N /C:"il2cpp_thread_attach" src\*.cpp src\*.h src\*.inc >nul 2>nul
 if not errorlevel 1 goto :forbid_attach
 findstr /S /I /N /C:"Sleep(" src\*.cpp src\*.h src\*.inc >nul 2>nul
 if not errorlevel 1 goto :forbid_sleep
-findstr /S /I /N /C:"ClickNPC" src\*.cpp src\*.h src\*.inc >nul 2>nul
-if not errorlevel 1 goto :forbid_clicknpc
-findstr /S /I /N /C:"HandleClickEvent" src\*.cpp src\*.h src\*.inc >nul 2>nul
-if not errorlevel 1 goto :forbid_handleclick
-findstr /S /I /N /C:"StartAutoFight" src\*.cpp src\*.h src\*.inc >nul 2>nul
-if not errorlevel 1 goto :forbid_autofight
-findstr /S /I /N /C:"RequestSellItem" src\*.cpp src\*.h src\*.inc >nul 2>nul
-if not errorlevel 1 goto :forbid_sell
 findstr /I /N /C:"kGameplayMutationEnabled = false" src\controller\control_scaffold.h >nul 2>nul
 if errorlevel 1 goto :mutation_lock_missing
-echo Architecture audit PASS. Mutation lock compile-time FALSE.
+findstr /I /N /C:"kHarmlessInfrastructureProofEnabled = true" src\controller\control_scaffold.h >nul 2>nul
+if errorlevel 1 goto :harmless_proof_gate_missing
+findstr /I /N /C:"static constexpr std::size_t kCapacity = 1;" src\controller\control_scaffold.h >nul 2>nul
+if errorlevel 1 goto :queue_capacity_missing
+findstr /I /N /C:"ReadGameSnapshot = 5" src\common\protocol.h >nul 2>nul
+if errorlevel 1 goto :protocol_gate_missing
+findstr /I /N /C:"ProveHookActionEnvelope = 6" src\common\protocol.h >nul 2>nul
+if errorlevel 1 goto :harmless_command_missing
+findstr /I /N /C:"kProtocolVersion = 0x00010102u" src\common\protocol.h >nul 2>nul
+if errorlevel 1 goto :protocol_version_missing
+findstr /I /N /C:"runtime_invoke" src\bridge\action_capability_probe.inc >nul 2>nul
+if not errorlevel 1 goto :probe_mutation_path
+findstr /I /N /C:"InvokeObject(" src\bridge\action_capability_probe.inc >nul 2>nul
+if not errorlevel 1 goto :probe_mutation_path
+findstr /I /N /C:"InvokeScalar(" src\bridge\action_capability_probe.inc >nul 2>nul
+if not errorlevel 1 goto :probe_mutation_path
+findstr /I /N /C:"BridgeCommand::" src\bridge\action_capability_probe.inc >nul 2>nul
+if not errorlevel 1 goto :probe_mutation_path
+for %%T in (ClickNPC HandleClickEvent StartAutoFight RequestSellItem StartPath StopPath) do (
+  findstr /I /N /C:"%%T" src\bridge\harmless_action_envelope.inc >nul 2>nul
+  if not errorlevel 1 goto :harmless_gameplay_token
+)
+findstr /I /N /C:"runtime_invoke" src\bridge\harmless_action_envelope.inc >nul 2>nul
+if not errorlevel 1 goto :harmless_gameplay_token
+findstr /I /N /C:"ProveUnityMainThread" src\bridge\harmless_action_envelope.inc >nul 2>nul
+if errorlevel 1 goto :harmless_mainthread_gate_missing
+echo Architecture audit PASS. Gameplay mutation FALSE. Queue MAX=1. Command 6 is harmless proof only. Capability probe metadata-only.
 goto :audit_pass
 
 :forbid_remote
@@ -44,74 +62,97 @@ goto :fail
 :forbid_sleep
 echo FORBIDDEN TOKEN FOUND: Sleep(
 goto :fail
-:forbid_clicknpc
-echo FORBIDDEN TOKEN FOUND: ClickNPC
-goto :fail
-:forbid_handleclick
-echo FORBIDDEN TOKEN FOUND: HandleClickEvent
-goto :fail
-:forbid_autofight
-echo FORBIDDEN TOKEN FOUND: StartAutoFight
-goto :fail
-:forbid_sell
-echo FORBIDDEN TOKEN FOUND: RequestSellItem
-goto :fail
 :mutation_lock_missing
-echo REQUIRED MUTATION LOCK NOT FOUND OR NOT FALSE
+echo REQUIRED GAMEPLAY MUTATION LOCK NOT FOUND OR NOT FALSE
+goto :fail
+:harmless_proof_gate_missing
+echo HARMLESS INFRASTRUCTURE PROOF GATE NOT FOUND OR NOT TRUE
+goto :fail
+:queue_capacity_missing
+echo REQUIRED ACTION QUEUE CAPACITY=1 NOT FOUND
+goto :fail
+:protocol_gate_missing
+echo READ SNAPSHOT COMMAND GATE NOT FOUND
+goto :fail
+:harmless_command_missing
+echo HARMLESS PROOF COMMAND=6 NOT FOUND
+goto :fail
+:protocol_version_missing
+echo PROTOCOL VERSION 0x00010102 NOT FOUND
+goto :fail
+:probe_mutation_path
+echo ACTION CAPABILITY PROBE MUST STAY METADATA-ONLY
+goto :fail
+:harmless_gameplay_token
+echo HARMLESS ACTION ENVELOPE CONTAINS FORBIDDEN GAMEPLAY/INVOKE TOKEN
+goto :fail
+:harmless_mainthread_gate_missing
+echo HARMLESS ACTION ENVELOPE MUST RE-PROVE UNITY MAIN THREAD
 goto :fail
 
 :audit_pass
 
-echo [2/6] Resource...
+echo [2/8] Compile deterministic integrated control self-test...
+zig c++ -target x86_64-windows-gnu -O2 -std=c++17 -DUNICODE -D_UNICODE ^
+  -Wall -Wextra -Werror -municode -static ^
+  src\controller\control_selftest.cpp -o ControlSelfTest.exe
+if errorlevel 1 goto :fail
+
+echo [3/8] Run integrated FSM/Guard/Queue/Watchdog/Postcondition/HarmlessEnvelope self-test...
+ControlSelfTest.exe
+if errorlevel 1 (
+  echo CONTROL SELF TEST FAILED. FAIL-CLOSED.
+  goto :fail
+)
+
+echo [4/8] Resource...
 pushd resources
 zig rc /c 65001 /fo ..\app.res app.rc
 popd
 if errorlevel 1 goto :fail
 
-echo [3/6] Bridge DLL - proven read-only scanner runtime...
-rem Bridge stays on the already-proven hook/main thread. No gameplay action command is added in v1.0.12.
+echo [5/8] Bridge DLL - scanner/main-thread + metadata resolver + harmless hook envelope...
 zig c++ -target x86_64-windows-gnu -O2 -std=c++17 -DUNICODE -D_UNICODE ^
   -Wall -Wextra -Werror -fno-exceptions -fno-rtti -shared ^
   src\bridge\bridge.cpp -luser32 -lkernel32 -o ThanLongNewCoreBridge.dll
 if errorlevel 1 goto :fail
 if not exist ThanLongNewCoreBridge.dll goto :fail
 
-echo [4/6] Bridge LoadLibrary self-test...
+echo [6/8] Bridge LoadLibrary self-test...
 zig c++ -target x86_64-windows-gnu -O2 -std=c++17 -DUNICODE -D_UNICODE ^
   -Wall -Wextra -Werror -municode -static ^
   src\bridge\selftest.cpp -lkernel32 -o BridgeSelfTest.exe
 if errorlevel 1 goto :fail
 BridgeSelfTest.exe "%CD%\ThanLongNewCoreBridge.dll"
 if errorlevel 1 (
-  echo.
-  echo LOI: DLL vua build khong LoadLibrary duoc tren chinh Windows nay.
-  echo DUNG BUILD tai day; khong chay controller voi DLL loi.
+  echo LOI: DLL vua build khong LoadLibrary duoc tren Windows runner.
   goto :fail
 )
 
-echo [5/6] Controller EXE - SafetyGuard + ActionQueue MAX=1 + FSM DRY-RUN...
+echo [7/8] Controller EXE - v1.1.0 Integrated Acceptance...
 zig c++ -target x86_64-windows-gnu -O2 -std=c++17 -DUNICODE -D_UNICODE -Wall -Wextra -Werror -municode -static ^
   src\controller\main.cpp app.res ^
   -Wl,--subsystem,windows -lcomctl32 -luser32 -lkernel32 -lgdi32 ^
-  -o ThanLongAutoTrain_NewCore_v1.0.12.exe
+  -o ThanLongAutoTrain_NewCore_v1.1.0.exe
 if errorlevel 1 goto :fail
 
-echo [6/6] Package...
+echo [8/8] Package...
 move /y ThanLongNewCoreBridge.dll dist\ThanLongNewCoreBridge.dll >nul
-move /y ThanLongAutoTrain_NewCore_v1.0.12.exe dist\ThanLongAutoTrain_NewCore_v1.0.12.exe >nul
+move /y ThanLongAutoTrain_NewCore_v1.1.0.exe dist\ThanLongAutoTrain_NewCore_v1.1.0.exe >nul
 move /y app.res dist\app.res >nul
-del /q BridgeSelfTest.exe >nul 2>nul
+del /q BridgeSelfTest.exe ControlSelfTest.exe >nul 2>nul
 
 echo.
-echo BUILD + LOADLIBRARY SELFTEST THANH CONG:
-echo   dist\ThanLongAutoTrain_NewCore_v1.0.12.exe
+echo BUILD + ALL AUTOMATED SELF-TESTS PASS:
+echo   dist\ThanLongAutoTrain_NewCore_v1.1.0.exe
 echo   dist\ThanLongNewCoreBridge.dll
 echo.
-echo v1.0.12: SafetyGuard + ActionQueue MAX=1 + FSM scaffold DRY-RUN.
-echo GAMEPLAY MUTATION VAN KHOA COMPILE-TIME; KHONG CO ACTION GAME DUOC PHAT.
+echo Gameplay mutation is STILL compile-time disabled.
+echo Harmless hook/main-thread action envelope is infrastructure-only and has no gameplay call.
+echo Current-client gameplay action support remains metadata-only/donor-only until later runtime proof.
 exit /b 0
 
 :fail
 echo.
-echo BUILD/SELFTEST THAT BAI. KHONG DUNG DLL neu self-test khong PASS.
+echo BUILD/SELFTEST THAT BAI. FAIL-CLOSED; KHONG DUNG ARTIFACT.
 exit /b 1

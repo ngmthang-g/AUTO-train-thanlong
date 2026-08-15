@@ -1,3 +1,4 @@
+        g_harmlessProofTrackers[game_.pid] = {};
         report_.clear();
         snapshot_ = {};
         gameSnapshot_ = {};
@@ -56,6 +57,7 @@
         lastGuardBlockReason_.clear();
         nextSnapshotDue_ = Clock::time_point{};
         report_.clear();
+        g_harmlessProofTrackers.erase(game_.pid);
         Enter(FoundationState::Stopped, L"Đã ngắt bridge; scanner dừng; không có action game nào được gọi");
     }
 

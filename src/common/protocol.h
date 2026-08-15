@@ -6,7 +6,7 @@
 namespace tlcore {
 
 constexpr std::uint32_t kMagic = 0x544C4E43u; // TLNC
-constexpr std::uint32_t kProtocolVersion = 0x0001000Cu;
+constexpr std::uint32_t kProtocolVersion = 0x00010102u;
 constexpr UINT kWakeMessage = WM_APP + 0x4A1;
 constexpr wchar_t kMappingPrefix[] = L"Local\\ThanLongNewCore_";
 
@@ -17,6 +17,7 @@ enum class BridgeCommand : std::uint32_t {
     InspectUnityDispatcher = 3,
     ProveUnityMainThread = 4,
     ReadGameSnapshot = 5,
+    ProveHookActionEnvelope = 6,
 };
 
 enum FoundationValid : std::uint32_t {
@@ -40,6 +41,80 @@ struct FoundationSnapshot {
     std::uint32_t unityDispatcherFieldCount = 0;
     std::int32_t currentManagedThreadId = 0;
     std::int32_t unityMainManagedThreadId = 0;
+};
+
+enum ActionMetadataCapability : std::uint32_t {
+    CapUiObjectType                   = 1u << 0,
+    CapUiObjectInstances              = 1u << 1,
+    CapUiObjectActive                 = 1u << 2,
+    CapUiObjectChildren               = 1u << 3,
+    CapUiButtonType                   = 1u << 4,
+    CapUiButtonInteractable           = 1u << 5,
+    CapUiButtonText                   = 1u << 6,
+    CapUiButtonHandleClick            = 1u << 7,
+    CapUiToggleType                   = 1u << 8,
+    CapUiToggleSelected               = 1u << 9,
+    CapUiToggleSetSelected            = 1u << 10,
+    CapUiToggleHandleSelect           = 1u << 11,
+    CapGameApiType                    = 1u << 12,
+    CapClickNpc                       = 1u << 13,
+    CapGetNearestNpc                  = 1u << 14,
+    CapBagFreeSpace                   = 1u << 15,
+    CapGetItemsAtSite                 = 1u << 16,
+    CapGetItemData                    = 1u << 17,
+    CapGetItemType                    = 1u << 18,
+    CapGetEquipType                   = 1u << 19,
+    CapIsItemSellable                 = 1u << 20,
+    CapMonoExecutorType               = 1u << 21,
+    CapMonoExecutorInstanceGetter     = 1u << 22,
+    CapMonoExecutorExecuteScript      = 1u << 23,
+    CapMainThreadType                 = 1u << 24,
+    CapMainThreadInstanceGetter       = 1u << 25,
+    CapMainThreadExecuteAction        = 1u << 26,
+    CapUnityDispatcherType            = 1u << 27,
+    CapUnityDispatcherInstanceGetter  = 1u << 28,
+    CapUnityDispatcherEnqueueAction   = 1u << 29,
+    CapUnityDispatcherDispatchAction  = 1u << 30,
+};
+
+constexpr std::uint32_t kReviveMetadataSupportMask =
+    CapUiObjectType | CapUiObjectInstances | CapUiObjectActive | CapUiObjectChildren |
+    CapUiButtonType | CapUiButtonInteractable | CapUiButtonText | CapUiButtonHandleClick;
+
+constexpr std::uint32_t kToggleMetadataSupportMask =
+    CapUiToggleType | CapUiToggleSelected | CapUiToggleSetSelected | CapUiToggleHandleSelect;
+
+constexpr std::uint32_t kNpcMetadataSupportMask =
+    CapGameApiType | CapClickNpc | CapGetNearestNpc;
+
+constexpr std::uint32_t kInventoryMetadataSupportMask =
+    CapGameApiType | CapBagFreeSpace | CapGetItemsAtSite | CapGetItemData;
+
+constexpr std::uint32_t kSellClassificationMetadataSupportMask =
+    kInventoryMetadataSupportMask | CapGetItemType | CapGetEquipType | CapIsItemSellable;
+
+constexpr std::uint32_t kLuaExecutorMetadataSupportMask =
+    CapMonoExecutorType | CapMonoExecutorInstanceGetter | CapMonoExecutorExecuteScript;
+
+constexpr std::uint32_t kMainThreadDispatcherMetadataSupportMask =
+    CapMainThreadType | CapMainThreadInstanceGetter | CapMainThreadExecuteAction;
+
+constexpr std::uint32_t kUnityDispatcherMetadataSupportMask =
+    CapUnityDispatcherType | CapUnityDispatcherInstanceGetter |
+    CapUnityDispatcherEnqueueAction | CapUnityDispatcherDispatchAction;
+
+struct ActionCapabilitySnapshot {
+    std::uint32_t probeVersion = 0;
+    std::uint32_t metadataMask = 0;
+};
+
+struct InfrastructureProofSnapshot {
+    std::uint64_t token = 0;
+    std::uint32_t sequence = 0;
+    std::uint32_t callbackThreadId = 0;
+    std::int32_t currentManagedThreadId = 0;
+    std::int32_t unityMainManagedThreadId = 0;
+    std::int32_t completed = 0;
 };
 
 enum GameSnapshotValid : std::uint32_t {
@@ -75,8 +150,6 @@ constexpr std::uint32_t kRequiredGameCoreMask =
     ValidRideState | ValidAutoFightState | ValidBagSpace | ValidMapReadyState |
     ValidMapTransitionState;
 
-// v1.0.12 observer parity gate remains read-only. The new controller-side
-// SafetyGuard/ActionQueue/FSM scaffold consumes these states but does not mutate gameplay.
 constexpr std::uint32_t kRequiredObserverStableMask =
     kRequiredGameCoreMask | ValidPosition | ValidMovingState | ValidAutoPathState;
 
@@ -112,6 +185,8 @@ struct BridgeResponse {
     std::int32_t ok = 0;
     std::int32_t errorCode = 0;
     FoundationSnapshot snapshot{};
+    ActionCapabilitySnapshot actionCapabilities{};
+    InfrastructureProofSnapshot infrastructureProof{};
     GameSnapshot gameSnapshot{};
     wchar_t detail[1024]{};
 };

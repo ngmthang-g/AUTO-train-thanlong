@@ -14,21 +14,21 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.15.2
-      - name: Build
+      - name: Build and integrated self-test
         shell: cmd
         run: build.cmd
       - name: Verify
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          $exe='dist/ThanLongAutoTrain_NewCore_v1.0.12.exe'
+          $exe='dist/ThanLongAutoTrain_NewCore_v1.1.0.exe'
           $dll='dist/ThanLongNewCoreBridge.dll'
           if (!(Test-Path $exe)) { throw 'Missing EXE' }
           if (!(Test-Path $dll)) { throw 'Missing bridge DLL' }
           Get-FileHash -Algorithm SHA256 $exe,$dll | Format-Table -AutoSize
       - uses: actions/upload-artifact@v4
         with:
-          name: ThanLongAutoTrain_NewCore_v1.0.12
+          name: ThanLongAutoTrain_NewCore_v1.1.0
           path: |
-            dist/ThanLongAutoTrain_NewCore_v1.0.12.exe
+            dist/ThanLongAutoTrain_NewCore_v1.1.0.exe
             dist/ThanLongNewCoreBridge.dll
