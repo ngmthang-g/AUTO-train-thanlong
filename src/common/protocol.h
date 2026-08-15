@@ -6,7 +6,7 @@
 namespace tlcore {
 
 constexpr std::uint32_t kMagic = 0x544C4E43u; // TLNC
-constexpr std::uint32_t kProtocolVersion = 0x00010102u;
+constexpr std::uint32_t kProtocolVersion = 0x00010200u;
 constexpr UINT kWakeMessage = WM_APP + 0x4A1;
 constexpr wchar_t kMappingPrefix[] = L"Local\\ThanLongNewCore_";
 
@@ -18,6 +18,7 @@ enum class BridgeCommand : std::uint32_t {
     ProveUnityMainThread = 4,
     ReadGameSnapshot = 5,
     ProveHookActionEnvelope = 6,
+    InvokeReviveButton = 7,
 };
 
 enum FoundationValid : std::uint32_t {
@@ -117,6 +118,19 @@ struct InfrastructureProofSnapshot {
     std::int32_t completed = 0;
 };
 
+struct ReviveActionSnapshot {
+    std::uint64_t token = 0;
+    std::uint32_t callbackThreadId = 0;
+    std::int32_t currentManagedThreadId = 0;
+    std::int32_t unityMainManagedThreadId = 0;
+    std::int32_t preRoleID = 0;
+    std::int32_t preMapID = 0;
+    std::int32_t preDead = 0;
+    std::int32_t buttonScore = 0;
+    std::int32_t invoked = 0;
+    wchar_t buttonLabel[96]{};
+};
+
 enum GameSnapshotValid : std::uint32_t {
     ValidRoleIdentity       = 1u << 0,
     ValidMapId              = 1u << 1,
@@ -187,6 +201,7 @@ struct BridgeResponse {
     FoundationSnapshot snapshot{};
     ActionCapabilitySnapshot actionCapabilities{};
     InfrastructureProofSnapshot infrastructureProof{};
+    ReviveActionSnapshot reviveAction{};
     GameSnapshot gameSnapshot{};
     wchar_t detail[1024]{};
 };

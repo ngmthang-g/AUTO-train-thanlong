@@ -14,6 +14,7 @@
 #include <chrono>
 #include "../common/protocol.h"
 #include "control_scaffold.h"
+#include "revive_control_gate.h"
 
 using namespace tlcore;
 using namespace tlcontrol;
@@ -31,7 +32,7 @@ bool ResolveProcAddress(HMODULE module, const char* name, T& out) {
     return out != nullptr;
 }
 
-constexpr wchar_t kTitle[] = L"Thần Long Auto - NewCore v1.1.0 Integrated Acceptance";
+constexpr wchar_t kTitle[] = L"Thần Long Auto - NewCore v1.2.0 Revive Action";
 constexpr wchar_t kModule[] = L"GameAssembly.dll";
 constexpr int IDC_LIST = 1001;
 constexpr int IDC_SCAN = 1002;

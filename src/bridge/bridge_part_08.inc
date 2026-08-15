@@ -17,6 +17,7 @@
 
 #include "action_capability_probe.inc"
 #include "harmless_action_envelope.inc"
+#include "revive_action_engine.inc"
 
 void SetDetail(BridgeResponse& response, const wchar_t* text) {
     CopyText(response.detail, _countof(response.detail), text ? text : L"");
@@ -86,6 +87,11 @@ void ProcessRequest() {
             ok = ProveHarmlessActionEnvelope(g_shared->request, snap, response.infrastructureProof,
                                               detail, _countof(detail));
             response.errorCode = ok ? 0 : 2601;
+            break;
+        case BridgeCommand::InvokeReviveButton:
+            ok = InvokeReviveButtonAction(g_shared->request, snap, response.reviveAction,
+                                           game, detail, _countof(detail));
+            response.errorCode = ok ? 0 : 2701;
             break;
         default:
             CopyText(detail, _countof(detail), L"Command không hợp lệ"); response.errorCode = 2003; break;

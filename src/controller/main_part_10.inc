@@ -25,10 +25,12 @@
             recoveryCandidateMapID_ = gameSnapshot_.mapID;
             postTransitionStableScans_ = 1;
             state_ = FoundationState::WaitingStableMap;
-            actionQueue_.Clear();
+            if (!ApplyTransitionQueueBoundary(L"identity")) return;
             lastGuardBlockReason_.clear();
             SetControlFsmState(ControlFsmState::MapTransition,
-                               L"source=identity; queue cleared; fail-closed");
+                               reviveAwaitingPost_
+                                   ? L"source=identity; active Revive preserved; all new mutations locked"
+                                   : L"source=identity; queue cleared; fail-closed");
             EmitCoverageIfChanged(coverageBefore);
             events_.push_back(
                 L"PID " + std::to_wstring(game_.pid) +
@@ -91,6 +93,7 @@
             transitionFlagJoinedLogged_ = false;
             recoveryCandidateValid_ = false;
             postTransitionStableScans_ = 0;
+            reviveTransitionPreserveLogged_ = false;
             events_.push_back(
                 L"PID " + std::to_wstring(game_.pid) +
                 L": MAP RECOVERY PASS 2/2 • source=" + recoveredSource +
