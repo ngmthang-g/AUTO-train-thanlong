@@ -29,7 +29,7 @@ bool ResolveProcAddress(HMODULE module, const char* name, T& out) {
     return out != nullptr;
 }
 
-constexpr wchar_t kTitle[] = L"Thần Long Auto - NewCore v1.0.6 MainThread Proof";
+constexpr wchar_t kTitle[] = L"Thần Long Auto - NewCore v1.0.7 Read-Only Snapshot";
 constexpr wchar_t kModule[] = L"GameAssembly.dll";
 constexpr int IDC_LIST = 1001;
 constexpr int IDC_SCAN = 1002;
@@ -241,7 +241,8 @@ enum class FoundationState {
     InspectingFgMainThread,
     InspectingUnityDispatcher,
     ProvingUnityMainThread,
-    ReadyForNextPhase,
+    ReadingSnapshot,
+    SnapshotReady,
     Faulted,
 };
 
@@ -253,7 +254,8 @@ const wchar_t* StateName(FoundationState state) {
         case FoundationState::InspectingFgMainThread: return L"Inspect FG MainThread";
         case FoundationState::InspectingUnityDispatcher: return L"Inspect Unity Dispatcher";
         case FoundationState::ProvingUnityMainThread: return L"Chứng minh MainThread";
-        case FoundationState::ReadyForNextPhase: return L"MAINTHREAD PASS";
+        case FoundationState::ReadingSnapshot: return L"Đọc Snapshot";
+        case FoundationState::SnapshotReady: return L"SNAPSHOT PASS";
         case FoundationState::Faulted: return L"VALIDATOR FAIL";
     }
     return L"?";
@@ -267,6 +269,7 @@ public:
     const GameProcess& Game() const { return game_; }
     FoundationState State() const { return state_; }
     const FoundationSnapshot& Snapshot() const { return snapshot_; }
+    const GameSnapshot& GameState() const { return gameSnapshot_; }
     const std::wstring& Detail() const { return detail_; }
     bool BridgeLoaded() const { return bridge_.LoadedInTarget(); }
 
@@ -275,9 +278,11 @@ public:
             state_ == FoundationState::ValidatingNative ||
             state_ == FoundationState::InspectingFgMainThread ||
             state_ == FoundationState::InspectingUnityDispatcher ||
-            state_ == FoundationState::ProvingUnityMainThread) return;
+            state_ == FoundationState::ProvingUnityMainThread ||
+            state_ == FoundationState::ReadingSnapshot) return;
         report_.clear();
         snapshot_ = {};
+        gameSnapshot_ = {};
         Enter(FoundationState::Attaching, L"Bắt đầu kiểm tra nền read-only");
     }
 
@@ -285,13 +290,14 @@ public:
         bridge_.Close();
         pending_ = BridgeCommand::None;
         snapshot_ = {};
+        gameSnapshot_ = {};
         report_.clear();
         Enter(FoundationState::Stopped, L"Đã ngắt bridge; không có action game nào được gọi");
     }
 
     void Tick() {
         if (state_ == FoundationState::Stopped ||
-            state_ == FoundationState::ReadyForNextPhase ||
+            state_ == FoundationState::SnapshotReady ||
             state_ == FoundationState::Faulted) return;
 
         if (state_ == FoundationState::Attaching) {
@@ -328,6 +334,7 @@ public:
         if (response.snapshot.unityDispatcherFieldCount) snapshot_.unityDispatcherFieldCount = response.snapshot.unityDispatcherFieldCount;
         if (response.snapshot.currentManagedThreadId) snapshot_.currentManagedThreadId = response.snapshot.currentManagedThreadId;
         if (response.snapshot.unityMainManagedThreadId) snapshot_.unityMainManagedThreadId = response.snapshot.unityMainManagedThreadId;
+        if (completed == BridgeCommand::ReadGameSnapshot) gameSnapshot_ = response.gameSnapshot;
 
         AppendReport(response.detail);
         if (!response.ok) {
@@ -358,8 +365,18 @@ public:
                 Fail(L"MainThread proof không đặt ValidUnityMainThread; fail-closed");
                 return;
             }
-            Enter(FoundationState::ReadyForNextPhase,
-                  L"MAINTHREAD PROVEN. Đường hook-message chạy trên Unity managed main thread; CHƯA mở action game.");
+            Enter(FoundationState::ReadingSnapshot,
+                  L"MAINTHREAD PROVEN; đọc một GameSnapshot read-only, chưa có action game");
+            Send(BridgeCommand::ReadGameSnapshot, L"ReadGameSnapshot");
+            return;
+        }
+        if (completed == BridgeCommand::ReadGameSnapshot) {
+            if ((gameSnapshot_.validMask & kRequiredGameCoreMask) != kRequiredGameCoreMask) {
+                Fail(L"Snapshot không đủ core valid mask; fail-closed");
+                return;
+            }
+            Enter(FoundationState::SnapshotReady,
+                  L"SNAPSHOT PASS. State Store đã có dữ liệu read-only; action game vẫn KHÓA.");
             return;
         }
     }
@@ -411,6 +428,7 @@ private:
     FoundationState state_ = FoundationState::Stopped;
     BridgeCommand pending_ = BridgeCommand::None;
     FoundationSnapshot snapshot_{};
+    GameSnapshot gameSnapshot_{};
     std::wstring detail_ = L"Đã dừng";
     std::wstring report_{};
     std::deque<std::wstring> events_{};
@@ -451,31 +469,36 @@ void RebuildList() {
         item.lParam = pid;
         ListView_InsertItem(g_list, &item);
 
-        const auto& s = session->Snapshot();
-        std::wstring title = session->Game().title;
+        const auto& f = session->Snapshot();
+        const auto& g = session->GameState();
+        std::wstring title = (g.validMask & ValidCharacterName) && g.characterName[0]
+            ? std::wstring(g.characterName) : session->Game().title;
         std::wstring bridge = session->BridgeLoaded() ? L"LOADED" : L"NO";
-        std::wstring tid = s.hookThreadId ?
-            (std::to_wstring(s.hookThreadId) + L"/" + std::to_wstring(s.windowThreadId)) : L"?";
-        std::wstring il2cpp = s.requiredExports ?
-            (std::to_wstring(s.resolvedExports) + L"/" + std::to_wstring(s.requiredExports)) : L"?";
-        std::wstring fg = (s.validMask & ValidFgMainThreadType) ?
-            (L"M" + std::to_wstring(s.fgMainThreadMethodCount) + L" F" + std::to_wstring(s.fgMainThreadFieldCount)) : L"?";
-        std::wstring ud = (s.validMask & ValidUnityDispatcher) ?
-            (L"M" + std::to_wstring(s.unityDispatcherMethodCount) + L" F" + std::to_wstring(s.unityDispatcherFieldCount)) : L"?";
-        std::wstring mainThread = (s.validMask & ValidUnityMainThread)
-            ? (L"PROVEN M" + std::to_wstring(s.currentManagedThreadId))
-            : L"LOCKED";
+        std::wstring mainThread = (f.validMask & ValidUnityMainThread)
+            ? (L"PROVEN M" + std::to_wstring(f.currentManagedThreadId)) : L"LOCKED";
+        std::wstring role = (g.validMask & ValidRoleIdentity) ? std::to_wstring(g.roleID) : L"?";
+        std::wstring map = (g.validMask & ValidMapId) ? std::to_wstring(g.mapID) : L"?";
+        std::wstring pos = (g.validMask & ValidPosition)
+            ? (std::to_wstring(g.x) + L"," + std::to_wstring(g.y)) : L"?";
+        std::wstring hp = (g.validMask & ValidVitals)
+            ? (std::to_wstring(g.hp) + L"/" + std::to_wstring(g.maxHP)) : L"?";
+        std::wstring bag = (g.validMask & ValidBagSpace) ? std::to_wstring(g.freeBagSpace) : L"?";
+        std::wstring dead = (g.validMask & ValidLifeState) ? (g.dead ? L"YES" : L"NO") : L"?";
+        std::wstring autoFight = (g.validMask & ValidAutoFightState) ? (g.autoFight ? L"ON" : L"OFF") : L"?";
         std::wstring detail = session->Detail();
 
         ListView_SetItemText(g_list, row, 1, title.data());
         ListView_SetItemText(g_list, row, 2, const_cast<wchar_t*>(StateName(session->State())));
         ListView_SetItemText(g_list, row, 3, bridge.data());
-        ListView_SetItemText(g_list, row, 4, tid.data());
-        ListView_SetItemText(g_list, row, 5, il2cpp.data());
-        ListView_SetItemText(g_list, row, 6, fg.data());
-        ListView_SetItemText(g_list, row, 7, ud.data());
-        ListView_SetItemText(g_list, row, 8, mainThread.data());
-        ListView_SetItemText(g_list, row, 9, detail.data());
+        ListView_SetItemText(g_list, row, 4, mainThread.data());
+        ListView_SetItemText(g_list, row, 5, role.data());
+        ListView_SetItemText(g_list, row, 6, map.data());
+        ListView_SetItemText(g_list, row, 7, pos.data());
+        ListView_SetItemText(g_list, row, 8, hp.data());
+        ListView_SetItemText(g_list, row, 9, bag.data());
+        ListView_SetItemText(g_list, row, 10, dead.data());
+        ListView_SetItemText(g_list, row, 11, autoFight.data());
+        ListView_SetItemText(g_list, row, 12, detail.data());
         if (checked.count(pid)) ListView_SetCheckState(g_list, row, TRUE);
         ++row;
     }
@@ -520,11 +543,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                                    12, 12, 1160, 260, hwnd, reinterpret_cast<HMENU>(IDC_LIST), nullptr, nullptr);
             ListView_SetExtendedListViewStyle(g_list, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_CHECKBOXES);
             const wchar_t* names[] = {
-                L"PID", L"Client", L"Trạng thái", L"Bridge", L"Hook/Window TID",
-                L"IL2CPP", L"FG MainThread", L"UnityDispatcher", L"MainThread", L"Chi tiết"
+                L"PID", L"Nhân vật", L"Trạng thái", L"Bridge", L"MainThread",
+                L"RoleID", L"Map", L"X,Y", L"HP", L"Bag", L"Dead", L"AutoFight", L"Chi tiết"
             };
-            int widths[] = {80, 190, 170, 90, 140, 80, 120, 130, 100, 430};
-            for (int i = 0; i < 10; ++i) {
+            int widths[] = {75, 160, 135, 85, 110, 85, 65, 105, 130, 70, 65, 80, 430};
+            for (int i = 0; i < 13; ++i) {
                 LVCOLUMNW c{};
                 c.mask = LVCF_TEXT | LVCF_WIDTH;
                 c.pszText = const_cast<wchar_t*>(names[i]);
@@ -534,12 +557,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
             CreateWindowW(L"BUTTON", L"Quét client", WS_CHILD | WS_VISIBLE,
                           12, 284, 120, 34, hwnd, reinterpret_cast<HMENU>(IDC_SCAN), nullptr, nullptr);
-            CreateWindowW(L"BUTTON", L"Chứng minh nền", WS_CHILD | WS_VISIBLE,
+            CreateWindowW(L"BUTTON", L"Kiểm tra nền + Snapshot", WS_CHILD | WS_VISIBLE,
                           144, 284, 140, 34, hwnd, reinterpret_cast<HMENU>(IDC_VALIDATE), nullptr, nullptr);
             CreateWindowW(L"BUTTON", L"Ngắt bridge", WS_CHILD | WS_VISIBLE,
                           296, 284, 130, 34, hwnd, reinterpret_cast<HMENU>(IDC_DISCONNECT), nullptr, nullptr);
             CreateWindowW(L"STATIC",
-                          L"Phase 2: MAINTHREAD PROOF. Chỉ runtime_invoke các getter read-only; không gọi hành động game.",
+                          L"Phase 3: READ-ONLY SNAPSHOT. MainThread phải PROVEN; chỉ gọi query/getter; action game vẫn khóa.",
                           WS_CHILD | WS_VISIBLE, 448, 292, 720, 26, hwnd, nullptr, nullptr, nullptr);
             g_log = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL |
                                     ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL,
@@ -558,7 +581,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     auto it = g_sessions.find(pid);
                     if (it != g_sessions.end()) it->second->ValidateWanted();
                 }
-                Log(L"Bắt đầu foundation + Unity main-thread proof cho các client đã tick");
+                Log(L"Bắt đầu foundation + main-thread proof + snapshot read-only cho các client đã tick");
                 return 0;
             }
             if (LOWORD(wp) == IDC_DISCONNECT) {

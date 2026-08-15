@@ -1,15 +1,16 @@
-# FIRST RUNTIME TEST - v1.0.6
+# First runtime test - v1.0.7
 
-Ban nay KHONG goi game action.
+Expected sequence:
 
-PASS mong doi:
-- Bridge = LOADED
-- Hook/Window TID: hai so giong nhau
-- IL2CPP = 22/22
-- FG MainThread = M9 F2 (hoac metadata count tuong ung)
-- UnityDispatcher = M6 F3 (hoac metadata count tuong ung)
-- MainThread = PROVEN M<managed-id>
-- Trang thai = MAINTHREAD PASS
-- Log co dong `MAINTHREAD PROVEN` va `managed current/main=X/X`
+1. ValidateNative PASS
+2. InspectFgMainThread PASS
+3. InspectUnityDispatcher PASS
+4. MAINTHREAD PROVEN
+5. ReadGameSnapshot
+6. SNAPSHOT PASS
 
-Neu MainThread van LOCKED/FAIL: gui toan bo log. Khong retry spam.
+Expected UI core fields: RoleID, Map, HP, Bag, Dead, AutoFight.
+
+`X,Y` is optional in this probe. If it is `?`, send the full log; the next step is to inspect the managed role backing type, not to restore hardcoded offsets.
+
+If any core field fails, the session enters VALIDATOR FAIL and closes the bridge. This is intentional fail-closed behavior.

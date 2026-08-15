@@ -6,7 +6,7 @@
 namespace tlcore {
 
 constexpr std::uint32_t kMagic = 0x544C4E43u; // TLNC
-constexpr std::uint32_t kProtocolVersion = 0x00010006u;
+constexpr std::uint32_t kProtocolVersion = 0x00010007u;
 constexpr UINT kWakeMessage = WM_APP + 0x4A1;
 constexpr wchar_t kMappingPrefix[] = L"Local\\ThanLongNewCore_";
 
@@ -16,6 +16,7 @@ enum class BridgeCommand : std::uint32_t {
     InspectFgMainThread = 2,
     InspectUnityDispatcher = 3,
     ProveUnityMainThread = 4,
+    ReadGameSnapshot = 5,
 };
 
 enum FoundationValid : std::uint32_t {
@@ -41,6 +42,44 @@ struct FoundationSnapshot {
     std::int32_t unityMainManagedThreadId = 0;
 };
 
+enum GameSnapshotValid : std::uint32_t {
+    ValidRoleIdentity       = 1u << 0,
+    ValidMapId              = 1u << 1,
+    ValidPosition           = 1u << 2,
+    ValidVitals             = 1u << 3,
+    ValidLifeState          = 1u << 4,
+    ValidRideState          = 1u << 5,
+    ValidAutoFightState     = 1u << 6,
+    ValidBagSpace           = 1u << 7,
+    ValidMapReadyState      = 1u << 8,
+    ValidMapTransitionState = 1u << 9,
+    ValidMovingState        = 1u << 10,
+    ValidCharacterName      = 1u << 11,
+};
+
+constexpr std::uint32_t kRequiredGameCoreMask =
+    ValidRoleIdentity | ValidMapId | ValidVitals | ValidLifeState |
+    ValidRideState | ValidAutoFightState | ValidBagSpace | ValidMapReadyState;
+
+struct GameSnapshot {
+    std::uint32_t validMask = 0;
+    std::uint32_t sequence = 0;
+    std::int32_t roleID = 0;
+    std::int32_t mapID = 0;
+    std::int32_t x = 0;
+    std::int32_t y = 0;
+    std::int32_t hp = 0;
+    std::int32_t maxHP = 0;
+    std::int32_t freeBagSpace = -1;
+    std::int32_t dead = 0;
+    std::int32_t riding = 0;
+    std::int32_t autoFight = 0;
+    std::int32_t moving = 0;
+    std::int32_t mapReady = 0;
+    std::int32_t waitingChangeMap = 0;
+    wchar_t characterName[64]{};
+};
+
 struct BridgeRequest {
     std::uint32_t command = 0;
     std::int32_t intArg0 = 0;
@@ -52,6 +91,7 @@ struct BridgeResponse {
     std::int32_t ok = 0;
     std::int32_t errorCode = 0;
     FoundationSnapshot snapshot{};
+    GameSnapshot gameSnapshot{};
     wchar_t detail[1024]{};
 };
 

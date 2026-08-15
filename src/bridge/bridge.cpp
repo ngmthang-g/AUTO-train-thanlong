@@ -19,6 +19,7 @@ using FieldInfo = void;
 using Il2CppType = void;
 using Il2CppObject = void;
 using Il2CppThread = void;
+using Il2CppString = void;
 
 template <typename T>
 bool ResolveProcAddress(HMODULE module, const char* name, T& out) {
@@ -104,8 +105,16 @@ struct Il2CppApi {
     const char* (__cdecl* class_get_name)(Il2CppClass*) = nullptr;
     const char* (__cdecl* class_get_namespace)(Il2CppClass*) = nullptr;
     void* (__cdecl* object_unbox)(Il2CppObject*) = nullptr;
+    Il2CppClass* (__cdecl* class_get_parent)(Il2CppClass*) = nullptr;
+    FieldInfo* (__cdecl* class_get_field_from_name)(Il2CppClass*, const char*) = nullptr;
+    void (__cdecl* field_get_value)(Il2CppObject*, FieldInfo*, void*) = nullptr;
+    const Il2CppType* (__cdecl* method_get_return_type)(const MethodInfo*) = nullptr;
+    std::int32_t (__cdecl* string_length)(Il2CppString*) = nullptr;
+    const wchar_t* (__cdecl* string_chars)(Il2CppString*) = nullptr;
+    Il2CppClass* (__cdecl* class_from_type)(const Il2CppType*) = nullptr;
+    bool (__cdecl* class_is_valuetype)(const Il2CppClass*) = nullptr;
     std::uint32_t resolved = 0;
-    static constexpr std::uint32_t required = 22;
+    static constexpr std::uint32_t required = 30;
 
     bool Load(wchar_t* detail, std::size_t cap) {
         if (gameAssembly && resolved == required) return true;
@@ -145,6 +154,14 @@ struct Il2CppApi {
         RESOLVE_COUNT2(class_get_name);
         RESOLVE_COUNT2(class_get_namespace);
         RESOLVE_COUNT2(object_unbox);
+        RESOLVE_COUNT2(class_get_parent);
+        RESOLVE_COUNT2(class_get_field_from_name);
+        RESOLVE_COUNT2(field_get_value);
+        RESOLVE_COUNT2(method_get_return_type);
+        RESOLVE_COUNT2(string_length);
+        RESOLVE_COUNT2(string_chars);
+        RESOLVE_COUNT2(class_from_type);
+        RESOLVE_COUNT2(class_is_valuetype);
 #undef RESOLVE_COUNT2
         CopyText(detail, cap, L"IL2CPP foundation exports OK");
         return true;
@@ -398,6 +415,245 @@ bool ProveUnityMainThread(FoundationSnapshot& snap, wchar_t* detail, std::size_t
     return true;
 }
 
+
+const MethodInfo* FindMethodInHierarchy(Il2CppClass* klass, const char* name, int argc) {
+    for (Il2CppClass* current = klass; current; current = g_api.class_get_parent(current)) {
+        const MethodInfo* method = g_api.class_get_method_from_name(current, name, argc);
+        if (method) return method;
+    }
+    return nullptr;
+}
+
+FieldInfo* FindFieldInHierarchy(Il2CppClass* klass, const char* name) {
+    for (Il2CppClass* current = klass; current; current = g_api.class_get_parent(current)) {
+        FieldInfo* field = g_api.class_get_field_from_name(current, name);
+        if (field) return field;
+    }
+    return nullptr;
+}
+
+bool IsStaticMethod(const MethodInfo* method) {
+    if (!method) return false;
+    constexpr std::uint32_t METHOD_ATTRIBUTE_STATIC = 0x0010;
+    std::uint32_t iflags = 0;
+    return (g_api.method_get_flags(method, &iflags) & METHOD_ATTRIBUTE_STATIC) != 0;
+}
+
+bool InvokeObject(const MethodInfo* method, void* instance, Il2CppObject*& value,
+                  wchar_t* detail, std::size_t cap) {
+    value = nullptr;
+    if (!method) { CopyText(detail, cap, L"Thiếu read-only getter"); return false; }
+    void* exception = nullptr;
+    value = g_api.runtime_invoke(method, instance, nullptr, &exception);
+    if (exception) { CopyText(detail, cap, L"Read-only getter ném managed exception"); return false; }
+    return true;
+}
+
+bool InvokeScalar(const MethodInfo* method, void* instance, std::int64_t& value,
+                  wchar_t* detail, std::size_t cap) {
+    value = 0;
+    if (!method) { CopyText(detail, cap, L"Thiếu scalar getter read-only"); return false; }
+    const Il2CppType* returnType = g_api.method_get_return_type(method);
+    if (!returnType) { CopyText(detail, cap, L"Không đọc được return type của getter"); return false; }
+    char* typeName = g_api.type_get_name(returnType);
+    if (!typeName) { CopyText(detail, cap, L"Không lấy được tên return type"); return false; }
+
+    void* exception = nullptr;
+    Il2CppObject* boxed = g_api.runtime_invoke(method, instance, nullptr, &exception);
+    if (exception || !boxed) {
+        g_api.free_fn(typeName);
+        CopyText(detail, cap, exception ? L"Scalar getter ném managed exception" : L"Scalar getter trả null");
+        return false;
+    }
+    void* raw = g_api.object_unbox(boxed);
+    if (!raw) {
+        g_api.free_fn(typeName);
+        CopyText(detail, cap, L"Không unbox được scalar getter");
+        return false;
+    }
+
+    bool supported = true;
+    if (AsciiEquals(typeName, "System.Boolean")) value = *reinterpret_cast<const std::uint8_t*>(raw) ? 1 : 0;
+    else if (AsciiEquals(typeName, "System.Byte")) value = *reinterpret_cast<const std::uint8_t*>(raw);
+    else if (AsciiEquals(typeName, "System.SByte")) value = *reinterpret_cast<const std::int8_t*>(raw);
+    else if (AsciiEquals(typeName, "System.Int16")) value = *reinterpret_cast<const std::int16_t*>(raw);
+    else if (AsciiEquals(typeName, "System.UInt16")) value = *reinterpret_cast<const std::uint16_t*>(raw);
+    else if (AsciiEquals(typeName, "System.Int32")) value = *reinterpret_cast<const std::int32_t*>(raw);
+    else if (AsciiEquals(typeName, "System.UInt32")) value = *reinterpret_cast<const std::uint32_t*>(raw);
+    else if (AsciiEquals(typeName, "System.Int64")) value = *reinterpret_cast<const std::int64_t*>(raw);
+    else if (AsciiEquals(typeName, "System.UInt64")) value = static_cast<std::int64_t>(*reinterpret_cast<const std::uint64_t*>(raw));
+    else supported = false;
+
+    if (!supported) {
+        ClearText(detail, cap);
+        AppendText(detail, cap, L"Return type chưa hỗ trợ: ");
+        AppendAscii(detail, cap, typeName);
+    }
+    g_api.free_fn(typeName);
+    return supported;
+}
+
+bool ReadScalarGetter(Il2CppClass* klass, const char* name, void* instance,
+                      std::int32_t& value, wchar_t* detail, std::size_t cap) {
+    const MethodInfo* method = FindMethodInHierarchy(klass, name, 0);
+    if (!method) {
+        ClearText(detail, cap); AppendText(detail, cap, L"Không resolve được getter: "); AppendAscii(detail, cap, name);
+        return false;
+    }
+    std::int64_t wide = 0;
+    if (!InvokeScalar(method, instance, wide, detail, cap)) return false;
+    if (wide < static_cast<std::int64_t>(INT32_MIN) || wide > static_cast<std::int64_t>(INT32_MAX)) {
+        CopyText(detail, cap, L"Giá trị getter vượt Int32; fail-closed"); return false;
+    }
+    value = static_cast<std::int32_t>(wide);
+    return true;
+}
+
+bool ReadStaticScalar(Il2CppClass* klass, const char* name, std::int32_t& value,
+                      wchar_t* detail, std::size_t cap) {
+    const MethodInfo* method = FindMethodInHierarchy(klass, name, 0);
+    if (!method || !IsStaticMethod(method)) {
+        ClearText(detail, cap); AppendText(detail, cap, L"Không resolve được static query: "); AppendAscii(detail, cap, name);
+        return false;
+    }
+    return ReadScalarGetter(klass, name, nullptr, value, detail, cap);
+}
+
+bool CopyManagedString(Il2CppString* value, wchar_t* out, std::size_t cap) {
+    if (!out || cap == 0) return false;
+    out[0] = L'\0';
+    if (!value) return false;
+    const std::int32_t length = g_api.string_length(value);
+    const wchar_t* chars = g_api.string_chars(value);
+    if (length < 0 || length > 4096 || !chars) return false;
+    std::size_t n = static_cast<std::size_t>(length);
+    if (n + 1 > cap) n = cap - 1;
+    for (std::size_t i = 0; i < n; ++i) out[i] = chars[i];
+    out[n] = L'\0';
+    return true;
+}
+
+bool ReadGameSnapshot(FoundationSnapshot& foundation, GameSnapshot& game,
+                      wchar_t* detail, std::size_t cap) {
+    wchar_t proof[512]{};
+    if (!ProveUnityMainThread(foundation, proof, _countof(proof))) {
+        CopyText(detail, cap, proof);
+        return false;
+    }
+
+    const Il2CppImage* image = AssemblyCSharpImage();
+    if (!image) { CopyText(detail, cap, L"Không resolve được Assembly-CSharp cho snapshot"); return false; }
+
+    Il2CppClass* sharedClass = g_api.class_from_name(image, "FGStudio.LuaSystem", "LuaSystemSharedData");
+    if (!sharedClass) { CopyText(detail, cap, L"Thiếu FGStudio.LuaSystem.LuaSystemSharedData"); return false; }
+    const MethodInfo* getLeader = FindMethodInHierarchy(sharedClass, "get_LeaderRoleData", 0);
+    if (!getLeader || !IsStaticMethod(getLeader)) {
+        CopyText(detail, cap, L"Thiếu static LuaSystemSharedData.get_LeaderRoleData()"); return false;
+    }
+    Il2CppObject* leader = nullptr;
+    if (!InvokeObject(getLeader, nullptr, leader, detail, cap)) return false;
+    if (!leader) { CopyText(detail, cap, L"LeaderRoleData=null: hãy đăng nhập nhân vật và vào map"); return false; }
+    Il2CppClass* leaderClass = g_api.object_get_class(leader);
+    if (!leaderClass) { CopyText(detail, cap, L"Không lấy được class của LeaderRoleData"); return false; }
+
+    std::int32_t roleID = 0, mapID = 0, hp = 0, maxHP = 0, dead = 0, riding = 0;
+    if (!ReadScalarGetter(leaderClass, "get_RoleID", leader, roleID, detail, cap) || roleID <= 0) return false;
+    game.roleID = roleID; game.validMask |= ValidRoleIdentity;
+    if (!ReadScalarGetter(leaderClass, "get_MapID", leader, mapID, detail, cap) || mapID <= 0) return false;
+    game.mapID = mapID; game.validMask |= ValidMapId;
+    if (!ReadScalarGetter(leaderClass, "get_HP", leader, hp, detail, cap) || hp < 0) return false;
+    if (!ReadScalarGetter(leaderClass, "get_MaxHP", leader, maxHP, detail, cap) || maxHP <= 0) return false;
+    game.hp = hp; game.maxHP = maxHP; game.validMask |= ValidVitals;
+    if (!ReadScalarGetter(leaderClass, "get_IsDeath", leader, dead, detail, cap)) return false;
+    game.dead = dead ? 1 : 0; game.validMask |= ValidLifeState;
+    if (!ReadScalarGetter(leaderClass, "get_IsRiding", leader, riding, detail, cap)) return false;
+    game.riding = riding ? 1 : 0; game.validMask |= ValidRideState;
+
+    const MethodInfo* getName = FindMethodInHierarchy(leaderClass, "get_Name", 0);
+    if (getName) {
+        Il2CppObject* nameObject = nullptr;
+        if (InvokeObject(getName, leader, nameObject, detail, cap) && nameObject &&
+            CopyManagedString(reinterpret_cast<Il2CppString*>(nameObject), game.characterName, _countof(game.characterName))) {
+            game.validMask |= ValidCharacterName;
+        }
+    }
+
+    // Position is intentionally discovered through metadata/managed fields instead of donor offsets.
+    // First try inherited getters; if unavailable, inspect the managed roleData backing object.
+    std::int32_t x = 0, y = 0;
+    bool positionOk = ReadScalarGetter(leaderClass, "get_PosX", leader, x, detail, cap) &&
+                      ReadScalarGetter(leaderClass, "get_PosY", leader, y, detail, cap);
+    if (!positionOk) {
+        FieldInfo* roleField = FindFieldInHierarchy(leaderClass, "roleData");
+        Il2CppObject* roleBacking = nullptr;
+        if (roleField) {
+            const Il2CppType* roleType = g_api.field_get_type(roleField);
+            Il2CppClass* roleFieldClass = roleType ? g_api.class_from_type(roleType) : nullptr;
+            // Never copy an unknown/value-type field into a pointer-sized buffer. Donor tells us
+            // roleData used to be a reference, but NewCore verifies that assumption at runtime.
+            if (roleFieldClass && !g_api.class_is_valuetype(roleFieldClass)) {
+                g_api.field_get_value(leader, roleField, &roleBacking);
+            }
+        }
+        if (roleBacking) {
+            Il2CppClass* backingClass = g_api.object_get_class(roleBacking);
+            if (backingClass) {
+                positionOk = ReadScalarGetter(backingClass, "get_PosX", roleBacking, x, detail, cap) &&
+                             ReadScalarGetter(backingClass, "get_PosY", roleBacking, y, detail, cap);
+            }
+        }
+    }
+    if (positionOk) {
+        game.x = x; game.y = y; game.validMask |= ValidPosition;
+    }
+
+    Il2CppClass* gameApi = g_api.class_from_name(image, "FGStudio.LuaSystem.API", "LuaSystemAPI_Game");
+    if (!gameApi) { CopyText(detail, cap, L"Thiếu FGStudio.LuaSystem.API.LuaSystemAPI_Game"); return false; }
+    std::int32_t enableAutoF1 = 0, freeBag = -1, mapReady = 0, moving = 0;
+    if (!ReadStaticScalar(gameApi, "get_EnableAutoF1", enableAutoF1, detail, cap)) return false;
+    game.autoFight = enableAutoF1 ? 0 : 1; game.validMask |= ValidAutoFightState;
+    if (!ReadStaticScalar(gameApi, "GetFreeBagSpace", freeBag, detail, cap) || freeBag < 0 || freeBag > 10000) return false;
+    game.freeBagSpace = freeBag; game.validMask |= ValidBagSpace;
+    if (!ReadStaticScalar(gameApi, "IsMapReady", mapReady, detail, cap)) return false;
+    game.mapReady = mapReady ? 1 : 0; game.validMask |= ValidMapReadyState;
+    if (ReadStaticScalar(gameApi, "IsMoving", moving, detail, cap)) {
+        game.moving = moving ? 1 : 0; game.validMask |= ValidMovingState;
+    }
+
+    Il2CppClass* sessionData = g_api.class_from_name(image, "FGStudio.Game.Logic", "SessionData");
+    if (sessionData) {
+        std::int32_t waiting = 0;
+        if (ReadStaticScalar(sessionData, "get_WaitingChangeMap", waiting, detail, cap)) {
+            game.waitingChangeMap = waiting ? 1 : 0;
+            game.validMask |= ValidMapTransitionState;
+        }
+    }
+
+    static std::uint32_t sequence = 0;
+    game.sequence = ++sequence;
+    if ((game.validMask & kRequiredGameCoreMask) != kRequiredGameCoreMask) {
+        CopyText(detail, cap, L"Snapshot thiếu core field bắt buộc; fail-closed");
+        return false;
+    }
+
+    ClearText(detail, cap);
+    AppendText(detail, cap, L"SNAPSHOT PASS role="); AppendUInt(detail, cap, static_cast<std::uint32_t>(game.roleID));
+    AppendText(detail, cap, L" map="); AppendUInt(detail, cap, static_cast<std::uint32_t>(game.mapID));
+    if (game.validMask & ValidPosition) {
+        AppendText(detail, cap, L" pos="); AppendUInt(detail, cap, static_cast<std::uint32_t>(game.x));
+        AppendText(detail, cap, L","); AppendUInt(detail, cap, static_cast<std::uint32_t>(game.y));
+    } else {
+        AppendText(detail, cap, L" pos=? (không dùng donor offset)");
+    }
+    AppendText(detail, cap, L" HP="); AppendUInt(detail, cap, static_cast<std::uint32_t>(game.hp));
+    AppendText(detail, cap, L"/"); AppendUInt(detail, cap, static_cast<std::uint32_t>(game.maxHP));
+    AppendText(detail, cap, L" bag="); AppendUInt(detail, cap, static_cast<std::uint32_t>(game.freeBagSpace));
+    AppendText(detail, cap, L" dead="); AppendUInt(detail, cap, static_cast<std::uint32_t>(game.dead));
+    AppendText(detail, cap, L" auto="); AppendUInt(detail, cap, static_cast<std::uint32_t>(game.autoFight));
+    AppendText(detail, cap, L". READ-ONLY; chưa có action.");
+    return true;
+}
+
 void SetDetail(BridgeResponse& response, const wchar_t* text) {
     CopyText(response.detail, _countof(response.detail), text ? text : L"");
 }
@@ -427,6 +683,7 @@ void ProcessRequest() {
 
     BridgeResponse response{};
     FoundationSnapshot snap{};
+    GameSnapshot game{};
     wchar_t detail[1024]{};
     bool ok = false;
 
@@ -444,12 +701,15 @@ void ProcessRequest() {
                               snap, detail, _countof(detail)); response.errorCode = ok ? 0 : 2301; break;
         case BridgeCommand::ProveUnityMainThread:
             ok = ProveUnityMainThread(snap, detail, _countof(detail)); response.errorCode = ok ? 0 : 2401; break;
+        case BridgeCommand::ReadGameSnapshot:
+            ok = ReadGameSnapshot(snap, game, detail, _countof(detail)); response.errorCode = ok ? 0 : 2501; break;
         default:
             CopyText(detail, _countof(detail), L"Command không hợp lệ"); response.errorCode = 2003; break;
     }
 
     response.ok = ok ? 1 : 0;
     response.snapshot = snap;
+    response.gameSnapshot = game;
     SetDetail(response, detail);
     g_shared->response = response;
     MemoryBarrier();

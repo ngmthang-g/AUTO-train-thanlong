@@ -1,36 +1,48 @@
-# Than Long Auto - NewCore v1.0.6 MainThread Proof
+# Thần Long Auto - NewCore v1.0.7 Read-Only Snapshot
 
-Muc tieu duy nhat cua ban nay: chung minh duong hook-message dang thuc thi tren Unity managed main thread. CHUA co game action.
+Mục tiêu của bản này: **chứng minh Scanner + Snapshot/State Store**, chưa mở bất kỳ action game nào.
 
-## Cach chung minh
+## Luồng bắt buộc
 
-Bridge van chi nhan toi da 1 command/client. Sau khi Hook + IL2CPP metadata PASS, bridge goi cac getter read-only:
+`Hook -> IL2CPP foundation -> MainThread proof -> ReadGameSnapshot -> State Store`
 
-1. `il2cpp_thread_current()` phai co gia tri. Khong `il2cpp_thread_attach`.
-2. `System.Threading.SynchronizationContext.Current` phai ton tai.
-3. Class hien tai phai la `UnitySynchronizationContext`.
-4. Doc `UnitySynchronizationContext.MainThreadId`.
-5. Doc `Thread.CurrentThread.ManagedThreadId`.
-6. Hai managed thread ID phai trung nhau.
+Mỗi client chỉ có tối đa **1 bridge request đang chạy**. Timeout là fail-closed, không retry spam.
 
-Neu bat ky buoc nao khong dung -> fail-closed, MainThread giu LOCKED.
+## Snapshot đang thử đọc
 
-Luu y: Unity `MainThreadId` la managed thread ID, KHONG phai Win32 TID. Vi vay v1.0.6 khong so sanh no truc tiep voi `GetCurrentThreadId()`.
+- Character name (nếu getter có sẵn)
+- RoleID
+- MapID
+- X/Y nếu resolve được bằng metadata/getter hoặc managed `roleData` backing object
+- HP / MaxHP
+- Dead
+- Riding
+- AutoFight state (đọc `get_EnableAutoF1`, giữ semantics donor: false = train đang bật)
+- Free bag space
+- MapReady
+- WaitingChangeMap (nếu query có sẵn)
+- Moving (nếu query có sẵn)
 
-## Nguyen tac kien truc van khoa
+**Không dùng donor RVA/offset cho snapshot này.** X/Y không resolve được thì hiển thị `?`, không fallback sang `+0x50/+0x54/+0x58`.
 
-Resolver -> Read-only Scanner -> Snapshot/State Store -> Observer -> FSM -> Safety Guard -> ActionQueue(max 1) -> MainThread Dispatcher -> Internal Action Engine.
+## Luật kiến trúc vẫn khóa cứng
 
-Ban nay moi chi chung minh MainThread Dispatcher transport. Khong `CreateRemoteThread`, khong `il2cpp_thread_attach`, khong ClickNPC/Sell/Heal/Revive/AutoFight, khong Sleep de doan state.
+- Không `CreateRemoteThread`
+- Không `il2cpp_thread_attach`
+- Không worker action trong game
+- Không `Sleep()` để đoán state
+- Không ClickNPC / HandleClickEvent / StartAutoFight / Sell / Heal / Revive
+- Chỉ `runtime_invoke` query/getter read-only sau khi Unity main thread đã được chứng minh
+- Scanner không tự quyết định hành động
+- Action game vẫn **LOCKED**
 
-`runtime_invoke` chi duoc phep trong phase nay cho getter read-only phuc vu proof, va chi sau khi `il2cpp_thread_current()` xac nhan hook thread da la managed thread cua game.
+## Build/Test
 
-## Test
+1. Giải nén vào folder mới.
+2. Chạy `build.cmd`.
+3. Build phải PASS cả Architecture audit và Bridge LoadLibrary self-test.
+4. Chạy `dist\ThanLongAutoTrain_NewCore_v1.0.7.exe`.
+5. Tick client -> **Kiểm tra nền + Snapshot**.
+6. Gửi log từ `ReadGameSnapshot` nếu Snapshot không PASS hoặc X/Y vẫn `?`.
 
-1. Giai nen vao folder moi.
-2. Chay `build.cmd`.
-3. Chi tiep tuc neu `BRIDGE SELFTEST PASS` va `BUILD + LOADLIBRARY SELFTEST THANH CONG`.
-4. Chay `dist\\ThanLongAutoTrain_NewCore_v1.0.6.exe`.
-5. Tick client -> `Chung minh nen`.
-6. PASS mong doi: `MainThread = PROVEN M...` va log co `MAINTHREAD PROVEN`.
-7. Neu FAIL: gui nguyen log. Khong spam nut, khong thu action khac.
+Bản tiếp theo chỉ được chuyển sang continuous scanner sau khi one-shot snapshot này ổn định.
