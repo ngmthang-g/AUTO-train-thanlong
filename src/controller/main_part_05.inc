@@ -12,6 +12,8 @@
         autoPathProbeLogged_ = false;
         autoPathObservedOnLogged_ = false;
         transitionLatched_ = false;
+        transitionStartedByIdentity_ = false;
+        transitionFlagJoinedLogged_ = false;
         recoveryCandidateValid_ = false;
         recoveryCandidateRoleID_ = 0;
         recoveryCandidateMapID_ = 0;
@@ -37,6 +39,8 @@
         autoPathProbeLogged_ = false;
         autoPathObservedOnLogged_ = false;
         transitionLatched_ = false;
+        transitionStartedByIdentity_ = false;
+        transitionFlagJoinedLogged_ = false;
         recoveryCandidateValid_ = false;
         recoveryCandidateRoleID_ = 0;
         recoveryCandidateMapID_ = 0;

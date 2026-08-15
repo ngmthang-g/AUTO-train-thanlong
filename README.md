@@ -1,49 +1,32 @@
-# Thần Long Auto - NewCore v1.0.10 AutoPath + Identity Guard
+# Thần Long Auto - NewCore v1.0.11 Unified Map Transition Guard
 
-v1.0.10 vẫn **READ-ONLY** và gameplay action tiếp tục **LOCKED**.
+v1.0.11 vẫn **READ-ONLY**. Gameplay mutation tiếp tục **LOCKED**.
 
-## Pipeline khóa cứng
+## Runtime evidence dẫn tới bản này
 
-`Resolver -> Read-only Scanner -> GameSnapshot/State Store -> Observer -> State Machine -> Safety Guard -> ActionQueue(MAX=1) -> MainThread Dispatcher -> Internal Action Engine`
+v1.0.10 đã chứng minh AutoPath resolver/semantics (`5/5`, value `0→1→0`) và scanner đạt `60/60`. Log thực tế cũng cho thấy nhiều lần MapID đổi trong khi `MapReady/WaitingChangeMap` không bật. Vì vậy transition flags không thể là nguồn duy nhất để định nghĩa đổi map.
 
-Hiện chỉ Resolver/Scanner/Snapshot/Observer và main-thread proof được chạy.
+## v1.0.11
 
-## Điểm mới sau runtime v1.0.9
+Map transition có hai nguồn quan sát hợp lệ:
 
-Runtime v1.0.9 đã chứng minh:
-- scanner 60/60 stable nhiều lần;
-- Moving / Riding / Dead / MapTransition edge hoạt động;
-- map transition donor guard không đụng Leader/AutoPath trong scene rebuild;
-- recovery 2/2 hoạt động.
+- `source=flags`: `MapReady=0` hoặc `WaitingChangeMap=1`; bridge giữ donor guard và bỏ qua Leader/AutoPath khi scene rebuild.
+- `source=identity`: RoleID/MapID đổi trong snapshot stable nhưng flags chưa bật hoặc đến muộn.
 
-Hai lỗ cần đóng trước phase action:
-1. `AutoPath` chưa từng quan sát giá trị ON.
-2. Recovery cũ chỉ đếm 2 snapshot stable, chưa bắt buộc cùng `RoleID + MapID`; runtime đã thấy map identity có thể đổi muộn sau recovery.
+Cả hai nguồn đều:
 
-## v1.0.10
+1. reset scanner qualification;
+2. đánh dấu runtime coverage `mapTransition`;
+3. khóa action;
+4. đi vào cùng recovery gate;
+5. chỉ PASS sau 2 snapshot stable liên tiếp có cùng RoleID + MapID.
 
-- `GameSnapshot.autoPathProbeMask` ghi 5 bước read-only:
-  class -> static instance getter -> singleton instance -> state getter -> value read.
-- Log `AUTOPATH PROBE 5/5 ... resolver PASS` tách lỗi resolver khỏi trường hợp getter hợp lệ nhưng value vẫn 0.
-- Nếu AutoPath được quan sát ON dù scanner bắt đầu giữa phiên, coverage AutoPath được coi là proven.
-- Map recovery chỉ PASS khi **2 snapshot liên tiếp có cùng RoleID và MapID**.
-- Nếu identity đổi trong recovery: `MAP RECOVERY RESET` và bắt đầu lại 1/2.
-- Nếu RoleID/MapID đổi ngoài transition flags: `IDENTITY REQUALIFY` và scanner phải chạy lại 60/60.
-- 3 scanner failures liên tiếp vẫn fail-closed.
-- Không thêm action game.
+Nếu identity tiếp tục đổi giữa recovery, candidate reset về `1/2`. Nếu flags xuất hiện muộn sau transition khởi phát bởi identity, flags chỉ join session đang có, không tạo transition thứ hai.
 
-## Legacy v0.9.0 donor boundary
+`60/60` vẫn có nghĩa 60 snapshot stable liên tiếp trên cùng identity (~30 giây ở 500 ms). Đổi map trong lúc qualification thì reset là đúng.
 
-Legacy v0.9.0 vẫn chỉ là donor dữ liệu/semantics đã xác minh. Không copy RemoteExecutor, remote gameplay worker, CreateRemoteThread action path, Sleep transition, long-lived UI pointer hay Worker cũ.
+## Golden-rule boundary
 
-## Build
+Legacy v0.9.0 vẫn chỉ là donor. Không RemoteExecutor, remote gameplay worker, CreateRemoteThread gameplay action, il2cpp_thread_attach runtime path, Sleep transition, cached UI pointer hay scanner-triggered action.
 
-Windows + Zig 0.15.2:
-
-1. `build.cmd`
-2. architecture audit `.cpp/.h/.inc` phải PASS
-3. Bridge LoadLibrary self-test PASS
-4. chạy `dist\ThanLongAutoTrain_NewCore_v1.0.10.exe`
-5. test theo `docs/FIRST_RUNTIME_TEST.md`
-
-Các bất biến ở `docs/GOLDEN_RULES.md`.
+Sau khi v1.0.11 runtime PASS mới được đóng Scanner/Observer gate để dựng SafetyGuard + ActionQueue(MAX=1) + FSM scaffold; mutation vẫn khóa ở bước scaffold đầu.

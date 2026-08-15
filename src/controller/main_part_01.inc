@@ -29,7 +29,7 @@ bool ResolveProcAddress(HMODULE module, const char* name, T& out) {
     return out != nullptr;
 }
 
-constexpr wchar_t kTitle[] = L"Thần Long Auto - NewCore v1.0.10 AutoPath + Identity Guard";
+constexpr wchar_t kTitle[] = L"Thần Long Auto - NewCore v1.0.11 Unified Map Transition Guard";
 constexpr wchar_t kModule[] = L"GameAssembly.dll";
 constexpr int IDC_LIST = 1001;
 constexpr int IDC_SCAN = 1002;

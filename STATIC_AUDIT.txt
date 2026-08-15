@@ -1,4 +1,4 @@
-THAN LONG AUTO NEWCORE v1.0.10 - SCANNER QUALIFICATION / READ-ONLY WATCHDOG
+THAN LONG AUTO NEWCORE v1.0.11 - SCANNER QUALIFICATION / READ-ONLY WATCHDOG
 Date: 2026-08-15
 
 STATIC AUDIT
@@ -10,7 +10,8 @@ STATIC AUDIT
 - ReadGameSnapshot re-proves UnitySynchronizationContext + managed main-thread ID.
 - MapReady + WaitingChangeMap are read before LeaderRoleData / AutoPathManager.
 - During map transition, Leader/AutoPath reads are skipped.
-- After map transition, recovery requires 2 consecutive stable snapshots with the same RoleID + MapID; identity drift resets to 1/2.
+- Map transition classification accepts either explicit MapReady/WaitingChangeMap flags or a RoleID/MapID identity change when flags are missed/delayed.
+- Both transition sources enter the same fail-closed 2-snapshot recovery gate with identical RoleID + MapID; identity drift resets to 1/2.
 - Stable observer mask must hold for 60 consecutive scans before SCANNER CORE QUALIFIED.
 - Any scanner error, partial mask or map transition resets scanner qualification.
 - AutoPath probe is observational only: class/getter/singleton/value-read mask; observing ON proves semantics without mutation.

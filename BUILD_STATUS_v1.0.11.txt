@@ -1,0 +1,8 @@
+ThanLongAutoTrain NewCore v1.0.11
+Status before GitHub CI:
+- Unified flags/identity map-transition classification implemented.
+- Both transition sources feed one fail-closed identity-stable 2/2 recovery gate.
+- Late flag join is de-duplicated.
+- Forbidden architecture audit must PASS.
+- Windows Zig build must PASS in GitHub Actions before runtime use.
+- Gameplay actions remain LOCKED.
