@@ -25,6 +25,10 @@
             recoveryCandidateMapID_ = gameSnapshot_.mapID;
             postTransitionStableScans_ = 1;
             state_ = FoundationState::WaitingStableMap;
+            actionQueue_.Clear();
+            lastGuardBlockReason_.clear();
+            SetControlFsmState(ControlFsmState::MapTransition,
+                               L"source=identity; queue cleared; fail-closed");
             EmitCoverageIfChanged(coverageBefore);
             events_.push_back(
                 L"PID " + std::to_wstring(game_.pid) +

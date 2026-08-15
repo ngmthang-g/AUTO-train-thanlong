@@ -1,0 +1,9 @@
+ThanLongAutoTrain NewCore v1.0.12
+Status before GitHub CI:
+- Scanner/Observer runtime gate accepted from v1.0.10 + v1.0.11 evidence.
+- SafetyGuard + one-current-state FSM scaffold implemented controller-side.
+- ActionQueueScaffold compile-time capacity MAX=1.
+- Gameplay mutation compile-time LOCK=false; static_assert present.
+- No gameplay BridgeCommand added.
+- Local structural/forbidden-token audit required before publication.
+- Windows Zig CI must PASS before runtime use.

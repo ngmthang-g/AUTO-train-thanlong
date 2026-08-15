@@ -19,6 +19,10 @@
         recoveryCandidateMapID_ = 0;
         postTransitionStableScans_ = 0;
         mapTransitionCount_ = 0;
+        controlState_ = ControlFsmState::SafePaused;
+        actionQueue_.Clear();
+        reviveDryRunIssued_ = false;
+        lastGuardBlockReason_.clear();
         nextSnapshotDue_ = Clock::time_point{};
         Enter(FoundationState::Attaching, L"Bắt đầu kiểm tra nền read-only");
     }
@@ -46,6 +50,10 @@
         recoveryCandidateMapID_ = 0;
         postTransitionStableScans_ = 0;
         mapTransitionCount_ = 0;
+        controlState_ = ControlFsmState::SafePaused;
+        actionQueue_.Clear();
+        reviveDryRunIssued_ = false;
+        lastGuardBlockReason_.clear();
         nextSnapshotDue_ = Clock::time_point{};
         report_.clear();
         Enter(FoundationState::Stopped, L"Đã ngắt bridge; scanner dừng; không có action game nào được gọi");

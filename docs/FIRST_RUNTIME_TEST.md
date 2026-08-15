@@ -1,42 +1,61 @@
-# Runtime test - v1.0.11 Unified Map Transition Guard
+# Runtime test - v1.0.12 SafetyGuard + ActionQueue + FSM Dry-Run
 
-## 1. Stable scanner
+## 1. Stable scanner -> FSM
 
-Đứng trong một map khoảng 30-40 giây. Expected:
-- `AUTOPATH PROBE • 5/5 resolved ... resolver PASS`
-- `SCANNER CORE QUALIFIED 60/60`
+Đứng trong một map ổn định đến `SCANNER CORE QUALIFIED 60/60`.
 
-## 2. Identity-source map transition
+Expected:
+- scanner 1/60 -> 10/60 -> 30/60 -> 60/60;
+- `FSM • SAFE_PAUSED/SCANNER_QUALIFYING -> IDLE_STABLE`;
+- không có action candidate khi alive/stable.
 
-Đổi map theo cách trước đây chỉ làm MapID đổi nhưng flags không bật. Expected:
-- `STATE EDGE • map=A→B`
-- `MAP TRANSITION • source=identity • flags missed/delayed ...`
-- runtime coverage bỏ `mapTransition` khỏi pending
-- `MAP RECOVERY 1/2 • source=identity • candidate role=... map=...`
-- chỉ PASS ở snapshot kế tiếp cùng identity: `MAP RECOVERY PASS 2/2 • source=identity ...`
+## 2. Map transition fail-closed
 
-Nếu MapID tiếp tục đổi A→B→C trong lúc recovery, expected `MAP RECOVERY RESET` rồi lấy C làm candidate mới.
+Đổi map một lần bằng source=identity hoặc source=flags.
 
-## 3. Flag-source map transition
+Expected:
+- `FSM • ... -> MAP_TRANSITION`;
+- queue được clear;
+- map recovery vẫn 1/2 -> PASS 2/2 cùng RoleID + MapID;
+- sau recovery FSM về `SCANNER_QUALIFYING` cho đến khi scanner đạt lại 60/60.
 
-Nếu gặp kiểu chuyển map có `MapReady=0` hoặc `WaitingChangeMap=1`, expected:
-- `MAP TRANSITION • source=flags`
-- bridge vẫn chỉ scan MapReady/WaitingChangeMap trong transient scene
-- `MAP RECOVERY 1/2 • source=flags`
-- `MAP RECOVERY PASS 2/2 • source=flags`
+## 3. Dead candidate khi scanner chưa qualified
 
-Nếu flags đến muộn sau identity source, expected `MAP TRANSITION SIGNAL • source=flags joined existing source=identity`; không được tăng thành hai transition session độc lập.
+Sau đổi map, có thể để qualification chưa đủ rồi cho nhân vật chết thủ công.
 
-## 4. Dead semantic
+Expected:
+- `STATE EDGE • dead=0->1`;
+- `FSM • ... -> DEAD_DETECTED`;
+- `SAFETY GUARD BLOCK • intent=Revive • reason=scanner-unqualified`;
+- không có queue/action game.
 
-Cho nhân vật chết thủ công; tool không được tự bấm. Expected `STATE EDGE • dead=0→1` (và `1→0` nếu hồi sinh thủ công).
+## 4. Dead candidate khi scanner đã qualified
+
+Đứng yên đủ 60/60 trong trạng thái dead, hoặc chết sau khi scanner đã 60/60.
+
+Expected đúng một dry-run envelope cho một dead episode:
+- `SAFETY GUARD PASS(dry-run) • intent=Revive ... mutation permission=LOCKED`;
+- `ACTION QUEUE • depth=1/1 active=0 • accepted DRY-RUN intent=Revive`;
+- `DISPATCHER GATE • intent=Revive • BLOCKED ... không phát BridgeCommand/action game`;
+- `ACTION QUEUE • depth=0/1 active=0`.
+
+Không được lặp candidate mỗi 500 ms khi nhân vật vẫn dead.
+
+## 5. Revive thủ công
+
+Hồi sinh bằng tay.
+
+Expected:
+- `dead=1->0`;
+- FSM rời `DEAD_DETECTED`;
+- nếu scanner vẫn qualified -> `IDLE_STABLE`, nếu chưa -> `SCANNER_QUALIFYING`.
 
 ## Gate
 
-Kết quả mong đợi cuối:
-- scanner `60/60` trên map ổn định;
-- AutoPath semantics proven;
-- map transition proven từ flags hoặc identity;
-- dead semantics proven;
-- `RUNTIME EDGE COVERAGE • pending=none`;
-- không có gameplay action.
+PASS khi:
+- không crash/disconnect;
+- FSM chỉ có một state hiện tại/client;
+- SafetyGuard block/pass đúng PRE conditions;
+- ActionQueue không bao giờ vượt `1/1`, active luôn 0;
+- dispatcher gate không phát gameplay command;
+- mutation vẫn khóa compile-time.

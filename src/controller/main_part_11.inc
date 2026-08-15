@@ -7,6 +7,7 @@
                       L"SCANNER PARTIAL: thiếu " + missing + L"; qualification reset; action tiếp tục KHÓA");
             }
         }
+        UpdateControlScaffold();
         nextSnapshotDue_ = now + std::chrono::milliseconds(500);
     }
 
@@ -40,7 +41,9 @@
 
     void Fail(const std::wstring& why) {
         pending_ = BridgeCommand::None;
+        actionQueue_.Clear();
         bridge_.Close();
+        SetControlFsmState(ControlFsmState::Faulted, L"fail-closed; queue cleared");
         Enter(FoundationState::Faulted, why);
     }
 
@@ -68,6 +71,10 @@
     std::int32_t recoveryCandidateMapID_ = 0;
     int postTransitionStableScans_ = 0;
     int mapTransitionCount_ = 0;
+    ControlFsmState controlState_ = ControlFsmState::SafePaused;
+    ActionQueueScaffold actionQueue_{};
+    bool reviveDryRunIssued_ = false;
+    std::wstring lastGuardBlockReason_{};
     Clock::time_point nextSnapshotDue_{};
     std::wstring detail_ = L"Đã dừng";
     std::wstring report_{};

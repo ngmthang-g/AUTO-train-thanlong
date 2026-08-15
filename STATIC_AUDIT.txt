@@ -1,4 +1,4 @@
-THAN LONG AUTO NEWCORE v1.0.11 - SCANNER QUALIFICATION / READ-ONLY WATCHDOG
+THAN LONG AUTO NEWCORE v1.0.12 - SAFETYGUARD / ACTIONQUEUE MAX=1 / FSM DRY-RUN
 Date: 2026-08-15
 
 STATIC AUDIT
@@ -6,23 +6,26 @@ STATIC AUDIT
 - Source path must contain no il2cpp_thread_attach.
 - Source path must contain no Sleep(.
 - Source path must contain no ClickNPC / HandleClickEvent / StartAutoFight / RequestSellItem.
-- Bridge allows one outstanding request per client.
-- ReadGameSnapshot re-proves UnitySynchronizationContext + managed main-thread ID.
-- MapReady + WaitingChangeMap are read before LeaderRoleData / AutoPathManager.
-- During map transition, Leader/AutoPath reads are skipped.
-- Map transition classification accepts either explicit MapReady/WaitingChangeMap flags or a RoleID/MapID identity change when flags are missed/delayed.
-- Both transition sources enter the same fail-closed 2-snapshot recovery gate with identical RoleID + MapID; identity drift resets to 1/2.
-- Stable observer mask must hold for 60 consecutive scans before SCANNER CORE QUALIFIED.
-- Any scanner error, partial mask or map transition resets scanner qualification.
-- AutoPath probe is observational only: class/getter/singleton/value-read mask; observing ON proves semantics without mutation.
-- Runtime edge coverage is observational only: moving/riding/autoPath/dead/mapTransition.
-- Gameplay actions remain LOCKED.
+- Bridge command enum still ends at ReadGameSnapshot; no gameplay command is added.
+- Scanner remains read-only and keeps unified flags/identity map-transition guard.
+- One ControlFsmState variable per client is the only control-plane FSM state.
+- Map transition / scanner failure / partial observer clears the dry-run queue and fails closed.
+- SafetyGuard validates main-thread proof, scanner 60/60, observer mask, transition=false, identity match and intent PRE condition.
+- `kGameplayMutationEnabled = false` is required by build.cmd and static_assert.
+- ActionQueueScaffold capacity is compile-time MAX=1.
+- v1.0.12 ActionQueue accepts DRY-RUN envelopes only; active mutation count remains 0.
+- Dispatcher gate consumes the dry-run envelope without sending any BridgeCommand/action game.
 
 CI REQUIRED
 - Windows Zig 0.15.2 build.cmd PASS.
+- Architecture audit including mutation-lock assertion PASS.
 - Bridge LoadLibrary self-test PASS.
 - EXE/DLL artifact upload PASS.
 
 RUNTIME REQUIRED
-- SCANNER CORE QUALIFIED 60/60.
-- State-edge coverage test per docs/FIRST_RUNTIME_TEST.md.
+- Stable map -> FSM reaches IDLE_STABLE after scanner 60/60.
+- Map transition -> FSM reaches MAP_TRANSITION, queue cleared, then SCANNER_QUALIFYING after recovery.
+- Dead=1 -> FSM DEAD_DETECTED.
+- Before 60/60, SafetyGuard BLOCK reason=scanner-unqualified.
+- At 60/60 while dead, SafetyGuard PASS(dry-run), ActionQueue depth=1/1 active=0, Dispatcher Gate BLOCKED, then depth=0/1.
+- No gameplay mutation occurs.

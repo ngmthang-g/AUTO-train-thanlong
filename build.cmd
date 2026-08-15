@@ -13,7 +13,7 @@ echo Zig: %ZIG_VERSION%
 
 if not exist dist mkdir dist
 del /q dist\*.exe dist\*.dll dist\*.res dist\*.lib dist\*.a >nul 2>nul
-del /q ThanLongNewCoreBridge.dll BridgeSelfTest.exe ThanLongAutoTrain_NewCore_v1.0.11.exe app.res >nul 2>nul
+del /q ThanLongNewCoreBridge.dll BridgeSelfTest.exe ThanLongAutoTrain_NewCore_v1.0.12.exe app.res >nul 2>nul
 
 echo [1/6] Architecture safety audit...
 findstr /S /I /N /C:"CreateRemoteThread" src\*.cpp src\*.h src\*.inc >nul 2>nul
@@ -30,7 +30,9 @@ findstr /S /I /N /C:"StartAutoFight" src\*.cpp src\*.h src\*.inc >nul 2>nul
 if not errorlevel 1 goto :forbid_autofight
 findstr /S /I /N /C:"RequestSellItem" src\*.cpp src\*.h src\*.inc >nul 2>nul
 if not errorlevel 1 goto :forbid_sell
-echo Architecture audit PASS.
+findstr /I /N /C:"kGameplayMutationEnabled = false" src\controller\control_scaffold.h >nul 2>nul
+if errorlevel 1 goto :mutation_lock_missing
+echo Architecture audit PASS. Mutation lock compile-time FALSE.
 goto :audit_pass
 
 :forbid_remote
@@ -54,6 +56,9 @@ goto :fail
 :forbid_sell
 echo FORBIDDEN TOKEN FOUND: RequestSellItem
 goto :fail
+:mutation_lock_missing
+echo REQUIRED MUTATION LOCK NOT FOUND OR NOT FALSE
+goto :fail
 
 :audit_pass
 
@@ -63,8 +68,8 @@ zig rc /c 65001 /fo ..\app.res app.rc
 popd
 if errorlevel 1 goto :fail
 
-echo [3/6] Bridge DLL - scanner qualification + read-only watchdog runtime...
-rem Bridge stays on the already-proven hook/main thread. No remote worker, no thread attach, no gameplay action.
+echo [3/6] Bridge DLL - proven read-only scanner runtime...
+rem Bridge stays on the already-proven hook/main thread. No gameplay action command is added in v1.0.12.
 zig c++ -target x86_64-windows-gnu -O2 -std=c++17 -DUNICODE -D_UNICODE ^
   -Wall -Wextra -Werror -fno-exceptions -fno-rtti -shared ^
   src\bridge\bridge.cpp -luser32 -lkernel32 -o ThanLongNewCoreBridge.dll
@@ -84,26 +89,26 @@ if errorlevel 1 (
   goto :fail
 )
 
-echo [5/6] Controller EXE...
+echo [5/6] Controller EXE - SafetyGuard + ActionQueue MAX=1 + FSM DRY-RUN...
 zig c++ -target x86_64-windows-gnu -O2 -std=c++17 -DUNICODE -D_UNICODE -Wall -Wextra -Werror -municode -static ^
   src\controller\main.cpp app.res ^
   -Wl,--subsystem,windows -lcomctl32 -luser32 -lkernel32 -lgdi32 ^
-  -o ThanLongAutoTrain_NewCore_v1.0.11.exe
+  -o ThanLongAutoTrain_NewCore_v1.0.12.exe
 if errorlevel 1 goto :fail
 
 echo [6/6] Package...
 move /y ThanLongNewCoreBridge.dll dist\ThanLongNewCoreBridge.dll >nul
-move /y ThanLongAutoTrain_NewCore_v1.0.11.exe dist\ThanLongAutoTrain_NewCore_v1.0.11.exe >nul
+move /y ThanLongAutoTrain_NewCore_v1.0.12.exe dist\ThanLongAutoTrain_NewCore_v1.0.12.exe >nul
 move /y app.res dist\app.res >nul
 del /q BridgeSelfTest.exe >nul 2>nul
 
 echo.
 echo BUILD + LOADLIBRARY SELFTEST THANH CONG:
-echo   dist\ThanLongAutoTrain_NewCore_v1.0.11.exe
+echo   dist\ThanLongAutoTrain_NewCore_v1.0.12.exe
 echo   dist\ThanLongNewCoreBridge.dll
 echo.
-echo Sau khi chay: tick client - bam "Kiem tra nen + Scanner".
-echo Ban nay CHI QUALIFY scanner read-only + runtime edge coverage. Action game van KHOA.
+echo v1.0.12: SafetyGuard + ActionQueue MAX=1 + FSM scaffold DRY-RUN.
+echo GAMEPLAY MUTATION VAN KHOA COMPILE-TIME; KHONG CO ACTION GAME DUOC PHAT.
 exit /b 0
 
 :fail

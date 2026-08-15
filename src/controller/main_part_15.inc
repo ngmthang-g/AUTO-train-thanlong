@@ -1,6 +1,6 @@
                     if (it != g_sessions.end()) it->second->ValidateWanted();
                 }
-                Log(L"Bắt đầu foundation + main-thread proof + continuous scanner read-only cho các client đã tick");
+                Log(L"Bắt đầu foundation + scanner + SafetyGuard/ActionQueue/FSM dry-run cho các client đã tick");
                 return 0;
             }
             if (LOWORD(wp) == IDC_DISCONNECT) {
