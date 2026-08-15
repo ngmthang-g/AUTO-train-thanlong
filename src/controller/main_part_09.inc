@@ -22,6 +22,8 @@
             }
             ++scannerFailures_;
             qualificationStableScans_ = 0;
+            recoveryCandidateValid_ = false;
+            postTransitionStableScans_ = 0;
             if (scannerFailures_ == 1) ++scannerRecoveries_;
             detail_ = response.detail;
             if (scannerFailures_ >= 3) {
@@ -37,7 +39,10 @@
 
         scannerFailures_ = 0;
         ++totalGoodSnapshots_;
+        const bool hadPreviousSnapshot = haveGameSnapshot_;
         StoreSnapshot(response.gameSnapshot);
+        const bool identityChanged =
+            hadPreviousSnapshot && IdentityChanged(previousGameSnapshot_, gameSnapshot_);
         detail_ = response.detail;
         if (firstSnapshot) AppendReport(response.detail);
 
@@ -55,5 +60,6 @@
                 EmitCoverageIfChanged(coverageBefore);
             }
             transitionLatched_ = true;
+            recoveryCandidateValid_ = false;
             postTransitionStableScans_ = 0;
             if (state_ != FoundationState::WaitingStableMap) {

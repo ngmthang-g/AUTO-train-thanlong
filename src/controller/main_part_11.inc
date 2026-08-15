@@ -57,7 +57,13 @@
     int totalGoodSnapshots_ = 0;
     int qualificationStableScans_ = 0;
     std::uint32_t edgeCoverageMask_ = 0;
+    std::uint32_t lastAutoPathProbeMask_ = 0;
+    bool autoPathProbeLogged_ = false;
+    bool autoPathObservedOnLogged_ = false;
     bool transitionLatched_ = false;
+    bool recoveryCandidateValid_ = false;
+    std::int32_t recoveryCandidateRoleID_ = 0;
+    std::int32_t recoveryCandidateMapID_ = 0;
     int postTransitionStableScans_ = 0;
     int mapTransitionCount_ = 0;
     Clock::time_point nextSnapshotDue_{};

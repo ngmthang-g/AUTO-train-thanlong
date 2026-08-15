@@ -60,6 +60,49 @@ private:
                           L": RUNTIME EDGE COVERAGE • pending=" + PendingRuntimeEdges());
     }
 
+    static int CountBits(std::uint32_t value) {
+        int count = 0;
+        while (value) {
+            count += static_cast<int>(value & 1u);
+            value >>= 1u;
+        }
+        return count;
+    }
+
+    void ObserveAutoPathProbe(const GameSnapshot& game) {
+        if (game.autoPathProbeMask != lastAutoPathProbeMask_ || !autoPathProbeLogged_) {
+            lastAutoPathProbeMask_ = game.autoPathProbeMask;
+            autoPathProbeLogged_ = true;
+            const bool complete =
+                (game.autoPathProbeMask & kAutoPathProbeCompleteMask) == kAutoPathProbeCompleteMask;
+            events_.push_back(
+                L"PID " + std::to_wstring(game_.pid) +
+                L": AUTOPATH PROBE • " + std::to_wstring(CountBits(game.autoPathProbeMask)) +
+                L"/" + std::to_wstring(CountBits(kAutoPathProbeCompleteMask)) +
+                L" resolved • mask=" + std::to_wstring(game.autoPathProbeMask) +
+                L" • value=" +
+                ((game.validMask & ValidAutoPathState) ? std::to_wstring(game.autoPathing) : L"?") +
+                L" • " + (complete ? L"resolver PASS" : L"resolver PARTIAL"));
+        }
+
+        if ((game.validMask & ValidAutoPathState) && game.autoPathing) {
+            const std::uint32_t coverageBefore = edgeCoverageMask_;
+            edgeCoverageMask_ |= EdgeAutoPath;
+            EmitCoverageIfChanged(coverageBefore);
+            if (!autoPathObservedOnLogged_) {
+                autoPathObservedOnLogged_ = true;
+                events_.push_back(L"PID " + std::to_wstring(game_.pid) +
+                                  L": AUTOPATH OBSERVED ON • getter đã trả 1; semantics read-only PROVEN");
+            }
+        }
+    }
+
+    static bool IdentityChanged(const GameSnapshot& before, const GameSnapshot& after) {
+        constexpr std::uint32_t mask = ValidRoleIdentity | ValidMapId;
+        if (!HasBoth(before, after, mask)) return false;
+        return before.roleID != after.roleID || before.mapID != after.mapID;
+    }
+
     static bool HasBoth(const GameSnapshot& a, const GameSnapshot& b, std::uint32_t mask) {
         return (a.validMask & mask) == mask && (b.validMask & mask) == mask;
     }

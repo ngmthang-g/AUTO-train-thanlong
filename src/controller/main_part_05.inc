@@ -8,7 +8,13 @@
         totalGoodSnapshots_ = 0;
         qualificationStableScans_ = 0;
         edgeCoverageMask_ = 0;
+        lastAutoPathProbeMask_ = 0;
+        autoPathProbeLogged_ = false;
+        autoPathObservedOnLogged_ = false;
         transitionLatched_ = false;
+        recoveryCandidateValid_ = false;
+        recoveryCandidateRoleID_ = 0;
+        recoveryCandidateMapID_ = 0;
         postTransitionStableScans_ = 0;
         mapTransitionCount_ = 0;
         nextSnapshotDue_ = Clock::time_point{};
@@ -27,7 +33,13 @@
         totalGoodSnapshots_ = 0;
         qualificationStableScans_ = 0;
         edgeCoverageMask_ = 0;
+        lastAutoPathProbeMask_ = 0;
+        autoPathProbeLogged_ = false;
+        autoPathObservedOnLogged_ = false;
         transitionLatched_ = false;
+        recoveryCandidateValid_ = false;
+        recoveryCandidateRoleID_ = 0;
+        recoveryCandidateMapID_ = 0;
         postTransitionStableScans_ = 0;
         mapTransitionCount_ = 0;
         nextSnapshotDue_ = Clock::time_point{};

@@ -1,68 +1,59 @@
-# Runtime test - v1.0.9 Scanner Qualification
+# Runtime test - v1.0.10 AutoPath + Identity Guard
 
-## 1. Foundation
-
-Tick client -> `Kiểm tra nền + Scanner`.
+## 1. Foundation + Scanner
 
 Expected:
-- HOOK PASS
-- IL2CPP metadata exports PASS
-- FGStudio MainThread metadata PASS
-- UnityMainThreadDispatcher metadata PASS
 - MAINTHREAD PROVEN
 - SNAPSHOT PASS
+- `SCANNER CORE QUALIFIED 60/60`
 
-## 2. Stability qualification
+## 2. AutoPath diagnostic
 
-Không thao tác game khoảng 30-40 giây.
+Ở snapshot stable phải có log kiểu:
 
-Expected milestones:
-- `SCANNER QUALIFYING 1/60`
-- `SCANNER QUALIFYING 10/60`
-- `SCANNER QUALIFYING 30/60`
-- `SCANNER CORE QUALIFIED 60/60 (~30s)`
+`AUTOPATH PROBE • 5/5 resolved • mask=31 • value=0 • resolver PASS`
 
-Không được báo qualified sau snapshot đầu.
+Điều này chỉ chứng minh resolver/getter đọc thành công.
 
-Nếu query lỗi/partial/đổi map trong khoảng này, qualification phải reset thay vì giả PASS.
+Sau đó **dùng chức năng tự chạy đường/AutoPath thật của game** (không phải AutoFight).
+Expected một trong hai:
+- `AUTOPATH OBSERVED ON ... semantics read-only PROVEN`, hoặc
+- `STATE EDGE • autoPath=0→1`.
 
-## 3. Moving edge
+Nếu AutoPath thật đang chạy mà probe vẫn 5/5 nhưng value luôn 0, gửi log; khi đó semantics `get_IsAutoPathing` cần nghiên cứu lại, không được tự coi PASS.
 
-Đi bộ thủ công rồi đứng lại.
-Expected `STATE EDGE` có `moving=0→1` và `moving=1→0`.
+## 3. Map identity-stable recovery
 
-## 4. Riding edge
+Đổi map vài lần.
 
-Lên/xuống ngựa thủ công.
-Expected `STATE EDGE` cho `riding`.
-
-## 5. AutoPath edge
-
-Bật/tắt đường chạy tự động của game.
-Expected `STATE EDGE` cho `autoPath`.
-
-## 6. Dead/revive edge
-
-Cho nhân vật chết và hồi sinh thủ công. Tool không được tự bấm gì.
-Expected `STATE EDGE` cho `dead`.
-
-## 7. Map transition guard
-
-Đổi map thủ công.
 Expected:
 - `MAP TRANSITION`
-- không fail vì LeaderRoleData/AutoPath trong lúc scene rebuild
-- `MAP RECOVERY 1/2`
-- `MAP RECOVERY PASS 2/2`
-- qualification bắt đầu lại từ đầu sau transition
+- `MAP RECOVERY 1/2 • candidate role=... map=...`
+- nếu map identity đổi muộn: `MAP RECOVERY RESET ...`
+- chỉ PASS khi snapshot kế tiếp cùng identity:
+  `MAP RECOVERY PASS 2/2 • same identity role=... map=...`
+- sau recovery scanner qualification reset và chạy lại 60/60.
 
-## 8. Coverage
+## 4. Transition flag miss / identity edge
 
-Log `RUNTIME EDGE COVERAGE • pending=...` phải bỏ dần các mục:
-`moving, riding, autoPath, dead, mapTransition`.
+Nếu RoleID/MapID đổi mà `MapReady/WaitingChangeMap` không báo transition, expected:
 
-Khi hết: `pending=none`.
+`IDENTITY REQUALIFY ... reset 60/60`
+
+Tool vẫn không action.
+
+## 5. Existing runtime edges
+
+Moving / Riding / Dead / MapTransition đã PASS ở v1.0.9 nhưng có thể test lại.
+Coverage cuối cần:
+`RUNTIME EDGE COVERAGE • pending=none`
 
 ## Gate
 
-Dù 60/60 + coverage PASS, v1.0.9 vẫn **không có gameplay action**. Kết quả này chỉ cho phép chuyển sang scaffold SafetyGuard + ActionQueue(max=1) + FSM ở phase tiếp theo.
+v1.0.10 vẫn không có gameplay action. Chỉ khi:
+- AutoPath semantics proven,
+- identity recovery ổn định,
+- scanner 60/60 PASS,
+- coverage `pending=none`
+
+thì mới chuyển sang scaffold `SafetyGuard + ActionQueue(MAX=1) + FSM`, vẫn khóa mutation ở bước đầu.

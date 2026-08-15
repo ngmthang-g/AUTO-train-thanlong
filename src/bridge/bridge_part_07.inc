@@ -48,18 +48,31 @@
 
     // v0.9.0 read AutoPathManager.IsRunning. NewCore resolves the equivalent metadata property
     // FGStudio.Engine.Logic.AutoPathManager.get_IsAutoPathing on its singleton instance.
+    // v1.0.10 also records a read-only resolver/probe mask so runtime logs can distinguish
+    // "getter resolved but value stayed 0" from "AutoPath resolution failed".
     Il2CppClass* autoPathClass = g_api.class_from_name(image, "FGStudio.Engine.Logic", "AutoPathManager");
     if (autoPathClass) {
+        game.autoPathProbeMask |= AutoPathClassResolved;
         const MethodInfo* getInstance = FindMethodInHierarchy(autoPathClass, "get_Instance", 0);
         if (getInstance && IsStaticMethod(getInstance)) {
+            game.autoPathProbeMask |= AutoPathInstanceGetterResolved;
             Il2CppObject* autoPath = nullptr;
             if (InvokeObject(getInstance, nullptr, autoPath, detail, cap) && autoPath) {
+                game.autoPathProbeMask |= AutoPathInstanceResolved;
                 Il2CppClass* actualAutoPathClass = g_api.object_get_class(autoPath);
-                std::int32_t pathing = 0;
-                if (actualAutoPathClass &&
-                    ReadScalarGetter(actualAutoPathClass, "get_IsAutoPathing", autoPath, pathing, detail, cap)) {
-                    game.autoPathing = pathing ? 1 : 0;
-                    game.validMask |= ValidAutoPathState;
+                if (actualAutoPathClass) {
+                    const MethodInfo* getIsAutoPathing =
+                        FindMethodInHierarchy(actualAutoPathClass, "get_IsAutoPathing", 0);
+                    if (getIsAutoPathing && !IsStaticMethod(getIsAutoPathing)) {
+                        game.autoPathProbeMask |= AutoPathStateGetterResolved;
+                        std::int32_t pathing = 0;
+                        if (ReadScalarGetter(actualAutoPathClass, "get_IsAutoPathing",
+                                             autoPath, pathing, detail, cap)) {
+                            game.autoPathProbeMask |= AutoPathValueRead;
+                            game.autoPathing = pathing ? 1 : 0;
+                            game.validMask |= ValidAutoPathState;
+                        }
+                    }
                 }
             }
         }

@@ -7,6 +7,8 @@
     AppendText(detail, cap, L" autoPath=");
     if (game.validMask & ValidAutoPathState) AppendUInt(detail, cap, static_cast<std::uint32_t>(game.autoPathing));
     else AppendText(detail, cap, L"?");
+    AppendText(detail, cap, L" autoPathProbe=");
+    AppendUInt(detail, cap, game.autoPathProbeMask);
     AppendText(detail, cap, L" mapReady="); AppendUInt(detail, cap, static_cast<std::uint32_t>(game.mapReady));
     AppendText(detail, cap, L" waitingMap="); AppendUInt(detail, cap, static_cast<std::uint32_t>(game.waitingChangeMap));
     AppendText(detail, cap, L". READ-ONLY; action LOCKED.");
