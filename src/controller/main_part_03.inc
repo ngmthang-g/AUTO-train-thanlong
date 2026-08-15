@@ -34,6 +34,14 @@
     bool Busy() const { return outstandingSeq_ != 0; }
     bool LoadedInTarget() const { return shared_ && shared_->bridgeLoaded != 0; }
 
+    ReviveActionSnapshot ReviveProgress() const {
+        ReviveActionSnapshot progress{};
+        if (!shared_) return progress;
+        MemoryBarrier();
+        progress = shared_->response.reviveAction;
+        return progress;
+    }
+
     bool Begin(BridgeCommand command, std::wstring& error,
                std::uint64_t u64Arg0 = 0,
                std::int32_t intArg0 = 0,

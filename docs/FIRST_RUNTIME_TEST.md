@@ -1,53 +1,67 @@
-# One-shot Runtime Acceptance - NewCore v1.2.0 Revive Only
+# One-shot Runtime Acceptance - NewCore v1.2.1 Revive Dispatcher Hotfix
 
-Không test từng phase nhỏ nữa. CI/self-test phải xử lý toàn bộ phần có thể mô phỏng; người dùng chỉ cần một lượt live để chứng minh fresh UIButton resolution + callback thật + POST thật.
+Không test lại từng phase. Foundation/scanner/map guard/harmless hook proof đã live PASS. Mục tiêu duy nhất của lượt này là chứng minh Revive không còn giữ `WH_GETMESSAGE` bằng action trực tiếp và game thực sự sống lại qua deferred MainThread queue.
 
-## Trước khi chạy live
+## Trước live
 
-GitHub CI bắt buộc PASS:
-1. architecture audit: global gameplay mutation FALSE, Revive ONLY TRUE, ActionQueue MAX=1;
-2. harmless-envelope audit;
-3. revive-engine audit: đúng một direct `runtime_invoke(handleClick)` và không có action khác;
-4. integrated control self-test 48/48;
-5. Revive control self-test 16/16;
-6. bridge build + LoadLibrary;
-7. controller build + artifact verify.
+CI bắt buộc PASS:
+1. global gameplay mutation FALSE / Revive ONLY TRUE / ActionQueue MAX=1;
+2. direct `runtime_invoke(handleClick,...)` = 0;
+3. `Delegate.CreateDelegate` + `MainThread.Execute(System.Action)` present;
+4. resolver budget 120ms;
+5. ControlSelfTest 48/48;
+6. ReviveSelfTest 18/18;
+7. Bridge LoadLibrary + EXE verify.
 
-## Một lượt test duy nhất
+## Một lượt duy nhất
 
-1. Chạy tool, tick client và bấm **Kiểm tra nền + Scanner**.
-2. Đứng ổn định tới `SCANNER CORE QUALIFIED 60/60`.
-3. Harmless proof phải PASS như v1.1.0:
-   - `ACTION QUEUE ... active=1`
-   - `HARMLESS ACTION ENVELOPE PASS`
-   - `HARMLESS DISPATCHER PROOF PASS`
-   - queue trở về `0/1`.
-4. Cho nhân vật chết **một lần**. Không bấm Đầu thai thủ công trừ khi tool báo Revive BLOCKED.
+1. Chạy tool, tick client, bấm **Kiểm tra nền + Scanner**.
+2. Chờ `SCANNER CORE QUALIFIED 60/60`.
+3. Harmless proof phải PASS và queue về 0/1.
+4. Cho nhân vật chết một lần. Không bấm Đầu thai thủ công nếu tool đang xử lý.
 5. Mong đợi:
    - `dead=0→1`
    - `REVIVE PRE QUALIFY 1/2`
-   - sau snapshot chết ổn định thứ hai: SafetyGuard/Dispatcher PASS
    - `ACTION QUEUE ... active=1 • intent=Revive`
-   - gửi `InvokeReviveButton`
-   - `REVIVE ACTION DISPATCHED • fresh UIButton=“Đầu thai” ... HandleClickEvent() called ONCE`
-   - `REVIVE DISPATCH ACK PASS ... NO RETRY`
-6. Nếu game đổi map do Đầu thai:
-   - transition vẫn hoạt động bình thường;
-   - log phải cho biết active Revive được PRESERVED chỉ để chờ POST;
-   - không có lần gọi HandleClickEvent thứ hai;
-   - map recovery vẫn phải 1/2 -> 2/2.
-7. Sau khi game sống lại:
+   - `gửi InvokeReviveButton`
+   - `REVIVE ACTION QUEUED • fresh UIButton=“Đầu thai” • System.Action -> MainThread.Execute() • direct HandleClickEvent invoke=0 ...`
+   - `REVIVE DISPATCH ACK PASS ... deferred MainThread queue • directInvoke=0`
+6. Sau ACK, game tự thực thi Action từ `MainThread.Update`. Tool không gửi action lần hai.
+7. Nếu Đầu thai đổi map:
+   - active Revive được PRESERVED để chờ POST;
+   - map recovery 1/2 -> 2/2;
+   - không có Revive enqueue/callback lần hai.
+8. Sau khi sống:
    - `dead=1→0`
    - `REVIVE POST QUALIFY 1/2`
-   - snapshot sống ổn định thứ hai -> `REVIVE POST PASS 2/2`
-   - ActionQueue trở về `0/1`.
+   - `REVIVE POST PASS 2/2`
+   - queue trở về 0/1.
 
-## Fail-closed hợp lệ
+## Nếu block
 
-Nếu resolver không tìm thấy đúng một UIButton revive active+interactable, log `REVIVE BLOCKED FAIL-CLOSED` là hành vi an toàn. Tool không được chọn đại, không retry spam trong cùng death episode và không được click tọa độ.
+`REVIVE BLOCKED FAIL-CLOSED` là an toàn. Gửi nguyên reason cùng `stage / objects / buttons / elapsedMs`. Không click thủ công cho đến khi đã copy log nếu muốn chẩn đoán chính xác.
 
-Scanner lỗi, RoleID đổi, callback/thread evidence sai hoặc POST timeout đều phải fail closed; callback không được gửi lại.
+## Nếu timeout
 
-## Chưa test ở v1.2.0
+v1.2.1 phải báo dạng:
 
-AutoFight, NPC, Sell, Path, Treatment, Buff không nằm trong runtime acceptance này vì vẫn khóa. PASS v1.2.0 chỉ đóng gate của action thật đầu tiên: **Revive / Đầu thai**.
+`REVIVE COMMAND TIMEOUT • stage=N objects=X buttons=Y elapsedMs=Z`
+
+Stage map:
+- 1 FreshPre
+- 2 ResolveTypes
+- 3 Instances
+- 4 Enumerator
+- 5 ScanButtons
+- 6 Candidate
+- 7 DelegateReflection
+- 8 CreateDelegate
+- 9 MainThreadInstance
+- 10 MainThreadEnqueue
+- 11 Queued
+
+Nếu timeout stage 5 thì lỗi nằm trong UI enumeration; stage 7/8 là delegate reflection; stage 9/10 là MainThread dispatcher. Không tăng timeout và không retry action.
+
+## Chưa test
+
+AutoFight, NPC, Sell, Path, Treatment, Buff vẫn khóa và không thuộc acceptance v1.2.1.

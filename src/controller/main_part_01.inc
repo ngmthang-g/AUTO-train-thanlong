@@ -32,7 +32,7 @@ bool ResolveProcAddress(HMODULE module, const char* name, T& out) {
     return out != nullptr;
 }
 
-constexpr wchar_t kTitle[] = L"Thần Long Auto - NewCore v1.2.0 Revive Action";
+constexpr wchar_t kTitle[] = L"Thần Long Auto - NewCore v1.2.1 Revive Dispatcher Hotfix";
 constexpr wchar_t kModule[] = L"GameAssembly.dll";
 constexpr int IDC_LIST = 1001;
 constexpr int IDC_SCAN = 1002;

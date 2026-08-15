@@ -1,8 +1,27 @@
-// NewCore v1.2.0 - first real gameplay mutation: Revive / Đầu thai only.
-// Runs only from the proven WH_GETMESSAGE / Unity-main-thread callback.
-// Every invocation re-resolves UIObject.instances and the selected UIButton; no UI pointer is cached.
+// NewCore v1.2.1 - Revive anti-diss hotfix.
+// IMPORTANT: WH_GETMESSAGE is only a short command ingress. It must never synchronously
+// execute UIButton.HandleClickEvent(). The button is fresh-resolved with a strict time budget,
+// wrapped as System.Action, then queued into FGStudio.Engine.Utilities.MainThread.Execute().
 
 using FieldStaticGetValueFn = void (__cdecl*)(FieldInfo*, void*);
+using ClassGetTypeFn = const Il2CppType* (__cdecl*)(Il2CppClass*);
+using TypeGetObjectFn = Il2CppObject* (__cdecl*)(const Il2CppType*);
+using MethodGetObjectFn = Il2CppObject* (__cdecl*)(const MethodInfo*, Il2CppClass*);
+
+constexpr ULONGLONG kReviveResolveBudgetMs = 120;
+constexpr int kReviveResolveHardEntryCap = 4096;
+
+void PublishReviveProgress(std::int32_t stage,
+                           std::int32_t scannedObjects = 0,
+                           std::int32_t scannedButtons = 0,
+                           std::int32_t elapsedMs = 0) {
+    if (!g_shared) return;
+    g_shared->response.reviveAction.progressStage = stage;
+    g_shared->response.reviveAction.scannedObjects = scannedObjects;
+    g_shared->response.reviveAction.scannedButtons = scannedButtons;
+    g_shared->response.reviveAction.elapsedMs = elapsedMs;
+    MemoryBarrier();
+}
 
 wchar_t FoldVietnameseReviveChar(wchar_t ch) {
     if (ch >= L'A' && ch <= L'Z') return static_cast<wchar_t>(ch - L'A' + L'a');
@@ -73,16 +92,6 @@ bool WideEqualsLiteral(const wchar_t* a, const wchar_t* b) {
     return *a == *b;
 }
 
-bool WideContainsLiteral(const wchar_t* text, const wchar_t* needle) {
-    if (!text || !needle || !*needle) return false;
-    for (std::size_t i = 0; text[i]; ++i) {
-        std::size_t j = 0;
-        while (needle[j] && text[i + j] == needle[j]) ++j;
-        if (!needle[j]) return true;
-    }
-    return false;
-}
-
 bool ClassIsOrDerivesFrom(Il2CppClass* actual, Il2CppClass* target) {
     if (!actual || !target) return false;
     for (Il2CppClass* current = actual; current; current = g_api.class_get_parent(current)) {
@@ -110,102 +119,69 @@ bool InvokeReadOnlyBool(const MethodInfo* method, void* instance, bool& value,
     return true;
 }
 
-int ScoreReviveButton(const wchar_t* name, const wchar_t* text) {
-    wchar_t nameKey[160]{};
-    wchar_t textKey[160]{};
-    CompactReviveText(name, nameKey, _countof(nameKey));
-    CompactReviveText(text, textKey, _countof(textKey));
-
-    if (WideEqualsLiteral(textKey, L"dauthai")) return 1000;
-    if (WideEqualsLiteral(textKey, L"hoisinh")) return 930;
-    if (WideEqualsLiteral(textKey, L"revive") || WideEqualsLiteral(textKey, L"relive") ||
-        WideEqualsLiteral(textKey, L"respawn")) return 900;
-
-    if (WideContainsLiteral(nameKey, L"dauthai")) return 820;
-    if (WideContainsLiteral(nameKey, L"hoisinh")) return 790;
-    if (WideContainsLiteral(nameKey, L"revive") || WideContainsLiteral(nameKey, L"relive") ||
-        WideContainsLiteral(nameKey, L"respawn")) return 760;
-
-    if (WideContainsLiteral(textKey, L"dauthai")) return 740;
-    if (WideContainsLiteral(textKey, L"hoisinh")) return 710;
+int ScoreExactReviveText(const wchar_t* text) {
+    wchar_t key[160]{};
+    CompactReviveText(text, key, _countof(key));
+    if (WideEqualsLiteral(key, L"dauthai")) return 1000;
+    if (WideEqualsLiteral(key, L"hoisinh")) return 930;
+    if (WideEqualsLiteral(key, L"revive") || WideEqualsLiteral(key, L"relive") ||
+        WideEqualsLiteral(key, L"respawn")) return 900;
     return 0;
 }
 
-bool DescribeReviveButton(Il2CppObject* object, Il2CppClass* uiButtonClass,
-                          const MethodInfo* activeMethod,
-                          const MethodInfo* interactableMethod,
-                          const MethodInfo* nameMethod,
-                          const MethodInfo* textMethod,
-                          int& score, wchar_t* label, std::size_t labelCap,
-                          wchar_t* detail, std::size_t detailCap) {
-    score = 0;
-    if (!object || !uiButtonClass) return false;
-    Il2CppClass* actual = g_api.object_get_class(object);
-    if (!ClassIsOrDerivesFrom(actual, uiButtonClass)) return false;
-
-    bool active = false, interactable = false;
-    if (!InvokeReadOnlyBool(activeMethod, object, active, detail, detailCap) || !active) return false;
-    if (!InvokeReadOnlyBool(interactableMethod, object, interactable, detail, detailCap) || !interactable) return false;
-
-    wchar_t name[128]{};
-    wchar_t text[128]{};
-    if (nameMethod) InvokeReadOnlyString(nameMethod, object, name, _countof(name), detail, detailCap);
-    if (!InvokeReadOnlyString(textMethod, object, text, _countof(text), detail, detailCap)) return false;
-
-    score = ScoreReviveButton(name, text);
-    if (score <= 0) return false;
-
-    if (label && labelCap) {
-        ClearText(label, labelCap);
-        if (text[0]) CopyText(label, labelCap, text);
-        else CopyText(label, labelCap, name);
-    }
-    return true;
-}
-
-bool FindFreshReviveButton(Il2CppObject*& selected, int& selectedScore,
-                           wchar_t* selectedLabel, std::size_t selectedLabelCap,
-                           const MethodInfo*& handleClick,
-                           wchar_t* detail, std::size_t cap) {
+bool FindFreshReviveButtonBounded(Il2CppObject*& selected,
+                                  Il2CppClass*& uiButtonClass,
+                                  const MethodInfo*& handleClick,
+                                  int& selectedScore,
+                                  wchar_t* selectedLabel, std::size_t selectedLabelCap,
+                                  std::int32_t& scannedObjects,
+                                  std::int32_t& scannedButtons,
+                                  std::int32_t& elapsedMs,
+                                  wchar_t* detail, std::size_t cap) {
     selected = nullptr;
-    selectedScore = 0;
+    uiButtonClass = nullptr;
     handleClick = nullptr;
+    selectedScore = 0;
+    scannedObjects = 0;
+    scannedButtons = 0;
+    elapsedMs = 0;
     if (selectedLabel && selectedLabelCap) selectedLabel[0] = L'\0';
+    const ULONGLONG started = GetTickCount64();
 
+    PublishReviveProgress(ReviveStageResolveTypes);
     const Il2CppImage* image = AssemblyCSharpImage();
     if (!image) { CopyText(detail, cap, L"REVIVE RESOLVE FAIL: Assembly-CSharp unavailable"); return false; }
     Il2CppClass* uiObjectClass = g_api.class_from_name(image, "FGStudio.LuaSystem.Base", "UIObject");
-    Il2CppClass* uiButtonClass = g_api.class_from_name(image, "FGStudio.LuaSystem.GUI", "UIButton");
+    uiButtonClass = g_api.class_from_name(image, "FGStudio.LuaSystem.GUI", "UIButton");
     if (!uiObjectClass || !uiButtonClass) {
         CopyText(detail, cap, L"REVIVE RESOLVE FAIL: UIObject/UIButton type missing"); return false;
     }
 
     FieldInfo* instancesField = FindFieldInHierarchy(uiObjectClass, "instances");
     if (!instancesField) { CopyText(detail, cap, L"REVIVE RESOLVE FAIL: UIObject.instances missing"); return false; }
-
     FieldStaticGetValueFn fieldStaticGetValue = nullptr;
     if (!ResolveProcAddress(g_api.gameAssembly, "il2cpp_field_static_get_value", fieldStaticGetValue)) {
         CopyText(detail, cap, L"REVIVE RESOLVE FAIL: il2cpp_field_static_get_value unavailable"); return false;
     }
 
+    PublishReviveProgress(ReviveStageInstances);
     Il2CppObject* instances = nullptr;
     fieldStaticGetValue(instancesField, &instances);
     if (!instances) { CopyText(detail, cap, L"REVIVE RESOLVE FAIL: UIObject.instances=null"); return false; }
-
     Il2CppClass* dictionaryClass = g_api.object_get_class(instances);
     if (!dictionaryClass) { CopyText(detail, cap, L"REVIVE RESOLVE FAIL: instances class unavailable"); return false; }
     const MethodInfo* getValues = FindMethodInHierarchy(dictionaryClass, "get_Values", 0);
     if (!getValues) { CopyText(detail, cap, L"REVIVE RESOLVE FAIL: instances.get_Values missing"); return false; }
-
     Il2CppObject* values = nullptr;
     if (!InvokeObject(getValues, instances, values, detail, cap) || !values) {
         CopyText(detail, cap, L"REVIVE RESOLVE FAIL: instances.Values unavailable"); return false;
     }
+
+    PublishReviveProgress(ReviveStageEnumerator);
     Il2CppClass* valuesClass = g_api.object_get_class(values);
     if (!valuesClass) { CopyText(detail, cap, L"REVIVE RESOLVE FAIL: Values class unavailable"); return false; }
     const MethodInfo* getEnumerator = FindMethodInHierarchy(valuesClass, "GetEnumerator", 0);
     if (!getEnumerator) { CopyText(detail, cap, L"REVIVE RESOLVE FAIL: Values.GetEnumerator missing"); return false; }
-
     Il2CppObject* enumerator = nullptr;
     if (!InvokeObject(getEnumerator, values, enumerator, detail, cap) || !enumerator) {
         CopyText(detail, cap, L"REVIVE RESOLVE FAIL: Values enumerator unavailable"); return false;
@@ -219,7 +195,6 @@ bool FindFreshReviveButton(Il2CppObject*& selected, int& selectedScore,
     }
 
     const MethodInfo* activeMethod = FindMethodInHierarchy(uiObjectClass, "get_ActiveInHierarchy", 0);
-    const MethodInfo* nameMethod = FindMethodInHierarchy(uiObjectClass, "get_Name", 0);
     const MethodInfo* interactableMethod = FindMethodInHierarchy(uiButtonClass, "get_Interactable", 0);
     const MethodInfo* textMethod = FindMethodInHierarchy(uiButtonClass, "get_Text", 0);
     handleClick = FindMethodInHierarchy(uiButtonClass, "HandleClickEvent", 0);
@@ -227,40 +202,158 @@ bool FindFreshReviveButton(Il2CppObject*& selected, int& selectedScore,
         CopyText(detail, cap, L"REVIVE RESOLVE FAIL: UIButton getter/callback signature incomplete"); return false;
     }
 
-    int tiesAtBest = 0;
-    for (int i = 0; i < 32768; ++i) {
+    PublishReviveProgress(ReviveStageScanButtons);
+    for (int i = 0; i < kReviveResolveHardEntryCap; ++i) {
+        const ULONGLONG elapsed = GetTickCount64() - started;
+        elapsedMs = static_cast<std::int32_t>(elapsed > 0x7fffffffULL ? 0x7fffffffULL : elapsed);
+        if (elapsed > kReviveResolveBudgetMs) {
+            PublishReviveProgress(ReviveStageScanButtons, scannedObjects, scannedButtons, elapsedMs);
+            ClearText(detail, cap);
+            AppendText(detail, cap, L"REVIVE RESOLVE BLOCK: bounded UI scan exceeded ");
+            AppendUInt(detail, cap, static_cast<std::uint32_t>(kReviveResolveBudgetMs));
+            AppendText(detail, cap, L"ms after objects=");
+            AppendUInt(detail, cap, static_cast<std::uint32_t>(scannedObjects));
+            AppendText(detail, cap, L" buttons=");
+            AppendUInt(detail, cap, static_cast<std::uint32_t>(scannedButtons));
+            AppendText(detail, cap, L"; no action queued");
+            return false;
+        }
+
         std::int64_t hasNext = 0;
         if (!InvokeScalar(moveNext, enumerator, hasNext, detail, cap)) return false;
         if (!hasNext) break;
+        ++scannedObjects;
 
         Il2CppObject* object = nullptr;
         if (!InvokeObject(getCurrent, enumerator, object, detail, cap)) return false;
         if (!object) continue;
+        Il2CppClass* actual = g_api.object_get_class(object);
+        if (!ClassIsOrDerivesFrom(actual, uiButtonClass)) continue;
+        ++scannedButtons;
 
-        int score = 0;
-        wchar_t label[96]{};
-        if (!DescribeReviveButton(object, uiButtonClass, activeMethod, interactableMethod,
-                                  nameMethod, textMethod, score, label, _countof(label), detail, cap)) {
-            continue;
-        }
-        if (score > selectedScore) {
-            selected = object;
-            selectedScore = score;
-            tiesAtBest = 1;
-            CopyText(selectedLabel, selectedLabelCap, label);
-        } else if (score == selectedScore && object != selected) {
-            ++tiesAtBest;
-        }
+        wchar_t text[128]{};
+        if (!InvokeReadOnlyString(textMethod, object, text, _countof(text), detail, cap)) continue;
+        const int score = ScoreExactReviveText(text);
+        if (score < 900) continue; // exact visible labels only in the hotfix; no fuzzy/name scan.
+
+        bool active = false, interactable = false;
+        if (!InvokeReadOnlyBool(activeMethod, object, active, detail, cap) || !active) continue;
+        if (!InvokeReadOnlyBool(interactableMethod, object, interactable, detail, cap) || !interactable) continue;
+
+        selected = object;
+        selectedScore = score;
+        CopyText(selectedLabel, selectedLabelCap, text);
+        elapsedMs = static_cast<std::int32_t>(GetTickCount64() - started);
+        PublishReviveProgress(ReviveStageCandidate, scannedObjects, scannedButtons, elapsedMs);
+        return true;
     }
 
-    if (!selected || selectedScore <= 0) {
-        CopyText(detail, cap, L"REVIVE RESOLVE BLOCK: không thấy UIButton Đầu thai/Hồi sinh active+interactable");
+    elapsedMs = static_cast<std::int32_t>(GetTickCount64() - started);
+    PublishReviveProgress(ReviveStageScanButtons, scannedObjects, scannedButtons, elapsedMs);
+    ClearText(detail, cap);
+    AppendText(detail, cap, L"REVIVE RESOLVE BLOCK: no exact active+interactable Đầu thai/Hồi sinh button within bounded scan; objects=");
+    AppendUInt(detail, cap, static_cast<std::uint32_t>(scannedObjects));
+    AppendText(detail, cap, L" buttons=");
+    AppendUInt(detail, cap, static_cast<std::uint32_t>(scannedButtons));
+    AppendText(detail, cap, L" elapsedMs=");
+    AppendUInt(detail, cap, static_cast<std::uint32_t>(elapsedMs));
+    return false;
+}
+
+bool CreateManagedSystemAction(Il2CppObject* target,
+                               Il2CppClass* targetClass,
+                               const MethodInfo* targetMethod,
+                               Il2CppObject*& actionDelegate,
+                               wchar_t* detail, std::size_t cap) {
+    actionDelegate = nullptr;
+    PublishReviveProgress(ReviveStageDelegateReflection);
+    if (!target || !targetClass || !targetMethod) {
+        CopyText(detail, cap, L"REVIVE DISPATCH FAIL: invalid delegate target"); return false;
+    }
+
+    ClassGetTypeFn classGetType = nullptr;
+    TypeGetObjectFn typeGetObject = nullptr;
+    MethodGetObjectFn methodGetObject = nullptr;
+    if (!ResolveProcAddress(g_api.gameAssembly, "il2cpp_class_get_type", classGetType) ||
+        !ResolveProcAddress(g_api.gameAssembly, "il2cpp_type_get_object", typeGetObject) ||
+        !ResolveProcAddress(g_api.gameAssembly, "il2cpp_method_get_object", methodGetObject)) {
+        CopyText(detail, cap, L"REVIVE DISPATCH FAIL: reflection exports class_get_type/type_get_object/method_get_object unavailable");
         return false;
     }
-    if (tiesAtBest != 1) {
-        CopyText(detail, cap, L"REVIVE RESOLVE BLOCK: nhiều UIButton revive đồng điểm; không click mù");
+
+    const Il2CppImage* corlib = g_api.get_corlib ? g_api.get_corlib() : nullptr;
+    if (!corlib) { CopyText(detail, cap, L"REVIVE DISPATCH FAIL: corlib unavailable"); return false; }
+    Il2CppClass* actionClass = g_api.class_from_name(corlib, "System", "Action");
+    Il2CppClass* delegateClass = g_api.class_from_name(corlib, "System", "Delegate");
+    if (!actionClass || !delegateClass) {
+        CopyText(detail, cap, L"REVIVE DISPATCH FAIL: System.Action/Delegate metadata missing"); return false;
+    }
+
+    const MethodInfo* createDelegate = FindMetadataMethod3(
+        delegateClass, "CreateDelegate", true,
+        "System.Type", "System.Object", "System.Reflection.MethodInfo");
+    if (!createDelegate) {
+        CopyText(detail, cap, L"REVIVE DISPATCH FAIL: Delegate.CreateDelegate(Type,Object,MethodInfo) missing");
         return false;
     }
+
+    const Il2CppType* actionType = classGetType(actionClass);
+    Il2CppObject* actionTypeObject = actionType ? typeGetObject(actionType) : nullptr;
+    Il2CppObject* methodObject = methodGetObject(targetMethod, targetClass);
+    if (!actionTypeObject || !methodObject) {
+        CopyText(detail, cap, L"REVIVE DISPATCH FAIL: reflection Type/MethodInfo object unavailable");
+        return false;
+    }
+
+    PublishReviveProgress(ReviveStageCreateDelegate);
+    void* args[3] = {actionTypeObject, target, methodObject};
+    void* exception = nullptr;
+    actionDelegate = g_api.runtime_invoke(createDelegate, nullptr, args, &exception);
+    if (exception || !actionDelegate) {
+        CopyText(detail, cap, exception
+            ? L"REVIVE DISPATCH FAIL: Delegate.CreateDelegate threw managed exception"
+            : L"REVIVE DISPATCH FAIL: Delegate.CreateDelegate returned null");
+        return false;
+    }
+    Il2CppClass* actualDelegateClass = g_api.object_get_class(actionDelegate);
+    if (!ClassIsOrDerivesFrom(actualDelegateClass, actionClass)) {
+        CopyText(detail, cap, L"REVIVE DISPATCH FAIL: created delegate is not System.Action");
+        return false;
+    }
+    return true;
+}
+
+bool QueueSystemActionOnFgMainThread(Il2CppObject* actionDelegate,
+                                     wchar_t* detail, std::size_t cap) {
+    if (!actionDelegate) { CopyText(detail, cap, L"REVIVE DISPATCH FAIL: action delegate=null"); return false; }
+    const Il2CppImage* image = AssemblyCSharpImage();
+    if (!image) { CopyText(detail, cap, L"REVIVE DISPATCH FAIL: Assembly-CSharp unavailable for MainThread"); return false; }
+    Il2CppClass* mainThreadClass =
+        g_api.class_from_name(image, "FGStudio.Engine.Utilities", "MainThread");
+    if (!mainThreadClass) { CopyText(detail, cap, L"REVIVE DISPATCH FAIL: MainThread type missing"); return false; }
+
+    const MethodInfo* getInstance = FindMetadataMethod(mainThreadClass, "get_Instance", 0, true);
+    const MethodInfo* execute = FindMetadataMethod(mainThreadClass, "Execute", 1, false, "System.Action");
+    if (!getInstance || !execute) {
+        CopyText(detail, cap, L"REVIVE DISPATCH FAIL: MainThread.get_Instance/Execute(System.Action) missing");
+        return false;
+    }
+
+    PublishReviveProgress(ReviveStageMainThreadInstance);
+    Il2CppObject* mainThread = nullptr;
+    if (!InvokeObject(getInstance, nullptr, mainThread, detail, cap) || !mainThread) {
+        CopyText(detail, cap, L"REVIVE DISPATCH FAIL: MainThread.Instance unavailable"); return false;
+    }
+
+    PublishReviveProgress(ReviveStageMainThreadEnqueue);
+    void* args[1] = {actionDelegate};
+    void* exception = nullptr;
+    g_api.runtime_invoke(execute, mainThread, args, &exception);
+    if (exception) {
+        CopyText(detail, cap, L"REVIVE DISPATCH FAIL: MainThread.Execute(System.Action) threw managed exception");
+        return false;
+    }
+    PublishReviveProgress(ReviveStageQueued);
     return true;
 }
 
@@ -271,11 +364,17 @@ bool InvokeReviveButtonAction(const BridgeRequest& request,
                               wchar_t* detail, std::size_t cap) {
     action = {};
     freshGame = {};
+    if (g_shared) {
+        g_shared->response.reviveAction = {};
+        g_shared->response.reviveAction.token = request.u64Arg0;
+        MemoryBarrier();
+    }
     if (request.u64Arg0 == 0 || request.intArg0 <= 0 || request.intArg1 <= 0) {
         CopyText(detail, cap, L"REVIVE ACTION FAIL: invalid token/identity PRE");
         return false;
     }
 
+    PublishReviveProgress(ReviveStageFreshPre);
     wchar_t snapshotDetail[768]{};
     if (!ReadGameSnapshot(foundation, freshGame, snapshotDetail, _countof(snapshotDetail))) {
         CopyText(detail, cap, L"REVIVE ACTION FAIL: fresh PRE snapshot unavailable");
@@ -298,14 +397,20 @@ bool InvokeReviveButtonAction(const BridgeRequest& request,
     }
 
     Il2CppObject* button = nullptr;
+    Il2CppClass* uiButtonClass = nullptr;
     const MethodInfo* handleClick = nullptr;
     int score = 0;
     wchar_t label[96]{};
-    if (!FindFreshReviveButton(button, score, label, _countof(label), handleClick, detail, cap)) {
+    std::int32_t scannedObjects = 0;
+    std::int32_t scannedButtons = 0;
+    std::int32_t elapsedMs = 0;
+    if (!FindFreshReviveButtonBounded(button, uiButtonClass, handleClick, score,
+                                      label, _countof(label), scannedObjects,
+                                      scannedButtons, elapsedMs, detail, cap)) {
         return false;
     }
 
-    // Re-read actual game PRE immediately before the one allowed gameplay callback.
+    // Re-read actual PRE immediately before delegate creation/queueing.
     FoundationSnapshot immediateFoundation{};
     GameSnapshot immediateGame{};
     if (!ReadGameSnapshot(immediateFoundation, immediateGame, snapshotDetail, _countof(snapshotDetail))) {
@@ -314,18 +419,17 @@ bool InvokeReviveButtonAction(const BridgeRequest& request,
     }
     if (immediateGame.roleID != request.intArg0 || immediateGame.mapID != request.intArg1 ||
         !immediateGame.dead || !immediateGame.mapReady || immediateGame.waitingChangeMap) {
-        CopyText(detail, cap, L"REVIVE ACTION BLOCK: PRE changed while resolving button; no callback");
+        CopyText(detail, cap, L"REVIVE ACTION BLOCK: PRE changed while resolving button; no action queued");
         return false;
     }
 
     Il2CppClass* actualClass = g_api.object_get_class(button);
-    const Il2CppImage* image = AssemblyCSharpImage();
-    Il2CppClass* uiButtonClass = image
-        ? g_api.class_from_name(image, "FGStudio.LuaSystem.GUI", "UIButton") : nullptr;
     const MethodInfo* activeMethod = uiButtonClass
         ? FindMethodInHierarchy(uiButtonClass, "get_ActiveInHierarchy", 0) : nullptr;
-    if (!activeMethod && image) {
-        Il2CppClass* uiObjectClass = g_api.class_from_name(image, "FGStudio.LuaSystem.Base", "UIObject");
+    if (!activeMethod) {
+        const Il2CppImage* image = AssemblyCSharpImage();
+        Il2CppClass* uiObjectClass = image
+            ? g_api.class_from_name(image, "FGStudio.LuaSystem.Base", "UIObject") : nullptr;
         activeMethod = uiObjectClass ? FindMethodInHierarchy(uiObjectClass, "get_ActiveInHierarchy", 0) : nullptr;
     }
     const MethodInfo* interactableMethod = uiButtonClass
@@ -334,51 +438,55 @@ bool InvokeReviveButtonAction(const BridgeRequest& request,
         ? FindMethodInHierarchy(uiButtonClass, "get_Text", 0) : nullptr;
     if (!actualClass || !ClassIsOrDerivesFrom(actualClass, uiButtonClass) ||
         !activeMethod || !interactableMethod || !textMethod) {
-        CopyText(detail, cap, L"REVIVE ACTION BLOCK: selected UIButton became invalid; no callback");
-        return false;
-    }
-    bool active = false, interactable = false;
-    if (!InvokeReadOnlyBool(activeMethod, button, active, detail, cap) || !active ||
-        !InvokeReadOnlyBool(interactableMethod, button, interactable, detail, cap) || !interactable) {
-        CopyText(detail, cap, L"REVIVE ACTION BLOCK: selected UIButton no longer active/interactable");
-        return false;
-    }
-    wchar_t finalText[128]{};
-    if (!InvokeReadOnlyString(textMethod, button, finalText, _countof(finalText), detail, cap) ||
-        ScoreReviveButton(L"", finalText) <= 0) {
-        CopyText(detail, cap, L"REVIVE ACTION BLOCK: selected UIButton label changed; no callback");
+        CopyText(detail, cap, L"REVIVE ACTION BLOCK: selected UIButton became invalid; no action queued");
         return false;
     }
 
-    void* exception = nullptr;
-    g_api.runtime_invoke(handleClick, button, nullptr, &exception); // exactly one gameplay mutation
-    if (exception) {
-        CopyText(detail, cap, L"REVIVE ACTION FAIL: UIButton.HandleClickEvent() threw managed exception");
+    bool active = false, interactable = false;
+    wchar_t finalText[128]{};
+    if (!InvokeReadOnlyBool(activeMethod, button, active, detail, cap) || !active ||
+        !InvokeReadOnlyBool(interactableMethod, button, interactable, detail, cap) || !interactable ||
+        !InvokeReadOnlyString(textMethod, button, finalText, _countof(finalText), detail, cap) ||
+        ScoreExactReviveText(finalText) < 900) {
+        CopyText(detail, cap, L"REVIVE ACTION BLOCK: selected UIButton changed before dispatch; no action queued");
+        return false;
+    }
+
+    Il2CppObject* actionDelegate = nullptr;
+    if (!CreateManagedSystemAction(button, actualClass, handleClick, actionDelegate, detail, cap)) {
+        return false;
+    }
+    if (!QueueSystemActionOnFgMainThread(actionDelegate, detail, cap)) {
         return false;
     }
 
     foundation = immediateFoundation;
     freshGame = immediateGame;
     action.token = request.u64Arg0;
-    action.callbackThreadId = GetCurrentThreadId();
+    action.callbackThreadId = GetCurrentThreadId(); // enqueue ingress thread, not UI callback execution.
     action.currentManagedThreadId = immediateFoundation.currentManagedThreadId;
     action.unityMainManagedThreadId = immediateFoundation.unityMainManagedThreadId;
     action.preRoleID = immediateGame.roleID;
     action.preMapID = immediateGame.mapID;
     action.preDead = immediateGame.dead;
     action.buttonScore = score;
-    action.invoked = 1;
+    action.queued = 1;
+    action.directInvoked = 0;
+    action.progressStage = ReviveStageQueued;
+    action.scannedObjects = scannedObjects;
+    action.scannedButtons = scannedButtons;
+    action.elapsedMs = elapsedMs;
     CopyText(action.buttonLabel, _countof(action.buttonLabel), label);
 
     ClearText(detail, cap);
-    AppendText(detail, cap, L"REVIVE ACTION DISPATCHED • fresh UIButton=“");
+    AppendText(detail, cap, L"REVIVE ACTION QUEUED • fresh UIButton=“");
     AppendText(detail, cap, action.buttonLabel);
-    AppendText(detail, cap, L"” • HandleClickEvent() called ONCE • role=");
-    AppendUInt(detail, cap, static_cast<std::uint32_t>(action.preRoleID));
-    AppendText(detail, cap, L" map=");
-    AppendUInt(detail, cap, static_cast<std::uint32_t>(action.preMapID));
-    AppendText(detail, cap, L" • callbackTID=");
-    AppendUInt(detail, cap, action.callbackThreadId);
+    AppendText(detail, cap, L"” • System.Action -> MainThread.Execute() • direct HandleClickEvent invoke=0 • scanned objects=");
+    AppendUInt(detail, cap, static_cast<std::uint32_t>(action.scannedObjects));
+    AppendText(detail, cap, L" buttons=");
+    AppendUInt(detail, cap, static_cast<std::uint32_t>(action.scannedButtons));
+    AppendText(detail, cap, L" resolveMs=");
+    AppendUInt(detail, cap, static_cast<std::uint32_t>(action.elapsedMs));
     AppendText(detail, cap, L" • now WAIT real dead=1→0 POST; no retry spam");
     return true;
 }

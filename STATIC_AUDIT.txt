@@ -1,79 +1,82 @@
-THAN LONG AUTO NEWCORE v1.2.0 - REVIVE ONLY STATIC AUDIT
+THAN LONG AUTO NEWCORE v1.2.1 - REVIVE DISPATCHER ANTI-DISS STATIC AUDIT
 Date: 2026-08-15
 
-PROVEN BASE INHERITED FROM v1.1.0
-- Scanner/Observer runtime gate PASS.
-- SafetyGuard + ActionQueue(MAX=1) control-plane PASS.
-- WH_GETMESSAGE / Unity-main-thread harmless envelope live PASS.
-- token/sequence/thread POST live PASS.
+RUNTIME FAILURE DRIVING THIS HOTFIX
+- v1.2.0 live PID 23432 re-proved scanner/MainThread/harmless envelope and reached InvokeReviveButton.
+- Command 7 did not return within 5s and controller failed closed; client disconnected/became unusable.
+- v1.2.0 had no sub-stage breadcrumb, so exact blocking line is not proven.
+- v1.2.1 does NOT increase timeout.
+
+PROVEN BASE
+- Scanner remains read-only.
+- scanner 60/60 + map transition/recovery live PASS.
+- SafetyGuard + ActionQueue(MAX=1) live infrastructure path PASS.
+- harmless WH_GETMESSAGE/main-thread envelope PASS.
 
 ARCHITECTURE
-- Scanner remains read-only.
-- ReadGameSnapshot remains BridgeCommand=5.
+- Protocol 0x00010201.
+- ReadGameSnapshot=5.
 - ProveHookActionEnvelope=6 remains infrastructure-only.
-- InvokeReviveButton=7 is the ONLY gameplay mutation command in v1.2.0.
-- No CreateRemoteThread.
-- No il2cpp_thread_attach.
-- No Sleep( in NewCore source.
-- Global kGameplayMutationEnabled remains exactly false.
-- Exclusive kReviveMutationEnabled must be exactly true.
-- kHarmlessInfrastructureProofEnabled remains true.
-- ActionQueueScaffold::kCapacity remains exactly 1.
-- AutoFight/NPC/Sell/Path and all other gameplay actions remain locked.
+- InvokeReviveButton=7 remains the ONLY gameplay command.
+- global kGameplayMutationEnabled=false.
+- exclusive kReviveMutationEnabled=true.
+- ActionQueue capacity exactly 1.
+- no CreateRemoteThread, il2cpp_thread_attach or Sleep-driven workflow.
+- AutoFight/NPC/Sell/Path remain locked.
 
-REVIVE ACTION ENGINE
-- Runs only from the already-proven WH_GETMESSAGE / Unity-main-thread callback.
-- Fresh PRE snapshot requires expected RoleID + MapID, dead=1, MapReady=1, WaitingChangeMap=0.
-- UIObject.instances is re-resolved on every attempt; no UIButton pointer is stored across commands/transitions.
-- UIObject.instances is enumerated through managed Dictionary.Values/GetEnumerator metadata/runtime getters.
-- Candidate must be UIButton or subclass, ActiveInHierarchy=true and Interactable=true.
-- Label normalization supports Vietnamese Đầu thai/Hồi sinh plus Revive/Relive/Respawn.
-- Exact Đầu thai has highest score. Multiple equal best matches block fail-closed.
-- Selected button is revalidated immediately before callback.
-- CI requires exactly ONE direct `g_api.runtime_invoke(handleClick, ...)` in revive_action_engine.inc.
-- Direct callback is UIButton.HandleClickEvent() only.
-- No ClickNPC, StartAutoFight, RequestSellItem, StartPath, StopPath or HandlePointerClick in revive engine.
-- No raw RVA is executed.
+REVIVE WH_GETMESSAGE BOUNDARY
+- WH_GETMESSAGE is short ingress only.
+- direct g_api.runtime_invoke(handleClick,...) is FORBIDDEN and build must fail if found.
+- resolver has 120ms hard time budget and 4096 hard entry cap.
+- exact visible text only in hotfix; no fuzzy/name scan.
+- class filter occurs before expensive UIButton getters.
+- candidate is active + interactable and PRE is re-read before dispatch.
+- over-budget/absent/invalid candidate => fail closed with no queued action.
 
-REVIVE CONTROLLER LIFECYCLE
-- Requires harmless hook/main-thread proof PASS from current session.
-- Requires current-client kReviveMetadataSupportMask ready.
-- Requires SafetyGuard PRE + scanner qualified 60/60 + observer stable + no transition + dead stable 2/2.
-- ActionQueue transitions queued -> active and stays active until real POST.
-- Dispatch ACK verifies token, callback TID, managed current/main IDs, RoleID, pre-MapID and preDead=1.
-- Resolver/action failure blocks the remainder of that death episode; no retry spam.
-- After callback, no second gameplay mutation is sent.
-- If Revive causes map transition, active Revive is preserved solely to wait POST; every NEW mutation remains locked.
-- MapID is allowed to change after Revive. RoleID is not.
-- Real POST requires two consecutive stable snapshots with same RoleID, dead=0, MapReady=1, WaitingChangeMap=0.
-- Only then CompleteActive() returns queue occupancy to 0.
-- Scanner failure while waiting Revive POST fails closed; callback is not retried.
-- POST timeout is 30 seconds, then fail closed with no callback retry.
+DEFERRED GAME DISPATCH
+- Fresh UIButton.HandleClickEvent metadata is converted to System.Action.
+- Reflection path: System.Delegate.CreateDelegate(System.Type,System.Object,System.Reflection.MethodInfo).
+- MethodInfo object is produced through il2cpp_method_get_object; Action Type through class_get_type/type_get_object.
+- FGStudio.Engine.Utilities.MainThread.get_Instance() is resolved fresh.
+- MainThread.Execute(System.Action) receives the managed delegate.
+- Execute only queues work to the game's MainThread waitToBeProcess queue; command ACK requires queued=1.
+- Revive ACK additionally requires directInvoked=0.
+- Actual gameplay success remains observer dead=1→0, never Execute return.
 
-LEGACY DRY-RUN NOTE
-- v1.0.12 ConsiderReviveDryRun source remains for historical scaffold compatibility, but v1.2.0 pins reviveDryRunIssued_=true and the dedicated Revive lifecycle owns the action. It does not emit the old dry-run envelope.
-- Generic v1.1.0 PostconditionSatisfied(Revive) is not the v1.2.0 runtime gate; the real action uses RevivePostconditionSatisfied(), which permits MapID change but rejects RoleID change.
+POINTER / LIFETIME BOUNDARY
+- No UIButton pointer is copied into SharedBlock/controller state.
+- Fresh target is captured only by managed Action queued in the game's dispatcher.
+- Controller keeps only token/identity/state evidence.
 
-ACTION CAPABILITY PROBE
-- Metadata-only resolver v3 remains read-only.
-- No runtime action is emitted from capability probe.
-- Dynamic Lua combat and sell callbacks remain DONOR_ONLY / UNRESOLVED.
+TIMEOUT BREADCRUMB
+- shared Revive progress stages 1..11 are written during command execution.
+- controller timeout reports stage, scannedObjects, scannedButtons and elapsedMs.
+- no opaque Revive Probe timeout should remain.
+
+POST
+- same RoleID required.
+- MapID may change.
+- transition may preserve only the one active Revive while awaiting POST.
+- two stable dead=0, MapReady=1, WaitingChangeMap=0 snapshots required.
+- POST timeout 30s; no requeue/retry.
 
 AUTOMATED TESTS
-- Integrated control self-test: expected 48/48 PASS.
-- Exclusive Revive self-test: expected 16/16 PASS.
-- Revive tests include exclusive gate, dispatch ACK, bad token/thread/PRE, map-change POST allowed, RoleID change blocked, transition-state POST blocked, and confirmation that AutoFight/NPC/Sell global gates remain disabled.
+- Integrated control self-test: 48/48 expected.
+- Revive control self-test: 18/18 expected.
+- tests reject directInvoked=true and queued=false ACKs.
+- global AutoFight/NPC/Sell gates remain false.
 
 CI REQUIRED
-- Exclusive Revive architecture audit PASS.
-- Direct HandleClickEvent runtime invoke count exactly 1.
+- architecture anti-diss audit PASS.
+- direct HandleClickEvent invoke count = 0.
+- deferred MainThread.Execute(Action) audit PASS.
+- resolver budget audit PASS.
 - ControlSelfTest 48/48 PASS.
-- ReviveSelfTest 16/16 PASS.
-- Windows Zig 0.15.2 build PASS.
-- Bridge LoadLibrary PASS.
-- Controller EXE Verify PASS.
-- Artifact upload PASS.
+- ReviveSelfTest 18/18 PASS.
+- Bridge build + LoadLibrary PASS.
+- Controller v1.2.1 Verify PASS.
+- artifact upload PASS.
 
 RUNTIME ACCEPTANCE
-- One integrated live test only: start/stabilize -> harmless proof PASS -> die once -> dead 2/2 -> fresh unique Revive UIButton -> one HandleClickEvent -> optional map transition/recovery -> dead=0 stable 2/2 -> queue complete.
-- PR stays Draft until that one live Revive acceptance passes.
+- 60/60 -> harmless proof -> death -> dead 2/2 -> bounded fresh UIButton -> queue System.Action -> ACK directInvoke=0 -> game Update executes -> optional map recovery -> dead=0 2/2 -> queue complete.
+- PR remains Draft until that one live acceptance passes.

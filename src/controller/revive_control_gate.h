@@ -5,7 +5,7 @@ namespace tlcontrol {
 
 inline constexpr bool kReviveMutationEnabled = true;
 static_assert(kReviveMutationEnabled,
-              "v1.2.0 intentionally enables only the Revive gameplay mutation gate");
+              "v1.2.1 intentionally enables only the deferred Revive gameplay mutation gate");
 
 class ReviveDispatcherGate {
 public:
@@ -13,8 +13,8 @@ public:
                                      bool harmlessHookProofPassed) {
         if (!kReviveMutationEnabled) return {false, L"revive-mutation-disabled"};
         if (!harmlessHookProofPassed) return {false, L"hook-envelope-unproven"};
-        if (!metadataCapabilityResolved) return {false, L"revive-capability-unresolved"};
-        return {true, L"revive-dispatch-allowed"};
+        if (!metadataCapabilityResolved) return {false, L"revive-or-mainthread-capability-unresolved"};
+        return {true, L"revive-deferred-dispatch-allowed"};
     }
 };
 
@@ -26,7 +26,8 @@ struct ReviveDispatchObserved {
     std::int32_t preRoleID = 0;
     std::int32_t preMapID = 0;
     bool preDead = false;
-    bool invoked = false;
+    bool queued = false;
+    bool directInvoked = false;
 };
 
 inline bool ReviveDispatchAckSatisfied(std::uint64_t expectedToken,
@@ -36,7 +37,7 @@ inline bool ReviveDispatchAckSatisfied(std::uint64_t expectedToken,
                                        std::int32_t expectedRoleID,
                                        std::int32_t expectedMapID,
                                        const ReviveDispatchObserved& observed) {
-    return expectedToken != 0 && observed.invoked && observed.preDead &&
+    return expectedToken != 0 && observed.queued && !observed.directInvoked && observed.preDead &&
            observed.token == expectedToken &&
            observed.callbackThreadId == expectedHookThreadId &&
            observed.currentManagedThreadId == expectedManagedThreadId &&
@@ -91,9 +92,18 @@ inline ReviveSelfTestResult RunReviveControlSelfTest() {
     dispatch.preRoleID = 100;
     dispatch.preMapID = 24;
     dispatch.preDead = true;
-    dispatch.invoked = true;
+    dispatch.queued = true;
+    dispatch.directInvoked = false;
     ReviveSelfTestCheck(result,
         ReviveDispatchAckSatisfied(42, 1234, 1, 1, 100, 24, dispatch));
+    dispatch.directInvoked = true;
+    ReviveSelfTestCheck(result,
+        !ReviveDispatchAckSatisfied(42, 1234, 1, 1, 100, 24, dispatch));
+    dispatch.directInvoked = false;
+    dispatch.queued = false;
+    ReviveSelfTestCheck(result,
+        !ReviveDispatchAckSatisfied(42, 1234, 1, 1, 100, 24, dispatch));
+    dispatch.queued = true;
     dispatch.token = 43;
     ReviveSelfTestCheck(result,
         !ReviveDispatchAckSatisfied(42, 1234, 1, 1, 100, 24, dispatch));

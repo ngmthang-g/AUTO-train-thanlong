@@ -1,7 +1,9 @@
     bool ReviveMetadataReady() const {
-        return actionCapabilities_.probeVersion != 0 &&
-               (actionCapabilities_.metadataMask & kReviveMetadataSupportMask) ==
-                   kReviveMetadataSupportMask;
+        if (actionCapabilities_.probeVersion == 0) return false;
+        const std::uint32_t mask = actionCapabilities_.metadataMask;
+        return (mask & kReviveMetadataSupportMask) == kReviveMetadataSupportMask &&
+               (mask & kMainThreadDispatcherMetadataSupportMask) ==
+                   kMainThreadDispatcherMetadataSupportMask;
     }
 
     bool ApplyTransitionQueueBoundary(const wchar_t* source) {
@@ -39,7 +41,7 @@
         reviveAliveStableScans_ = 0;
         reviveTransitionPreserveLogged_ = false;
         reviveDeadline_ = Clock::time_point{};
-        reviveDryRunIssued_ = true; // keep v1.0.12 dry-run path suppressed.
+        reviveDryRunIssued_ = true; // keep legacy dry-run path suppressed.
     }
 
     void HandleReviveDispatchResponse(const BridgeResponse& response) {
@@ -52,8 +54,8 @@
                           std::wstring(response.detail));
 
         if (!response.ok) {
-            // Fail closed for this death episode without retry spam. Keep scanner alive so the
-            // user can revive manually and the next death episode can start from a fresh UI tree.
+            // Fail closed for this death episode without mutation retry. Resolver/dispatcher failure
+            // leaves scanner alive so the user may revive manually and a later death starts fresh.
             actionQueue_.CancelAll();
             reviveDispatchIssued_ = false;
             reviveAwaitingPost_ = false;
@@ -62,8 +64,12 @@
             reviveAliveStableScans_ = 0;
             reviveDeadline_ = Clock::time_point{};
             SetControlFsmState(ControlFsmState::DeadDetected,
-                               L"Revive resolver/action BLOCKED; không retry trong death episode này");
+                               L"Revive resolver/dispatcher BLOCKED; không retry trong death episode này");
             detail_ = L"REVIVE BLOCKED FAIL-CLOSED • " + std::wstring(response.detail) +
+                      L" • stage=" + std::to_wstring(response.reviveAction.progressStage) +
+                      L" objects=" + std::to_wstring(response.reviveAction.scannedObjects) +
+                      L" buttons=" + std::to_wstring(response.reviveAction.scannedButtons) +
+                      L" elapsedMs=" + std::to_wstring(response.reviveAction.elapsedMs) +
                       L" • queue 0/1 • chờ hồi sinh thủ công hoặc death episode mới";
             events_.push_back(L"PID " + std::to_wstring(game_.pid) + L": " + detail_);
             nextSnapshotDue_ = Clock::now();
@@ -78,7 +84,8 @@
         observed.preRoleID = response.reviveAction.preRoleID;
         observed.preMapID = response.reviveAction.preMapID;
         observed.preDead = response.reviveAction.preDead != 0;
-        observed.invoked = response.reviveAction.invoked != 0;
+        observed.queued = response.reviveAction.queued != 0;
+        observed.directInvoked = response.reviveAction.directInvoked != 0;
 
         if (!ReviveDispatchAckSatisfied(
                 reviveActiveToken_,
@@ -88,7 +95,7 @@
                 reviveExpectedRoleID_,
                 revivePreMapID_,
                 observed)) {
-            Fail(L"REVIVE DISPATCH ACK FAIL: token/thread/identity/PRE không khớp; fail-closed");
+            Fail(L"REVIVE DISPATCH ACK FAIL: token/thread/identity/PRE/queued evidence không khớp; fail-closed");
             return;
         }
 
@@ -96,16 +103,20 @@
         reviveAliveStableScans_ = 0;
         reviveDeadline_ = Clock::now() + std::chrono::seconds(30);
         SetControlFsmState(ControlFsmState::AwaitingPostcondition,
-                           L"UIButton.HandleClickEvent() đã gọi đúng 1 lần; chờ dead=1→0 POST thật");
+                           L"Revive System.Action đã queue vào MainThread.Update; chờ dead=1→0 POST thật");
         detail_ = L"REVIVE DISPATCH ACK PASS • button=“" +
                   std::wstring(response.reviveAction.buttonLabel) +
-                  L"” • queue active=1/1 • NO RETRY • chờ scanner POST";
+                  L"” • deferred MainThread queue • directInvoke=0 • objects=" +
+                  std::to_wstring(response.reviveAction.scannedObjects) +
+                  L" buttons=" + std::to_wstring(response.reviveAction.scannedButtons) +
+                  L" resolveMs=" + std::to_wstring(response.reviveAction.elapsedMs) +
+                  L" • queue active=1/1 • NO RETRY • chờ scanner POST";
         events_.push_back(L"PID " + std::to_wstring(game_.pid) + L": " + detail_);
         nextSnapshotDue_ = Clock::now();
     }
 
     void MaybeRunReviveLifecycle(Clock::time_point now) {
-        // Always suppress the old v1.0.12 dry-run path. This function owns Revive in v1.2.0.
+        // Always suppress the old dry-run path. This function owns Revive in v1.2.1.
         reviveDryRunIssued_ = true;
 
         if (!haveGameSnapshot_) return;
@@ -117,11 +128,11 @@
             if (reviveExpectedRoleID_ <= 0 ||
                 ((gameSnapshot_.validMask & ValidRoleIdentity) &&
                  gameSnapshot_.roleID != reviveExpectedRoleID_)) {
-                Fail(L"REVIVE POST FAIL: RoleID drift sau callback; fail-closed");
+                Fail(L"REVIVE POST FAIL: RoleID drift sau dispatcher queue; fail-closed");
                 return;
             }
             if (reviveDeadline_ != Clock::time_point{} && now > reviveDeadline_) {
-                Fail(L"REVIVE POST TIMEOUT: không thấy dead=0 trong 30s; không retry callback");
+                Fail(L"REVIVE POST TIMEOUT: không thấy dead=0 trong 30s; không queue/call lại action");
                 return;
             }
 
@@ -180,7 +191,7 @@
             }
             detail_ = L"REVIVE POST PASS 2/2 • role=" + std::to_wstring(finalRole) +
                       L" • map=" + std::to_wstring(finalMap) +
-                      L" • dead=0 • queue 0/1 • fresh UI pointer discarded";
+                      L" • dead=0 • queue 0/1 • managed delegate/UI target released by queue";
             events_.push_back(L"PID " + std::to_wstring(game_.pid) + L": " + detail_);
             return;
         }
@@ -271,7 +282,7 @@
         lastGuardBlockReason_.clear();
 
         SetControlFsmState(ControlFsmState::ActionPrepared,
-                           L"Revive PRE PASS; fresh resolve sẽ diễn ra trong proven main-thread command");
+                           L"Revive PRE PASS; hook chỉ fresh-resolve + queue System.Action, không click trực tiếp");
         events_.push_back(
             L"PID " + std::to_wstring(game_.pid) +
             L": ACTION QUEUE • depth=" + std::to_wstring(actionQueue_.Depth()) +
@@ -285,5 +296,5 @@
             return; // Send() already fails closed on transport failure.
         }
         SetControlFsmState(ControlFsmState::AwaitingPostcondition,
-                           L"Revive command gửi tới proven hook/main thread; chờ dispatch ACK rồi dead=0 POST");
+                           L"Revive resolve/queue command gửi tới hook; chờ ACK rồi action chạy ở MainThread.Update");
     }

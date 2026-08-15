@@ -6,7 +6,7 @@
 namespace tlcore {
 
 constexpr std::uint32_t kMagic = 0x544C4E43u; // TLNC
-constexpr std::uint32_t kProtocolVersion = 0x00010200u;
+constexpr std::uint32_t kProtocolVersion = 0x00010201u;
 constexpr UINT kWakeMessage = WM_APP + 0x4A1;
 constexpr wchar_t kMappingPrefix[] = L"Local\\ThanLongNewCore_";
 
@@ -118,6 +118,21 @@ struct InfrastructureProofSnapshot {
     std::int32_t completed = 0;
 };
 
+enum ReviveProgressStage : std::int32_t {
+    ReviveStageNone               = 0,
+    ReviveStageFreshPre           = 1,
+    ReviveStageResolveTypes       = 2,
+    ReviveStageInstances          = 3,
+    ReviveStageEnumerator         = 4,
+    ReviveStageScanButtons        = 5,
+    ReviveStageCandidate          = 6,
+    ReviveStageDelegateReflection = 7,
+    ReviveStageCreateDelegate     = 8,
+    ReviveStageMainThreadInstance = 9,
+    ReviveStageMainThreadEnqueue  = 10,
+    ReviveStageQueued             = 11,
+};
+
 struct ReviveActionSnapshot {
     std::uint64_t token = 0;
     std::uint32_t callbackThreadId = 0;
@@ -127,7 +142,12 @@ struct ReviveActionSnapshot {
     std::int32_t preMapID = 0;
     std::int32_t preDead = 0;
     std::int32_t buttonScore = 0;
-    std::int32_t invoked = 0;
+    std::int32_t queued = 0;
+    std::int32_t directInvoked = 0;
+    std::int32_t progressStage = ReviveStageNone;
+    std::int32_t scannedObjects = 0;
+    std::int32_t scannedButtons = 0;
+    std::int32_t elapsedMs = 0;
     wchar_t buttonLabel[96]{};
 };
 
