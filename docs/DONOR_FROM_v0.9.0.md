@@ -1,18 +1,42 @@
-# Donor knowledge retained from v0.9.0
+# Donor state migration from Legacy v0.9.0 (pre-NewCore) -> NewCore v1.0.8
 
-## Confirmed semantics retained
+## Nguyên tắc
 
-- `AutoFight_Main.StartAutoFight(1)` = Train.
-- `AutoFight_Main.StartAutoFight(0)` = None/Stop.
-- `GetAutoFightEnabled`: donor logic observed `false` while Train is active, so NewCore normalizes it to `snapshot.autoFight=true`.
-- `LuaSystemAPI_Game.ClickNPC(npcID)` is the preferred NPC entry action.
-- Donor role offsets (MapID `+0x50`, X `+0x54`, Y `+0x58`) are documented only for research comparison; NewCore core does **not** use them as runtime fallback.
-- Sell logic to migrate later: `scan -> choose one DBID -> reacquire current object -> RequestSellItem -> wait DBID gone -> rescan`.
+`Legacy v0.9.0` ở tài liệu này là **bản auto cũ, pre-NewCore**. Nó không phải một version của NewCore.
 
-## Explicitly rejected from donor
+Legacy v0.9.0 là donor đã runtime-test cho **state semantics / state-machine guards**. NewCore không sao chép executor `Remote()` hoặc remote worker.
 
-- `CreateRemoteThread + il2cpp_thread_attach` as action executor.
-- `UIButton*` / `UIToggle*` stored across UI transitions.
-- fixed `Sleep` as state transition proof.
-- monolithic boolean state combinations.
-- automatic retry spam after ambiguous state.
+| State | Legacy v0.9.0 donor | NewCore v1.0.8 |
+|---|---|---|
+| MapID | RoleData / donor offset | managed `get_MapID()` |
+| X/Y | RoleData +0x54/+0x58 | managed getters/backing object only |
+| Dead | `LuaLeaderIsDeath` | `LeaderRoleData.get_IsDeath()` |
+| Riding | `LuaIsRiding` | `LeaderRoleData.get_IsRiding()` |
+| Moving | `LuaIsMoving` | `LuaSystemAPI_Game.IsMoving()` |
+| AutoFight | donor inverted AutoF1 semantic | same semantic normalized into `autoFight` |
+| Bag | `GetFreeBagSpace` | same read-only API through metadata |
+| MapReady | `LuaIsMapReady` | `LuaSystemAPI_Game.IsMapReady()` |
+| WaitingChangeMap | `SessionWaitingChangeMap` | `SessionData.get_WaitingChangeMap()` |
+| AutoPathing | `AutoPathIsRunning` | `AutoPathManager.get_IsAutoPathing()` |
+
+## Guard được port nguyên ý nghĩa
+
+Donor đọc `MapReady/WaitingChangeMap` trước và return sớm khi scene đang chuyển. v1.0.8 áp dụng lại đúng guard này trước mọi Leader/AutoPath read.
+
+## Những thứ tuyệt đối không port
+
+- remote worker / remote thread executor;
+- raw donor RVA làm gameplay action;
+- giữ pointer UI qua transition;
+- `Sleep()` để suy đoán state;
+- retry action mù.
+
+## AutoPath metadata evidence
+
+Supplied `global-metadata.dat` có:
+
+- `FGStudio.Engine.Logic`
+- `AutoPathManager`
+- `get_IsAutoPathing`
+
+Donor RVA `AutoPathIsRunning` chỉ được dùng để đối chiếu ý nghĩa; runtime NewCore resolve metadata.

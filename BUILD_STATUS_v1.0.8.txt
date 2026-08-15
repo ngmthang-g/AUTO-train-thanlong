@@ -1,0 +1,32 @@
+ThanLongAutoTrain NewCore v1.0.8
+Date: 2026-08-15
+
+COMPLETED
+- Continuous read-only scanner: 500 ms/client.
+- Legacy v0.9.0 state semantics migrated without legacy executor.
+- MapReady/WaitingChangeMap pre-guard before Leader/AutoPath reads.
+- 2 stable scans required after real map transition.
+- AutoPath state via metadata AutoPathManager.get_IsAutoPathing.
+- State Store previous/current + edge observer.
+- UI columns: Riding, Moving, AutoPath, MapReady, WaitMap.
+- Action game remains locked.
+
+LOCAL CHECKS
+- Forbidden-token source audit: PASS.
+- Required metadata-name presence in supplied global-metadata.dat: PASS.
+- Modified Session C++17 syntax compile with host stubs: PASS.
+- Modified ReadGameSnapshot C++17 syntax compile with host stubs: PASS.
+- Scanner state-transition unit smoke: PASS.
+- Source transport fragments: SHA-gated; see SOURCE_INTEGRITY_v1.0.8.md.
+
+CI NOTE
+- GitHub Actions run #26 failed because the first remote upload corrupted/truncated the large bridge/controller source files.
+- Source transport was repaired by ordered .inc fragments + wrapper .cpp files; architecture audit also scans .inc.
+
+NOT CLAIMED
+- Corrected Windows PE build/link: pending GitHub Actions on the repaired commit.
+- Live v1.0.8 runtime: NOT RUN here.
+
+NEXT RUNTIME GATE
+Build on Windows/GitHub Actions, then test docs/FIRST_RUNTIME_TEST.md.
+Do not unlock gameplay actions until scanner parity + transition behavior pass live test.

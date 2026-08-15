@@ -6,7 +6,7 @@
 namespace tlcore {
 
 constexpr std::uint32_t kMagic = 0x544C4E43u; // TLNC
-constexpr std::uint32_t kProtocolVersion = 0x00010007u;
+constexpr std::uint32_t kProtocolVersion = 0x00010008u;
 constexpr UINT kWakeMessage = WM_APP + 0x4A1;
 constexpr wchar_t kMappingPrefix[] = L"Local\\ThanLongNewCore_";
 
@@ -55,11 +55,19 @@ enum GameSnapshotValid : std::uint32_t {
     ValidMapTransitionState = 1u << 9,
     ValidMovingState        = 1u << 10,
     ValidCharacterName      = 1u << 11,
+    ValidAutoPathState       = 1u << 12,
 };
 
 constexpr std::uint32_t kRequiredGameCoreMask =
     ValidRoleIdentity | ValidMapId | ValidVitals | ValidLifeState |
-    ValidRideState | ValidAutoFightState | ValidBagSpace | ValidMapReadyState;
+    ValidRideState | ValidAutoFightState | ValidBagSpace | ValidMapReadyState |
+    ValidMapTransitionState;
+
+// v1.0.8 observer parity gate: these are the read-only states already proven useful in
+// the v0.9.0 donor state machine. NewCore still resolves them by metadata rather than
+// copying donor RVAs/offsets. No gameplay action is enabled by this mask.
+constexpr std::uint32_t kRequiredObserverStableMask =
+    kRequiredGameCoreMask | ValidPosition | ValidMovingState | ValidAutoPathState;
 
 struct GameSnapshot {
     std::uint32_t validMask = 0;
@@ -77,6 +85,7 @@ struct GameSnapshot {
     std::int32_t moving = 0;
     std::int32_t mapReady = 0;
     std::int32_t waitingChangeMap = 0;
+    std::int32_t autoPathing = 0;
     wchar_t characterName[64]{};
 };
 

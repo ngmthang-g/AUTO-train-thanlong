@@ -1,25 +1,46 @@
-# Verification status - v1.0.7
+# Verification status - v1.0.8
 
 ## Static/source verification
 
-- Không `CreateRemoteThread`, `remote_worker.S`, `il2cpp_thread_attach` trong source path.
-- Không gameplay action: ClickNPC, HandleClickEvent, StartAutoFight, RequestSellItem, Heal, Revive.
-- Mỗi client chỉ có tối đa 1 bridge request đang chạy.
-- Timeout fail-closed, không retry spam.
-- Same PID nhưng HWND/TID đổi -> tạo Session mới, không giữ hook/thread context cũ.
-- Main-thread proof dùng Unity `SynchronizationContext` + managed thread ID, không suy diễn từ window TID.
-- `ReadGameSnapshot` gọi lại main-thread proof trước khi dùng read-only getter/query.
-- Resolver snapshot dùng namespace/class/method metadata, không dùng gameplay RVA của donor v0.9.0.
-- X/Y không có offset fallback trong phase này.
+- Protocol bumped to `0x00010008`.
+- Không `CreateRemoteThread`, `remote_worker.S`, `il2cpp_thread_attach` trong NewCore source path.
+- Không `Sleep()`.
+- Không gameplay action token trong `src`: ClickNPC / HandleClickEvent / StartAutoFight / RequestSellItem.
+- Mỗi client chỉ có tối đa 1 bridge request.
+- Main-thread proof vẫn được chạy lại trước mỗi `ReadGameSnapshot`.
+- AutoPath state resolve qua metadata `FGStudio.Engine.Logic.AutoPathManager.get_IsAutoPathing`.
+- Supplied `global-metadata.dat` chứa class/method strings tương ứng.
+- Donor role offsets không được dùng làm runtime fallback.
 
-## Runtime proof condition
+## Stable observer parity mask
 
-Foundation chỉ PASS khi:
-- hook TID == owner window TID;
-- `il2cpp_thread_current()` != null;
-- `SynchronizationContext.Current` là `UnitySynchronizationContext`;
-- `Thread.CurrentThread.ManagedThreadId == UnitySynchronizationContext.MainThreadId`.
+`SCANNER PASS` chỉ khi snapshot stable có:
 
-Snapshot core chỉ PASS khi có RoleID, MapID, HP/MaxHP, Dead, Riding, AutoFight, FreeBagSpace và MapReady.
+- RoleID
+- MapID
+- X/Y
+- HP/MaxHP
+- Dead
+- Riding
+- Moving
+- AutoFight
+- FreeBagSpace
+- MapReady
+- WaitingChangeMap
+- AutoPathing
 
-Position/name/moving/waiting-change-map là thông tin mở rộng; thiếu chúng không được phép kích hoạt action hay fallback sang offset donor.
+Character name vẫn là optional display field.
+
+Nếu thiếu Position/Moving/AutoPath, trạng thái là `SCANNER PARTIAL`; scanner vẫn read-only và action vẫn khóa.
+
+## Transition snapshot
+
+Khi `MapReady=false` hoặc `WaitingChangeMap=true`, snapshot transition được coi là **thành công read-only có chủ đích**, không phải lỗi core. Nó chỉ mang transition flags và sequence; Leader/AutoPath không được query trong nhịp đó. Sau transition phải có 2 stable snapshots liên tiếp trước khi observer quay lại PASS/PARTIAL.
+
+## Runtime proof cần test
+
+Xem `docs/FIRST_RUNTIME_TEST.md`.
+
+## Build note
+
+Authoritative Windows build vẫn là `build.cmd` / GitHub Actions với Zig 0.15.2. Môi trường Linux tạo source này kdông có Zig local, nên không được tuyên bố đã link PE tại chỗ.
