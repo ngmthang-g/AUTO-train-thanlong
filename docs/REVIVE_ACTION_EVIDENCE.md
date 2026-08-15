@@ -1,129 +1,119 @@
-# Revive / Đầu thai Action Evidence - NewCore v1.2.0
+# Revive / Đầu thai Action Evidence - NewCore v1.2.1
 
 ## Evidence chain
 
-v1.2.0 opens the first real gameplay mutation only after these prior NewCore gates have live evidence:
-
-1. Scanner/Observer stable qualification and map-transition recovery.
+Inherited live evidence:
+1. Scanner/Observer stable 60/60 and map-transition recovery.
 2. Unity main-thread identity proof.
 3. FSM + SafetyGuard + ActionQueue(MAX=1).
-4. Harmless hook/main-thread envelope with real token/sequence/thread POST.
+4. Harmless WH_GETMESSAGE action envelope with token/thread POST.
+5. v1.2.0 live death truth `dead=0→1` and Revive PRE/queue admission.
 
-Legacy v0.9.0 (pre-NewCore) remains donor-only. Its executor/RVA/thread architecture is not reused.
+Legacy v0.9.0 (pre-NewCore) remains donor-only; no donor executor/RVA/thread architecture is reused.
+
+## v1.2.0 negative runtime evidence
+
+PID 23432 reached `InvokeReviveButton` after all inherited gates passed, then command 7 failed to return within 5 seconds and the client disconnected/became unusable. Controller failed closed and did not retry.
+
+Because v1.2.0 did not publish internal command progress, evidence cannot identify whether the stall occurred in UI enumeration, revalidation, or the direct `HandleClickEvent()` call. The design problem is therefore treated as the synchronous command boundary itself, not one guessed line.
+
+v1.2.1 removes the two risky properties:
+- potentially long managed UI traversal in the hook is hard-bounded;
+- `HandleClickEvent()` is no longer directly invoked from WH_GETMESSAGE.
 
 ## Donor semantics retained
 
-Legacy analysis established these semantic facts:
-
-- death truth source is `LuaLeaderData.get_IsDeath()`;
-- revive UI uses `FGStudio.LuaSystem.Base.UIObject.instances`;
-- relevant control type is `FGStudio.LuaSystem.GUI.UIButton` or subclass;
-- safe candidate requires active + interactable;
-- label sources include UIButton Name/Text, with **Đầu thai** preferred over Hồi sinh/Revive/Relive/Respawn;
-- final action is instance `UIButton.HandleClickEvent()`;
-- stale UI pointers across death-overlay/map changes are unsafe;
-- uncertain or duplicate candidates must not be clicked blindly.
-
-Only those semantics are retained. Donor RVA/address execution is forbidden.
+- death truth source: `LeaderRoleData.get_IsDeath()`;
+- UI registry: `FGStudio.LuaSystem.Base.UIObject.instances`;
+- control type: `FGStudio.LuaSystem.GUI.UIButton`/subclass;
+- candidate must be active + interactable;
+- visible labels include `Đầu thai` / `Hồi sinh`;
+- action semantic is `UIButton.HandleClickEvent()`;
+- stale UI pointers and blind retries are unsafe.
 
 ## Current-client metadata evidence
 
-The v1.1.0 metadata-only action probe must report `kReviveMetadataSupportMask` ready before the controller permits Revive. Required surface includes:
+Controller requires both:
+- `kReviveMetadataSupportMask`;
+- `kMainThreadDispatcherMetadataSupportMask`.
 
-- UIObject type + static `instances` field;
-- active/children surface;
-- UIButton type;
-- UIButton interactable/text getters;
-- `UIButton.HandleClickEvent()` method.
+Observed current-client dispatcher surface:
+- `FGStudio.Engine.Utilities.MainThread.get_Instance()`;
+- `MainThread.Execute(System.Action)`;
+- queue field `ConcurrentQueue<System.Action> waitToBeProcess`.
 
-Presence of metadata alone is not permission to call the method. v1.2.0 additionally requires the proven hook/main-thread envelope and all runtime PRE conditions.
+Metadata is capability evidence only; runtime PRE + ActionQueue + real POST are still mandatory.
 
-## Fresh runtime resolver
+## Bounded fresh resolver
 
-`src/bridge/revive_action_engine.inc` resolves every runtime target inside the single command 7 callback:
+`revive_action_engine.inc`:
+1. fresh PRE snapshot;
+2. expected RoleID/MapID + dead=1 + map stable;
+3. fresh `UIObject.instances`;
+4. enumerate current values with 120ms hard budget / 4096-entry cap;
+5. class-filter UIButton before expensive getter calls;
+6. exact visible text matching only;
+7. candidate must active + interactable;
+8. PRE and candidate revalidated before dispatch.
 
-1. Re-run `ReadGameSnapshot()` on the proven Unity main thread.
-2. Require expected RoleID + MapID, `dead=1`, `MapReady=1`, `WaitingChangeMap=0`.
-3. Resolve current Assembly-CSharp UIObject/UIButton metadata.
-4. Resolve `UIObject.instances` and read its static value with optional `il2cpp_field_static_get_value`.
-5. Enumerate the current Dictionary Values through managed read-only getter/enumerator calls.
-6. Filter UIButton/subclasses that are active + interactable.
-7. Normalize Name/Text for Vietnamese matching.
-8. Rank exact `Đầu thai` highest; reject ties.
-9. Re-read game PRE and revalidate the selected UIButton immediately before the callback.
-10. Call `UIButton.HandleClickEvent()` exactly once.
-11. Discard the pointer when command 7 returns.
+No candidate or budget exhaustion => no action queued.
 
-No runtime UIButton pointer is stored in SharedBlock, controller state or across map transitions.
+## Deferred managed action
 
-## Exclusive mutation gate
+The fresh `UIButton.HandleClickEvent()` method is not directly invoked by command 7.
 
-Global `kGameplayMutationEnabled=false` remains unchanged. v1.2.0 introduces separate `kReviveMutationEnabled=true` solely for command 7.
+Bridge builds a `System.Action` bound to the fresh UIButton using:
 
-CI rejects Revive source if it contains any of:
+`System.Delegate.CreateDelegate(System.Type,System.Object,System.Reflection.MethodInfo)`
 
-- ClickNPC
-- StartAutoFight
-- RequestSellItem
-- StartPath / StopPath
-- HandlePointerClick
-- CreateRemoteThread
-- il2cpp_thread_attach
-- Sleep-driven workflow
+Reflection objects are obtained with IL2CPP metadata exports (`class_get_type`, `type_get_object`, `method_get_object`). The resulting Action is passed to:
 
-CI also counts direct `g_api.runtime_invoke(handleClick, ...)` and requires exactly one occurrence.
+`FGStudio.Engine.Utilities.MainThread.Execute(System.Action)`
+
+Thus command 7 only queues work. Actual callback execution is deferred to the game's `MainThread.Update` processing of its action queue.
+
+CI forbids direct `g_api.runtime_invoke(handleClick,...)` in the Revive engine.
 
 ## PRE
 
 Controller requires:
-
-- same current client/session;
-- bridge attached;
-- current-session harmless hook/main-thread proof PASS;
-- scanner healthy + 60/60 qualified;
+- current session harmless proof PASS;
+- Revive + MainThread metadata ready;
+- scanner healthy and 60/60;
 - observer stable;
-- no active map transition;
-- RoleID/MapID match intent;
-- `dead=1` stable for two consecutive full snapshots;
-- current-client Revive metadata capability ready;
-- ActionQueue empty before enqueue.
+- no transition;
+- exact intent identity;
+- dead=1 stable 2/2;
+- ActionQueue empty.
 
 ## Dispatch ACK
 
-After command 7 returns, queue remains active. Controller verifies:
+ACK requires:
+- token match;
+- command ingress TID/current/main IDs match proven main thread;
+- pre RoleID/MapID and preDead=1 match;
+- `queued=1`;
+- `directInvoked=0`.
 
-- token matches intent;
-- callback actually invoked;
-- callback TID matches proven hook TID;
-- managed current/main IDs match the proven Unity main thread;
-- pre RoleID + pre MapID match intent;
-- preDead=1.
-
-Mismatch is fatal fail-closed. Resolver/action failure before a verified callback cancels the queue and blocks further Revive attempts for that same death episode; there is no retry spam.
+ACK means only that the Action entered the game dispatcher. It is not gameplay success.
 
 ## Real POST
 
-`HandleClickEvent()` returning is not success. Success is observer evidence.
+Success remains two consecutive observer snapshots with:
+- same RoleID;
+- dead=0;
+- MapReady=1;
+- WaitingChangeMap=0.
 
-Revive may move the character to another MapID, therefore MapID is not required to stay equal after the callback. RoleID must stay equal.
+MapID may change. During map transition the one active Revive may be preserved solely to wait for POST; no new mutation is allowed.
 
-If map transition occurs, active Revive is preserved only as an outstanding POST wait. Every new mutation remains locked.
+## Diagnostic stages
 
-After transition/recovery, controller requires two consecutive stable snapshots satisfying:
+Shared progress stages allow timeout localization:
+1 FreshPre; 2 ResolveTypes; 3 Instances; 4 Enumerator; 5 ScanButtons; 6 Candidate; 7 DelegateReflection; 8 CreateDelegate; 9 MainThreadInstance; 10 MainThreadEnqueue; 11 Queued.
 
-- same RoleID as PRE;
-- `dead=0`;
-- `MapReady=1`;
-- `WaitingChangeMap=0`.
+Timeout/failure always remains fail-closed with no retry in that death episode.
 
-Only after the second stable alive snapshot does `ActionQueue.CompleteActive()` return occupancy to zero.
+## Scope
 
-## Failure policy
-
-- UI candidate absent/ambiguous: block this death episode, no blind click.
-- Scanner failure while waiting POST: fail closed, no callback retry.
-- RoleID drift: fail closed.
-- Dispatch token/thread/PRE mismatch: fail closed.
-- POST timeout 30 seconds: fail closed, no callback retry.
-
-This milestone proves Revive only. AutoFight, NPC, Sell, Path, Treatment and Buff remain outside the action engine.
+This evidence milestone is Revive only. AutoFight, NPC, Sell, Path, Treatment and Buff remain locked.

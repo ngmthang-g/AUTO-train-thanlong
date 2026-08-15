@@ -1,0 +1,38 @@
+THAN LONG AUTO NEWCORE v1.2.1 - REVIVE DISPATCHER ANTI-DISS HOTFIX
+Date: 2026-08-15
+
+RUNTIME INPUT
+- v1.2.0 live failed after sending InvokeReviveButton: command timeout 5s; controller fail-closed; client diss/unresponsive.
+- All inherited scanner/MainThread/harmless/queue gates had passed.
+- Exact internal v1.2.0 blocking sub-step was not observable.
+
+HOTFIX
+- Protocol 0x00010201.
+- Revive-only gameplay gate retained.
+- direct HandleClickEvent runtime invoke from WH_GETMESSAGE removed and forbidden.
+- fresh UI scan bounded to 120ms / 4096 entries.
+- System.Action created via Delegate.CreateDelegate and queued through FG MainThread.Execute(System.Action).
+- live timeout breadcrumbs stage 1..11 + object/button/time counters.
+- ActionQueue MAX=1 and real dead=1->0 POST unchanged.
+- AutoFight/NPC/Sell/Path remain locked.
+
+WIP COMPILER GATE
+GitHub Actions run #67 / 31879947871: PASS on pre-documentation WIP head.
+- Architecture audit PASS.
+- Global mutation FALSE / Revive ONLY TRUE.
+- Direct HandleClickEvent invoke=0.
+- Deferred MainThread.Execute(Action) audit PASS.
+- Resolver budget=120ms audit PASS.
+- ControlSelfTest 48/48 PASS.
+- ReviveSelfTest 18/18 PASS.
+- Bridge build + LoadLibrary PASS.
+- Controller v1.2.1 build + Verify PASS.
+- WIP EXE SHA256: 4559bb33ec24326431487228183b41633576363d2fef9ff721612cd9c1d58dd6
+- WIP DLL SHA256: bc765b27e6494aaf92e35b8958d986a613605d8dd9ca9d376ded07f868be1d17
+- WIP artifact ZIP digest: 6048009ca728918195be7683bb1209133f3445e58691831e079d487b467fe6eb
+
+FINAL PUBLICATION RULE
+- Complete docs/source-integrity.
+- Squash branch to exactly one commit over v1.2.0 head 226f649001773ef8295dd502ff63a0725eee860a.
+- Run GitHub Actions again on final squashed head.
+- Only the final run artifact is handed to the user.

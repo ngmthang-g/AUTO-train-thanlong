@@ -23,7 +23,7 @@
             CreateWindowW(L"BUTTON", L"Ngắt bridge", WS_CHILD | WS_VISIBLE,
                           296, 284, 130, 34, hwnd, reinterpret_cast<HMENU>(IDC_DISCONNECT), nullptr, nullptr);
             CreateWindowW(L"STATIC",
-                          L"v1.2.0: Revive/Đầu thai ONLY. AutoFight/NPC/Sell vẫn khóa. Queue MAX=1 + POST thật.",
+                          L"v1.2.1: Revive deferred qua MainThread.Execute(Action), scan UI <=120ms. AutoFight/NPC/Sell vẫn khóa.",
                           WS_CHILD | WS_VISIBLE, 448, 292, 720, 26, hwnd, nullptr, nullptr, nullptr);
             g_log = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL |
                                     ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL,
@@ -43,7 +43,7 @@
                 L" • " + std::to_wstring(reviveTest.passed) + L"/" +
                 std::to_wstring(reviveTest.total) + L" • failed=" +
                 std::to_wstring(reviveTest.failed) +
-                L" • Revive exclusive gate/dispatch ACK/map-change POST");
+                L" • queued-not-direct ACK / dispatcher gate / map-change POST");
 
             SetTimer(hwnd, TIMER_ID, 100, nullptr);
             ScanGames();

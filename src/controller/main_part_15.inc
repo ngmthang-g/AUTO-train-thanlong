@@ -1,6 +1,6 @@
                     if (it != g_sessions.end()) it->second->ValidateWanted();
                 }
-                Log(L"Bắt đầu v1.2.0 runtime: foundation + scanner + harmless proof + Revive ONLY; AutoFight/NPC/Sell vẫn khóa");
+                Log(L"Bắt đầu v1.2.1 runtime: scanner + harmless proof + bounded Revive resolve + deferred MainThread.Execute(Action); AutoFight/NPC/Sell vẫn khóa");
                 return 0;
             }
             if (LOWORD(wp) == IDC_DISCONNECT) {

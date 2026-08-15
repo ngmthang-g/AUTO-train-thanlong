@@ -23,7 +23,7 @@
         mapTransitionCount_ = 0;
         controlState_ = ControlFsmState::SafePaused;
         actionQueue_.Clear();
-        reviveDryRunIssued_ = true; // suppress legacy dry-run path; v1.2.0 owns Revive lifecycle.
+        reviveDryRunIssued_ = true; // suppress legacy dry-run path; v1.2.1 owns Revive lifecycle.
         reviveDispatchIssued_ = false;
         reviveAwaitingPost_ = false;
         reviveBlockedThisDeath_ = false;
@@ -109,7 +109,16 @@
         const auto poll = bridge_.Poll(response);
         if (poll == BridgeClient::PollResult::Pending || poll == BridgeClient::PollResult::Idle) return;
         if (poll == BridgeClient::PollResult::Timeout) {
-            Fail(L"Probe timeout; fail-closed, không retry spam");
+            if (pending_ == BridgeCommand::InvokeReviveButton) {
+                const ReviveActionSnapshot progress = bridge_.ReviveProgress();
+                Fail(L"REVIVE COMMAND TIMEOUT • stage=" + std::to_wstring(progress.progressStage) +
+                     L" objects=" + std::to_wstring(progress.scannedObjects) +
+                     L" buttons=" + std::to_wstring(progress.scannedButtons) +
+                     L" elapsedMs=" + std::to_wstring(progress.elapsedMs) +
+                     L" • fail-closed; KHÔNG retry action");
+            } else {
+                Fail(L"Probe timeout; fail-closed, không retry spam");
+            }
             return;
         }
 
