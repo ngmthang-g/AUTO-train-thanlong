@@ -13,7 +13,7 @@ echo Zig: %ZIG_VERSION%
 
 if not exist dist mkdir dist
 del /q dist\*.exe dist\*.dll dist\*.res dist\*.lib dist\*.a >nul 2>nul
-del /q ThanLongNewCoreBridge.dll BridgeSelfTest.exe ThanLongAutoTrain_NewCore_v1.0.9.exe app.res >nul 2>nul
+del /q ThanLongNewCoreBridge.dll BridgeSelfTest.exe ThanLongAutoTrain_NewCore_v1.0.10.exe app.res >nul 2>nul
 
 echo [1/6] Architecture safety audit...
 findstr /S /I /N /C:"CreateRemoteThread" src\*.cpp src\*.h src\*.inc >nul 2>nul
@@ -88,18 +88,18 @@ echo [5/6] Controller EXE...
 zig c++ -target x86_64-windows-gnu -O2 -std=c++17 -DUNICODE -D_UNICODE -Wall -Wextra -Werror -municode -static ^
   src\controller\main.cpp app.res ^
   -Wl,--subsystem,windows -lcomctl32 -luser32 -lkernel32 -lgdi32 ^
-  -o ThanLongAutoTrain_NewCore_v1.0.9.exe
+  -o ThanLongAutoTrain_NewCore_v1.0.10.exe
 if errorlevel 1 goto :fail
 
 echo [6/6] Package...
 move /y ThanLongNewCoreBridge.dll dist\ThanLongNewCoreBridge.dll >nul
-move /y ThanLongAutoTrain_NewCore_v1.0.9.exe dist\ThanLongAutoTrain_NewCore_v1.0.9.exe >nul
+move /y ThanLongAutoTrain_NewCore_v1.0.10.exe dist\ThanLongAutoTrain_NewCore_v1.0.10.exe >nul
 move /y app.res dist\app.res >nul
 del /q BridgeSelfTest.exe >nul 2>nul
 
 echo.
 echo BUILD + LOADLIBRARY SELFTEST THANH CONG:
-echo   dist\ThanLongAutoTrain_NewCore_v1.0.9.exe
+echo   dist\ThanLongAutoTrain_NewCore_v1.0.10.exe
 echo   dist\ThanLongNewCoreBridge.dll
 echo.
 echo Sau khi chay: tick client - bam "Kiem tra nen + Scanner".

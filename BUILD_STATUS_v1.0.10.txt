@@ -1,0 +1,9 @@
+ThanLongAutoTrain NewCore v1.0.10
+Status before GitHub CI:
+- Local source transformation complete.
+- Read-only AutoPath probe mask added.
+- Identity-stable 2/2 map recovery added.
+- Identity edge requalification added.
+- Forbidden architecture audit PASS locally.
+- Windows Zig build must PASS in GitHub Actions before runtime use.
+- Gameplay actions remain LOCKED.

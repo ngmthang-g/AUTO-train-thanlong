@@ -10,18 +10,63 @@
             return;
         }
 
+        ObserveAutoPathProbe(gameSnapshot_);
+
         if (transitionLatched_) {
-            ++postTransitionStableScans_;
-            if (postTransitionStableScans_ < 2) {
+            if (!recoveryCandidateValid_) {
+                recoveryCandidateValid_ = true;
+                recoveryCandidateRoleID_ = gameSnapshot_.roleID;
+                recoveryCandidateMapID_ = gameSnapshot_.mapID;
+                postTransitionStableScans_ = 1;
                 state_ = FoundationState::WaitingStableMap;
-                detail_ = L"MAP RECOVERY 1/2: đã thấy map stable một lần; chờ scan stable thứ hai theo donor guard";
+                detail_ = L"MAP RECOVERY 1/2 • candidate role=" +
+                          std::to_wstring(recoveryCandidateRoleID_) +
+                          L" map=" + std::to_wstring(recoveryCandidateMapID_) +
+                          L"; cần snapshot thứ hai cùng identity";
+                events_.push_back(L"PID " + std::to_wstring(game_.pid) + L": " + detail_);
                 nextSnapshotDue_ = now + std::chrono::milliseconds(500);
                 return;
             }
+
+            if (gameSnapshot_.roleID != recoveryCandidateRoleID_ ||
+                gameSnapshot_.mapID != recoveryCandidateMapID_) {
+                events_.push_back(
+                    L"PID " + std::to_wstring(game_.pid) +
+                    L": MAP RECOVERY RESET • identity đổi role=" +
+                    std::to_wstring(recoveryCandidateRoleID_) + L"/map=" +
+                    std::to_wstring(recoveryCandidateMapID_) + L" → role=" +
+                    std::to_wstring(gameSnapshot_.roleID) + L"/map=" +
+                    std::to_wstring(gameSnapshot_.mapID) +
+                    L"; bắt đầu lại 1/2, action vẫn KHÓA");
+                recoveryCandidateRoleID_ = gameSnapshot_.roleID;
+                recoveryCandidateMapID_ = gameSnapshot_.mapID;
+                postTransitionStableScans_ = 1;
+                qualificationStableScans_ = 0;
+                state_ = FoundationState::WaitingStableMap;
+                nextSnapshotDue_ = now + std::chrono::milliseconds(500);
+                return;
+            }
+
+            postTransitionStableScans_ = 2;
             transitionLatched_ = false;
+            recoveryCandidateValid_ = false;
             postTransitionStableScans_ = 0;
-            events_.push_back(L"PID " + std::to_wstring(game_.pid) +
-                              L": MAP RECOVERY PASS 2/2 • state ổn định trở lại");
+            events_.push_back(
+                L"PID " + std::to_wstring(game_.pid) +
+                L": MAP RECOVERY PASS 2/2 • same identity role=" +
+                std::to_wstring(gameSnapshot_.roleID) +
+                L" map=" + std::to_wstring(gameSnapshot_.mapID) +
+                L" • state ổn định trở lại");
+        } else if (identityChanged) {
+            qualificationStableScans_ = 0;
+            events_.push_back(
+                L"PID " + std::to_wstring(game_.pid) +
+                L": IDENTITY REQUALIFY • role/map đổi ngoài transition flag: role=" +
+                std::to_wstring(previousGameSnapshot_.roleID) + L"/map=" +
+                std::to_wstring(previousGameSnapshot_.mapID) + L" → role=" +
+                std::to_wstring(gameSnapshot_.roleID) + L"/map=" +
+                std::to_wstring(gameSnapshot_.mapID) +
+                L"; reset 60/60, action vẫn KHÓA");
         }
 
         const std::wstring missing = MissingObserverFields(gameSnapshot_);
