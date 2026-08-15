@@ -1,48 +1,29 @@
-# Thần Long Auto - NewCore v1.0.7 Read-Only Snapshot
+# Thần Long Auto - NewCore
 
-Mục tiêu của bản này: **chứng minh Scanner + Snapshot/State Store**, chưa mở bất kỳ action game nào.
+This repository is a clean NewCore rebuild. Legacy v0.9.0 means the old pre-NewCore auto and is used only as a donor of verified data/semantics, never as an executor architecture.
 
-## Luồng bắt buộc
+## v1.0.8 current gate
 
-`Hook -> IL2CPP foundation -> MainThread proof -> ReadGameSnapshot -> State Store`
+v1.0.8 implements a continuous read-only Scanner/State Store/Observer layer. Gameplay actions remain locked.
 
-Mỗi client chỉ có tối đa **1 bridge request đang chạy**. Timeout là fail-closed, không retry spam.
+Pipeline remains fixed:
 
-## Snapshot đang thử đọc
+`Resolver -> Read-only Scanner -> GameSnapshot/State Store -> Observer -> State Machine -> Safety Guard -> Action Queue (MAX=1) -> Main Thread Dispatcher -> Internal Action Engine`
 
-- Character name (nếu getter có sẵn)
-- RoleID
-- MapID
-- X/Y nếu resolve được bằng metadata/getter hoặc managed `roleData` backing object
-- HP / MaxHP
-- Dead
-- Riding
-- AutoFight state (đọc `get_EnableAutoF1`, giữ semantics donor: false = train đang bật)
-- Free bag space
-- MapReady
-- WaitingChangeMap (nếu query có sẵn)
-- Moving (nếu query có sẵn)
+Current scanner observes stable-map state including RoleID, MapID, position when metadata-resolved, HP/MaxHP, dead, riding, moving, auto-fight, free bag space and AutoPath. `MapReady` and `WaitingChangeMap` are always read before deeper Leader/AutoPath objects; during a map transition deeper reads are skipped and recovery requires two stable snapshots.
 
-**Không dùng donor RVA/offset cho snapshot này.** X/Y không resolve được thì hiển thị `?`, không fallback sang `+0x50/+0x54/+0x58`.
+## Source integrity note
 
-## Luật kiến trúc vẫn khóa cứng
+The GitHub connector corrupted the first large single-file upload of `bridge.cpp` and `controller/main.cpp`, causing GitHub Actions run #26 to fail in the Build step. The repaired branch stores those two translation units as ordered `.inc` source fragments plus tiny wrapper `.cpp` files. This is a transport/storage workaround only. Fragment hashes and intended full-source hashes are pinned in `SOURCE_INTEGRITY_v1.0.8.md`.
 
-- Không `CreateRemoteThread`
-- Không `il2cpp_thread_attach`
-- Không worker action trong game
-- Không `Sleep()` để đoán state
-- Không ClickNPC / HandleClickEvent / StartAutoFight / Sell / Heal / Revive
-- Chỉ `runtime_invoke` query/getter read-only sau khi Unity main thread đã được chứng minh
-- Scanner không tự quyết định hành động
-- Action game vẫn **LOCKED**
+`build.cmd` audits `.cpp`, `.h`, and `.inc` for forbidden old-architecture/action tokens before compiling.
 
-## Build/Test
+## Golden rules
 
-1. Giải nén vào folder mới.
-2. Chạy `build.cmd`.
-3. Build phải PASS cả Architecture audit và Bridge LoadLibrary self-test.
-4. Chạy `dist\ThanLongAutoTrain_NewCore_v1.0.7.exe`.
-5. Tick client -> **Kiểm tra nền + Snapshot**.
-6. Gửi log từ `ReadGameSnapshot` nếu Snapshot không PASS hoặc X/Y vẫn `?`.
+See `docs/GOLDEN_RULES.md`. In short: scanner only reads; no `CreateRemoteThread`/remote gameplay worker; no `il2cpp_thread_attach`; no Sleep-driven state machine; no long-lived UI pointers; metadata-first resolution; action only after PRE validation, one active mutation maximum, proven Unity main thread, real POST/ACK verification, fail-closed unknown state, and per-process context isolation.
 
-Bản tiếp theo chỉ được chuyển sang continuous scanner sau khi one-shot snapshot này ổn định.
+## Build
+
+Run `build.cmd` with Zig 0.15.2 on Windows. Successful build must also pass the bridge LoadLibrary self-test. GitHub Actions is the authoritative Windows build for connector-published commits.
+
+Do not unlock gameplay actions until the continuous scanner and map-transition recovery pass live runtime testing.

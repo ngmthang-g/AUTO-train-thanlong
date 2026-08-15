@@ -1,4 +1,4 @@
-THAN LONG AUTO NEWCORE v1.0.7 - READ-ONLY SNAPSHOT
+THAN LONG AUTO NEWCORE v1.0.8 - CONTINUOUS READ-ONLY SCANNER
 Date: 2026-08-15
 
 STATIC AUDIT
@@ -6,16 +6,22 @@ STATIC AUDIT
 - Source path contains no il2cpp_thread_attach.
 - Source path contains no Sleep(.
 - Source path contains no ClickNPC / HandleClickEvent / StartAutoFight / RequestSellItem.
+- Safety audit covers .cpp, .h AND transport-split .inc files.
 - Bridge keeps one request maximum per client and controller timeout remains fail-closed.
 - Snapshot command re-proves UnitySynchronizationContext + managed main-thread ID before reading game state.
-- Snapshot resolves classes/methods through IL2CPP metadata names; it does not use v0.9.0 gameplay RVAs.
+- MapReady/WaitingChangeMap are read before LeaderRoleData/AutoPath.
+- Snapshot resolves classes/methods through IL2CPP metadata names; it does not execute legacy donor gameplay RVAs.
 - X/Y deliberately has no hardcoded donor offset fallback.
-- 30 IL2CPP exports used by the bridge were found in the supplied GameAssembly.dll.
-- Required metadata strings for LuaSystemSharedData, LuaPlayerData, LuaSystemAPI_Game, SessionData and snapshot getters are present in supplied global-metadata.dat.
+- AutoPath state resolves from FGStudio.Engine.Logic.AutoPathManager metadata.
+- Gameplay actions remain LOCKED.
+
+SOURCE INTEGRITY
+- Large C++ translation units are stored as ordered .inc fragments with wrapper .cpp files because an earlier connector upload corrupted large payloads.
+- Fragment Git blob IDs are pinned in SOURCE_INTEGRITY_v1.0.8.md.
+- This layout is storage/transport only; it does not change NewCore runtime architecture.
 
 RUNTIME REQUIRED
 - Windows Zig build must PASS build.cmd.
 - MainThread proof must PASS in the real client.
-- ReadGameSnapshot must PASS core valid mask.
-- If Position is not discoverable by managed metadata/getters it remains invalid; do not patch with donor offsets in this phase.
-- No gameplay action is enabled in v1.0.7.
+- Continuous scanner must hold stable Map/Position/Moving/AutoPath state and recover cleanly across map transitions.
+- No gameplay action is enabled in v1.0.8.
