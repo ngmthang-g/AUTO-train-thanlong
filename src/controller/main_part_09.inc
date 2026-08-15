@@ -20,6 +20,10 @@
                 Fail(L"Bridge snapshot lỗi " + std::to_wstring(response.errorCode) + L": " + std::wstring(response.detail));
                 return;
             }
+            if (reviveAwaitingPost_) {
+                Fail(L"REVIVE POST FAIL: scanner query lỗi khi action đang active; không retry callback");
+                return;
+            }
             ++scannerFailures_;
             qualificationStableScans_ = 0;
             recoveryCandidateValid_ = false;
@@ -74,8 +78,10 @@
             transitionLatched_ = true;
             recoveryCandidateValid_ = false;
             postTransitionStableScans_ = 0;
-            actionQueue_.Clear();
+            if (!ApplyTransitionQueueBoundary(L"flags")) return;
             lastGuardBlockReason_.clear();
             SetControlFsmState(ControlFsmState::MapTransition,
-                               L"source=flags; queue cleared; fail-closed");
+                               reviveAwaitingPost_
+                                   ? L"source=flags; active Revive preserved; all new mutations locked"
+                                   : L"source=flags; queue cleared; fail-closed");
             if (state_ != FoundationState::WaitingStableMap) {

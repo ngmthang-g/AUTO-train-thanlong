@@ -21,14 +21,14 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          $exe='dist/ThanLongAutoTrain_NewCore_v1.1.0.exe'
+          $exe='dist/ThanLongAutoTrain_NewCore_v1.2.0.exe'
           $dll='dist/ThanLongNewCoreBridge.dll'
           if (!(Test-Path $exe)) { throw 'Missing EXE' }
           if (!(Test-Path $dll)) { throw 'Missing bridge DLL' }
           Get-FileHash -Algorithm SHA256 $exe,$dll | Format-Table -AutoSize
       - uses: actions/upload-artifact@v4
         with:
-          name: ThanLongAutoTrain_NewCore_v1.1.0
+          name: ThanLongAutoTrain_NewCore_v1.2.0
           path: |
-            dist/ThanLongAutoTrain_NewCore_v1.1.0.exe
+            dist/ThanLongAutoTrain_NewCore_v1.2.0.exe
             dist/ThanLongNewCoreBridge.dll

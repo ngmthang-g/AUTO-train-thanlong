@@ -1,56 +1,79 @@
-THAN LONG AUTO NEWCORE v1.1.0 - INTEGRATED ACCEPTANCE STATIC AUDIT
+THAN LONG AUTO NEWCORE v1.2.0 - REVIVE ONLY STATIC AUDIT
 Date: 2026-08-15
 
+PROVEN BASE INHERITED FROM v1.1.0
+- Scanner/Observer runtime gate PASS.
+- SafetyGuard + ActionQueue(MAX=1) control-plane PASS.
+- WH_GETMESSAGE / Unity-main-thread harmless envelope live PASS.
+- token/sequence/thread POST live PASS.
+
 ARCHITECTURE
-- Scanner is read-only.
+- Scanner remains read-only.
 - ReadGameSnapshot remains BridgeCommand=5.
-- ProveHookActionEnvelope=6 is infrastructure-only and must never contain a gameplay action call.
+- ProveHookActionEnvelope=6 remains infrastructure-only.
+- InvokeReviveButton=7 is the ONLY gameplay mutation command in v1.2.0.
 - No CreateRemoteThread.
 - No il2cpp_thread_attach.
 - No Sleep( in NewCore source.
-- kGameplayMutationEnabled must be exactly false.
-- kHarmlessInfrastructureProofEnabled must be exactly true.
-- ActionQueueScaffold::kCapacity must be exactly 1.
-- No gameplay action is emitted from scanner or capability resolver.
+- Global kGameplayMutationEnabled remains exactly false.
+- Exclusive kReviveMutationEnabled must be exactly true.
+- kHarmlessInfrastructureProofEnabled remains true.
+- ActionQueueScaffold::kCapacity remains exactly 1.
+- AutoFight/NPC/Sell/Path and all other gameplay actions remain locked.
 
-HARMLESS ACTION ENVELOPE
-- Runs through the existing WH_GETMESSAGE callback only.
-- Re-proves Unity main thread before completion.
-- Allowed side effect: bridge-local monotonically increasing proof counter only.
-- Returns token, sequence, callback TID, managed current/main IDs.
-- Controller must hold queue active until POST verifies all returned evidence.
-- Source must contain no ClickNPC, HandleClickEvent, StartAutoFight, RequestSellItem, StartPath, StopPath or direct runtime_invoke.
-- Failure clears queue and bridge fail-closed.
+REVIVE ACTION ENGINE
+- Runs only from the already-proven WH_GETMESSAGE / Unity-main-thread callback.
+- Fresh PRE snapshot requires expected RoleID + MapID, dead=1, MapReady=1, WaitingChangeMap=0.
+- UIObject.instances is re-resolved on every attempt; no UIButton pointer is stored across commands/transitions.
+- UIObject.instances is enumerated through managed Dictionary.Values/GetEnumerator metadata/runtime getters.
+- Candidate must be UIButton or subclass, ActiveInHierarchy=true and Interactable=true.
+- Label normalization supports Vietnamese Đầu thai/Hồi sinh plus Revive/Relive/Respawn.
+- Exact Đầu thai has highest score. Multiple equal best matches block fail-closed.
+- Selected button is revalidated immediately before callback.
+- CI requires exactly ONE direct `g_api.runtime_invoke(handleClick, ...)` in revive_action_engine.inc.
+- Direct callback is UIButton.HandleClickEvent() only.
+- No ClickNPC, StartAutoFight, RequestSellItem, StartPath, StopPath or HandlePointerClick in revive engine.
+- No raw RVA is executed.
+
+REVIVE CONTROLLER LIFECYCLE
+- Requires harmless hook/main-thread proof PASS from current session.
+- Requires current-client kReviveMetadataSupportMask ready.
+- Requires SafetyGuard PRE + scanner qualified 60/60 + observer stable + no transition + dead stable 2/2.
+- ActionQueue transitions queued -> active and stays active until real POST.
+- Dispatch ACK verifies token, callback TID, managed current/main IDs, RoleID, pre-MapID and preDead=1.
+- Resolver/action failure blocks the remainder of that death episode; no retry spam.
+- After callback, no second gameplay mutation is sent.
+- If Revive causes map transition, active Revive is preserved solely to wait POST; every NEW mutation remains locked.
+- MapID is allowed to change after Revive. RoleID is not.
+- Real POST requires two consecutive stable snapshots with same RoleID, dead=0, MapReady=1, WaitingChangeMap=0.
+- Only then CompleteActive() returns queue occupancy to 0.
+- Scanner failure while waiting Revive POST fails closed; callback is not retried.
+- POST timeout is 30 seconds, then fail closed with no callback retry.
+
+LEGACY DRY-RUN NOTE
+- v1.0.12 ConsiderReviveDryRun source remains for historical scaffold compatibility, but v1.2.0 pins reviveDryRunIssued_=true and the dedicated Revive lifecycle owns the action. It does not emit the old dry-run envelope.
+- Generic v1.1.0 PostconditionSatisfied(Revive) is not the v1.2.0 runtime gate; the real action uses RevivePostconditionSatisfied(), which permits MapID change but rejects RoleID change.
 
 ACTION CAPABILITY PROBE
-- Action names may appear only as metadata strings/evidence; their presence is not permission to invoke.
-- Probe uses class/method/field/type metadata inspection only.
-- Probe source must contain no runtime_invoke, InvokeObject, InvokeScalar or BridgeCommand dispatch.
-- UI metadata support and NPC/inventory metadata support are reported independently.
-- Dynamic Lua combat and sell callbacks stay DONOR_ONLY / UNRESOLVED.
-- No live UIButton/UIToggle pointer is acquired or cached by the probe.
+- Metadata-only resolver v3 remains read-only.
+- No runtime action is emitted from capability probe.
+- Dynamic Lua combat and sell callbacks remain DONOR_ONLY / UNRESOLVED.
 
-AUTOMATED CONTROL TEST
-- FSM model.
-- SafetyGuard PRE conditions.
-- identity drift + map-transition block.
-- ActionQueue queued/active serialization + cancel.
-- scanner watchdog 3-failure trip/reset.
-- gameplay dispatcher remains mutation-locked.
-- infrastructure dispatcher accepts only HarmlessInfrastructureProof.
-- harmless POST positive case + bad token + stale sequence + wrong callback thread + managed-thread mismatch.
-- Revive/combat gameplay postcondition model checks.
-- Expected integrated self-test count: 48.
+AUTOMATED TESTS
+- Integrated control self-test: expected 48/48 PASS.
+- Exclusive Revive self-test: expected 16/16 PASS.
+- Revive tests include exclusive gate, dispatch ACK, bad token/thread/PRE, map-change POST allowed, RoleID change blocked, transition-state POST blocked, and confirmation that AutoFight/NPC/Sell global gates remain disabled.
 
 CI REQUIRED
-- ControlSelfTest compile + 48/48 PASS.
-- metadata-only capability audit PASS.
-- harmless-envelope forbidden-token audit PASS.
-- Windows Zig 0.15.2 build.cmd PASS.
-- Bridge LoadLibrary self-test PASS.
-- Controller EXE build PASS.
-- EXE/DLL artifact verify/upload PASS.
+- Exclusive Revive architecture audit PASS.
+- Direct HandleClickEvent runtime invoke count exactly 1.
+- ControlSelfTest 48/48 PASS.
+- ReviveSelfTest 16/16 PASS.
+- Windows Zig 0.15.2 build PASS.
+- Bridge LoadLibrary PASS.
+- Controller EXE Verify PASS.
+- Artifact upload PASS.
 
-RUNTIME POLICY
-- No phase-by-phase manual testing.
-- Command 6 still needs one later integrated live acceptance on the client; this code/CI checkpoint alone does not unlock gameplay mutation.
+RUNTIME ACCEPTANCE
+- One integrated live test only: start/stabilize -> harmless proof PASS -> die once -> dead 2/2 -> fresh unique Revive UIButton -> one HandleClickEvent -> optional map transition/recovery -> dead=0 stable 2/2 -> queue complete.
+- PR stays Draft until that one live Revive acceptance passes.

@@ -1,96 +1,157 @@
-# Thần Long Auto - NewCore v1.1.0 Integrated Acceptance
+# Thần Long Auto - NewCore v1.2.0 Revive Action
 
-v1.1.0 gom các phase kiểm chứng nhỏ trước đây thành **một mốc tích hợp** để giảm tối đa runtime test thủ công.
+v1.2.0 là mốc NewCore đầu tiên mở **một gameplay mutation thật** sau khi scanner/observer/control-plane/hook-main-thread envelope đã được chứng minh bằng runtime ở các mốc trước.
+
+Action được mở duy nhất: **Revive / Đầu thai**.
+
+AutoFight, NPC, Sell, Path, Treatment, Buff và mọi action khác vẫn khóa.
 
 ## Pipeline
 
-`Resolver -> Scanner(read-only) -> Snapshot/State Store -> Observer -> FSM -> SafetyGuard -> ActionQueue(MAX=1) -> Hook/MainThread Dispatcher -> Internal Action Engine`
+`Resolver -> Scanner(read-only) -> Snapshot/State Store -> Observer -> FSM -> SafetyGuard -> ActionQueue(MAX=1) -> proven Hook/Unity MainThread -> Internal Action Engine -> WAIT REAL POST -> VERIFY`
 
-Scanner/Observer và map-transition guard kế thừa runtime evidence đã PASS từ v1.0.10/v1.0.11.
+Core invariant vẫn là:
 
-## Control plane
+`READ -> DECIDE -> VALIDATE -> ACTION -> WAIT REAL STATE CHANGE -> VERIFY -> NEXT`
 
-- FSM: SAFE_PAUSED / SCANNER_QUALIFYING / IDLE_STABLE / DEAD_DETECTED / MAP_TRANSITION / ACTION_PREPARED / AWAITING_POSTCONDITION / FAULTED.
-- SafetyGuard PRE-condition matrix cho identity, scanner, observer, transition, watchdog và life-state.
-- ActionQueue capacity compile-time đúng 1, mô hình queued/active.
-- ScannerWatchdog fail-closed sau 3 lỗi liên tiếp.
-- Postcondition framework cho infrastructure proof, Revive và combat automation.
-- Gameplay DispatcherGate tách khỏi InfrastructureDispatcherGate.
-- `kGameplayMutationEnabled = false` vẫn khóa compile-time.
-- Protocol `0x00010102`.
-- BridgeCommand `ReadGameSnapshot=5`; command `ProveHookActionEnvelope=6` là **infrastructure-only**, không phải gameplay command.
+## Proven base inherited from v1.1.0
 
-## Harmless hook/main-thread action envelope
+v1.2.0 không nghiên cứu lại foundation đã PASS:
 
-Mốc này chứng minh đường **ActionQueue -> SafetyGuard -> hook/main-thread callback -> POST** mà không gọi gameplay method.
+- IL2CPP/native foundation;
+- continuous read-only scanner;
+- stable 60/60 qualification;
+- map transition source=flags + source=identity;
+- same-identity map recovery 2/2;
+- AutoPath read-only resolver semantics;
+- FSM + SafetyGuard;
+- ActionQueue capacity exactly 1;
+- harmless WH_GETMESSAGE / Unity-main-thread action envelope;
+- live token/sequence/thread POST verification.
 
-Sau khi scanner đủ 60/60 trên identity ổn định và nhân vật alive:
+## Protocol
 
-1. Controller tạo `HarmlessInfrastructureProof` với token duy nhất.
-2. SafetyGuard bắt buộc bridge attached, MainThread proven, scanner qualified/healthy, observer stable, không transition và identity khớp.
-3. ActionQueue nhận đúng 1 intent rồi chuyển `queued -> active`; trong lúc active không intent thứ hai được phép vào.
-4. `ProveHookActionEnvelope=6` được post bằng cùng `kWakeMessage` tới `TlGetMessageHook`.
-5. Bridge **re-prove Unity main thread** rồi chỉ tăng một counter nội bộ bridge; không resolve/call UI, NPC, combat, path, inventory hay shop action.
-6. Bridge echo token + proof sequence + callback TID + managed current/main IDs.
-7. Controller chỉ `CompleteActive()` khi POST xác minh token đúng, sequence tăng, callback TID đúng PRE hook thread và managed current/main vẫn đúng Unity main thread.
-8. Sai bất kỳ điều kiện nào => fail-closed, clear queue, close bridge.
+- `kProtocolVersion = 0x00010200`
+- `ReadGameSnapshot = 5`
+- `ProveHookActionEnvelope = 6` — infrastructure-only
+- `InvokeReviveButton = 7` — first and only gameplay mutation command
 
-Build audit cấm trực tiếp các token gameplay `ClickNPC`, `HandleClickEvent`, `StartAutoFight`, `RequestSellItem`, `StartPath`, `StopPath` và direct `runtime_invoke` trong `harmless_action_envelope.inc`.
+## Exclusive mutation boundary
 
-Đây là **proof của execution envelope**, không phải proof của gameplay mutation. Gameplay vẫn bị khóa.
+Global `kGameplayMutationEnabled=false` vẫn giữ nguyên cho toàn bộ action cũ/tương lai.
 
-## Action / Dispatcher Capability Resolver v3 — read-only
+v1.2.0 thêm gate riêng:
 
-Foundation sau MainThread proof chạy metadata-only capability probe trên **current client**. Probe chỉ dùng class/method/field/type metadata, không gọi managed action, không lấy live UIButton và không mutate game.
+`kReviveMutationEnabled=true`
 
-### UI/NPC/inventory
+Do đó Revive có thể được dispatch khi đủ evidence, nhưng AutoFight/NPC/Sell/Path vẫn bị global DispatcherGate từ chối.
 
-Probe xác minh metadata cho:
+CI kiểm tra trực tiếp source và yêu cầu:
 
-- `UIObject.instances`, active/children;
-- `UIButton.get_Interactable`, `get_Text`, `HandleClickEvent()`;
-- `UIToggle` selected/set/select-event;
-- `LuaSystemAPI_Game.ClickNPC(Int32)`, `GetNearestNPC(Int32)`;
-- `GetFreeBagSpace`, `GetItemsAtSite(Int32)`, `GetItemData(Int32)`;
-- `GetItemType`, `GetEquipType`, `IsItemSellable`.
+- ActionQueue MAX=1;
+- command 7 tồn tại;
+- Revive gate TRUE;
+- global gameplay gate FALSE;
+- `revive_action_engine.inc` có đúng **một** direct `g_api.runtime_invoke(handleClick, ...)`;
+- file Revive không chứa ClickNPC / StartAutoFight / RequestSellItem / StartPath / StopPath / HandlePointerClick;
+- không CreateRemoteThread;
+- không il2cpp_thread_attach;
+- không Sleep-driven workflow.
 
-### Lua executor không đoán namespace
+## Revive fresh-object resolver
 
-Hai export `il2cpp_image_get_class_count` + `il2cpp_image_get_class` được resolve **optional** để duyệt Assembly-CSharp. Probe tìm class duy nhất tên `MonoBehaviourExecutor` rồi yêu cầu:
+Revive không cache UIButton.
 
-- static `get_Instance()`;
-- instance `ExecuteScriptFunction(FGStudio.LuaSystem.Base.UIObject,System.String,System.Object[])`.
+Khi PRE đã đủ, command 7 chạy ngay trên proven hook/Unity-main-thread callback và:
 
-Không tìm thấy/không duy nhất => PARTIAL/AMBIGUOUS, action vẫn khóa.
+1. đọc snapshot mới;
+2. yêu cầu đúng RoleID/MapID, `dead=1`, `MapReady=1`, `WaitingChangeMap=0`;
+3. resolve current `UIObject.instances`;
+4. lấy Dictionary Values và enumerate object hiện tại;
+5. chỉ nhận UIButton/subclass active + interactable;
+6. đọc Name/Text;
+7. normalize tiếng Việt;
+8. ưu tiên exact **Đầu thai**, sau đó Hồi sinh / Revive / Relive / Respawn;
+9. nếu nhiều candidate đồng điểm => block fail-closed;
+10. đọc lại snapshot + revalidate selected button ngay trước callback;
+11. gọi `UIButton.HandleClickEvent()` đúng **một lần**;
+12. bỏ pointer ngay khi command trả về.
 
-### Dispatcher dựa trên runtime evidence thật
+Không có click tọa độ, raw RVA hay long-lived UI pointer.
 
-Runtime metadata log cũ của chính client đã từng in:
+## Revive controller lifecycle
 
-- `FGStudio.Engine.Utilities.MainThread`: static `get_Instance()` và instance `Execute(System.Action)`;
-- `UnityMainThreadDispatcher`: static `get_Instance()`, instance `Enqueue(System.Action)`, static `Dispatch(System.Action)`.
+Controller chỉ phát Revive khi:
 
-Probe v3 dùng đúng các signature này làm capability gate thay vì suy đoán từ chuỗi metadata thô. Các capability chỉ chứng minh **method surface hiện diện**; NewCore hiện chưa cần tạo `System.Action` để làm harmless proof vì chính `WH_GETMESSAGE` callback đã là đường vào proven Unity main thread.
+- harmless hook/main-thread proof của session hiện tại đã PASS;
+- current-client `kReviveMetadataSupportMask` READY;
+- bridge/MainThread/scanner/observer healthy;
+- scanner đã 60/60;
+- không map transition;
+- RoleID/MapID PRE khớp;
+- `dead=1` ổn định 2 snapshot liên tiếp;
+- ActionQueue trống.
 
-### Dynamic Lua vẫn donor-only
+Sau dispatch, queue giữ `active=1`.
 
-Legacy v0.9.0 (pre-NewCore) giữ evidence:
+Bridge ACK phải xác minh:
 
-- `AutoFight_Main.StartAutoFight(Train/None)`;
-- `NPCShop_SellItemTab.RequestSellItem(DBItemData)`.
+- token đúng;
+- callback thật sự invoked;
+- callback TID đúng proven hook TID;
+- managed current/main đúng Unity main thread;
+- pre RoleID/MapID đúng;
+- preDead=1.
 
-Hai đường này không được tự nâng thành current-client runtime capability. Gameplay action thật chỉ được mở sau fresh-object/method resolution + ActionQueue + proven main-thread envelope + POST/ACK thật.
+`HandleClickEvent()` return **không được coi là success**.
 
-## Automated self-test
+## Real POST
 
-`build.cmd` compile/chạy `ControlSelfTest.exe` trước bridge/controller. Test hiện bao phủ **48 checks**: FSM, SafetyGuard, identity drift, map transition, queue MAX=1 queued/active/cancel, watchdog, gameplay dispatcher lock, infrastructure dispatcher gate, harmless token/sequence/thread POST và Revive/combat postconditions.
+Revive được phép làm nhân vật đổi MapID. Vì vậy POST không bắt MapID phải giữ nguyên; chỉ RoleID phải giữ nguyên.
 
-Build audit bắt buộc capability probe metadata-only và harmless envelope không chứa gameplay/invoke token.
+Nếu callback gây map transition:
 
-## Runtime-test policy
+- transition vẫn là hard scanner boundary;
+- active Revive được preserve duy nhất để chờ POST;
+- không action mới nào được phép vào queue;
+- không gửi callback Revive thứ hai.
 
-Không test từng version nhỏ. Mốc code/CI này vẫn chưa cần người dùng test riêng; integrated runtime acceptance sau cùng sẽ xác nhận command 6 trên client thật cùng các capability/action được mở ở phase sau.
+Sau recovery, cần **2 snapshot sống ổn định**:
 
-## Golden boundary
+- same RoleID;
+- `dead=0`;
+- `MapReady=1`;
+- `WaitingChangeMap=0`.
 
-Legacy v0.9.0 chỉ là donor. Không RemoteExecutor, remote gameplay worker, gameplay CreateRemoteThread, il2cpp_thread_attach runtime path, Sleep-driven transition, cached UI pointer hay blind retry.
+Snapshot thứ hai mới cho phép `CompleteActive()` và queue trở về `0/1`.
+
+## Fail closed
+
+- Không thấy đúng một UIButton revive => block death episode, không click mù.
+- Candidate đồng điểm => block.
+- Scanner lỗi trong lúc chờ POST => fail closed.
+- RoleID drift => fail closed.
+- Dispatch token/thread/PRE mismatch => fail closed.
+- POST quá 30 giây => fail closed.
+- Không retry callback trong cùng death episode.
+
+## Automated tests
+
+Build chạy cả hai bộ:
+
+- Integrated Control Self Test: **48 checks**.
+- Revive Control Self Test: **16 checks**.
+
+Revive tests bao phủ exclusive gate, dispatch ACK, wrong token/thread/PRE, MapID change allowed, RoleID change rejected và xác nhận AutoFight/NPC/Sell vẫn khóa.
+
+## Runtime acceptance
+
+Không test từng phase. Chỉ một lượt live:
+
+`60/60 -> harmless proof PASS -> chết -> dead 2/2 -> fresh Đầu thai -> HandleClickEvent ONCE -> optional map transition/recovery -> dead=0 2/2 -> REVIVE POST PASS -> queue 0/1`
+
+Chi tiết ở `docs/FIRST_RUNTIME_TEST.md`.
+
+## Donor boundary
+
+Legacy v0.9.0 (pre-NewCore) chỉ là donor tên API/UI semantics/ACK/data. Không copy RemoteExecutor, CreateRemoteThread, il2cpp_thread_attach, sleep workflow, raw RVA executor hay cached UI pointer sang NewCore.

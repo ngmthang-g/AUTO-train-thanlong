@@ -1,0 +1,29 @@
+THAN LONG AUTO NEWCORE v1.2.0 - REVIVE ONLY
+Date: 2026-08-15
+
+IMPLEMENTATION STATUS
+- Proven v1.1.0 base retained.
+- Protocol 0x00010200.
+- Command 7 = InvokeReviveButton.
+- Global gameplay mutation FALSE.
+- Exclusive Revive mutation TRUE.
+- ActionQueue MAX=1.
+- Fresh UIObject.instances / UIButton resolver implemented.
+- Exact-one HandleClickEvent direct invoke audit implemented.
+- Dead PRE 2/2 + dispatch ACK + map-transition preserve + alive POST 2/2 implemented.
+- No retry spam in same death episode.
+- AutoFight/NPC/Sell/Path remain locked.
+
+INTERMEDIATE COMPILER GATE
+- GitHub Actions run #58 / 31876253273: PASS on WIP branch.
+- Architecture audit PASS.
+- ControlSelfTest 48/48 PASS.
+- ReviveSelfTest 16/16 PASS.
+- Bridge build + LoadLibrary PASS.
+- Controller v1.2.0 build + Verify PASS.
+- Intermediate artifact SHA is NOT the release checkpoint because docs/source-integrity/final squash follow.
+
+FINAL PUBLICATION RULE
+- Squash to exactly one commit over proven v1.1.0 head b03304ccbd39a3b34c44fb3920296c975c6824f5.
+- Re-run GitHub Actions on the final squashed commit.
+- Only the final run artifact/hash is handed to the user for one-shot live Revive acceptance.

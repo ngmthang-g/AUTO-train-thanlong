@@ -9,9 +9,15 @@
         if (response.snapshot.unityDispatcherFieldCount) snapshot_.unityDispatcherFieldCount = response.snapshot.unityDispatcherFieldCount;
         if (response.snapshot.currentManagedThreadId) snapshot_.currentManagedThreadId = response.snapshot.currentManagedThreadId;
         if (response.snapshot.unityMainManagedThreadId) snapshot_.unityMainManagedThreadId = response.snapshot.unityMainManagedThreadId;
+        if (response.actionCapabilities.probeVersion != 0)
+            actionCapabilities_ = response.actionCapabilities;
 
         if (completed == BridgeCommand::ReadGameSnapshot) {
             HandleSnapshotResponse(response, now);
+            return;
+        }
+        if (completed == BridgeCommand::InvokeReviveButton) {
+            HandleReviveDispatchResponse(response);
             return;
         }
 

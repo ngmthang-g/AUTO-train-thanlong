@@ -5,6 +5,7 @@
 #include "main_part_05.inc"
 #include "main_part_06.inc"
 #include "main_part_07.inc"
+#include "revive_controller_methods.inc"
 #include "main_part_08.inc"
 #include "main_part_09.inc"
 #include "main_part_10.inc"

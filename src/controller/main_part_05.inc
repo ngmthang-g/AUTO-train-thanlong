@@ -1,6 +1,7 @@
         g_harmlessProofTrackers[game_.pid] = {};
         report_.clear();
         snapshot_ = {};
+        actionCapabilities_ = {};
         gameSnapshot_ = {};
         previousGameSnapshot_ = {};
         haveGameSnapshot_ = false;
@@ -22,7 +23,17 @@
         mapTransitionCount_ = 0;
         controlState_ = ControlFsmState::SafePaused;
         actionQueue_.Clear();
-        reviveDryRunIssued_ = false;
+        reviveDryRunIssued_ = true; // suppress legacy dry-run path; v1.2.0 owns Revive lifecycle.
+        reviveDispatchIssued_ = false;
+        reviveAwaitingPost_ = false;
+        reviveBlockedThisDeath_ = false;
+        reviveActiveToken_ = 0;
+        nextReviveToken_ = 1;
+        reviveExpectedRoleID_ = 0;
+        revivePreMapID_ = 0;
+        deadStableScans_ = 0;
+        reviveAliveStableScans_ = 0;
+        reviveDeadline_ = Clock::time_point{};
         lastGuardBlockReason_.clear();
         nextSnapshotDue_ = Clock::time_point{};
         Enter(FoundationState::Attaching, L"Bắt đầu kiểm tra nền read-only");
@@ -32,6 +43,7 @@
         bridge_.Close();
         pending_ = BridgeCommand::None;
         snapshot_ = {};
+        actionCapabilities_ = {};
         gameSnapshot_ = {};
         previousGameSnapshot_ = {};
         haveGameSnapshot_ = false;
@@ -53,7 +65,17 @@
         mapTransitionCount_ = 0;
         controlState_ = ControlFsmState::SafePaused;
         actionQueue_.Clear();
-        reviveDryRunIssued_ = false;
+        reviveDryRunIssued_ = true;
+        reviveDispatchIssued_ = false;
+        reviveAwaitingPost_ = false;
+        reviveBlockedThisDeath_ = false;
+        reviveActiveToken_ = 0;
+        nextReviveToken_ = 1;
+        reviveExpectedRoleID_ = 0;
+        revivePreMapID_ = 0;
+        deadStableScans_ = 0;
+        reviveAliveStableScans_ = 0;
+        reviveDeadline_ = Clock::time_point{};
         lastGuardBlockReason_.clear();
         nextSnapshotDue_ = Clock::time_point{};
         report_.clear();

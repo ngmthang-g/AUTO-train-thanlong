@@ -23,20 +23,27 @@
             CreateWindowW(L"BUTTON", L"Ngắt bridge", WS_CHILD | WS_VISIBLE,
                           296, 284, 130, 34, hwnd, reinterpret_cast<HMENU>(IDC_DISCONNECT), nullptr, nullptr);
             CreateWindowW(L"STATIC",
-                          L"v1.1.0: Integrated FSM/Guard/Queue/Watchdog/Postcondition self-test. Gameplay mutation vẫn khóa.",
+                          L"v1.2.0: Revive/Đầu thai ONLY. AutoFight/NPC/Sell vẫn khóa. Queue MAX=1 + POST thật.",
                           WS_CHILD | WS_VISIBLE, 448, 292, 720, 26, hwnd, nullptr, nullptr, nullptr);
             g_log = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL |
                                     ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL,
                                     12, 332, 1160, 250, hwnd, reinterpret_cast<HMENU>(IDC_LOG), nullptr, nullptr);
 
             const IntegratedSelfTestResult selfTest = RunIntegratedControlSelfTest();
-            g_controlSelfTestPass = selfTest.Pass();
+            const ReviveSelfTestResult reviveTest = RunReviveControlSelfTest();
+            g_controlSelfTestPass = selfTest.Pass() && reviveTest.Pass();
             Log(std::wstring(L"CONTROL SELF TEST ") +
-                (g_controlSelfTestPass ? L"PASS" : L"FAIL") +
+                (selfTest.Pass() ? L"PASS" : L"FAIL") +
                 L" • " + std::to_wstring(selfTest.passed) + L"/" +
                 std::to_wstring(selfTest.total) + L" • failed=" +
                 std::to_wstring(selfTest.failed) +
-                L" • FSM/SafetyGuard/Queue/Watchdog/Postcondition/DispatcherGate");
+                L" • FSM/SafetyGuard/Queue/Watchdog/HarmlessEnvelope");
+            Log(std::wstring(L"REVIVE CONTROL SELF TEST ") +
+                (reviveTest.Pass() ? L"PASS" : L"FAIL") +
+                L" • " + std::to_wstring(reviveTest.passed) + L"/" +
+                std::to_wstring(reviveTest.total) + L" • failed=" +
+                std::to_wstring(reviveTest.failed) +
+                L" • Revive exclusive gate/dispatch ACK/map-change POST");
 
             SetTimer(hwnd, TIMER_ID, 100, nullptr);
             ScanGames();
@@ -49,7 +56,7 @@
             }
             if (LOWORD(wp) == IDC_VALIDATE) {
                 if (!g_controlSelfTestPass) {
-                    Log(L"CONTROL SELF TEST FAIL • foundation bị khóa fail-closed");
+                    Log(L"CONTROL/REVIVE SELF TEST FAIL • foundation bị khóa fail-closed");
                     return 0;
                 }
                 for (DWORD pid : CheckedPids()) {

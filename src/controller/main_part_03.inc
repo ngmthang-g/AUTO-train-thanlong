@@ -34,7 +34,10 @@
     bool Busy() const { return outstandingSeq_ != 0; }
     bool LoadedInTarget() const { return shared_ && shared_->bridgeLoaded != 0; }
 
-    bool Begin(BridgeCommand command, std::wstring& error, std::uint64_t u64Arg0 = 0) {
+    bool Begin(BridgeCommand command, std::wstring& error,
+               std::uint64_t u64Arg0 = 0,
+               std::int32_t intArg0 = 0,
+               std::int32_t intArg1 = 0) {
         if (!Attached()) {
             error = L"Bridge chưa attach";
             return false;
@@ -47,6 +50,8 @@
         shared_->request = {};
         shared_->request.command = static_cast<std::uint32_t>(command);
         shared_->request.u64Arg0 = u64Arg0;
+        shared_->request.intArg0 = intArg0;
+        shared_->request.intArg1 = intArg1;
         MemoryBarrier();
         InterlockedExchange(&shared_->requestSeq, next);
         outstandingSeq_ = next;
