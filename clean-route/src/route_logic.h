@@ -1,0 +1,54 @@
+#pragma once
+#include <cstdint>
+#include <cstdlib>
+
+namespace cleanroute_logic {
+
+struct State {
+    bool valid = false;
+    bool mapReady = false;
+    bool waitingMap = false;
+    int mapID = 0;
+    int x = 0;
+    int y = 0;
+    bool riding = false;
+    bool autoPathing = false;
+};
+
+struct Target {
+    int mapID = 0;
+    int x = 0;
+    int y = 0;
+    int tolerance = 120;
+};
+
+enum class Action {
+    Wait,
+    Mount,
+    StartPath,
+    StopPath,
+    Dismount,
+    Hold,
+};
+
+inline bool AtTarget(const State& s, const Target& t) {
+    if (!s.valid || s.mapID != t.mapID) return false;
+    const long long dx = static_cast<long long>(s.x) - t.x;
+    const long long dy = static_cast<long long>(s.y) - t.y;
+    const long long rr = static_cast<long long>(t.tolerance) * t.tolerance;
+    return dx * dx + dy * dy <= rr;
+}
+
+inline Action Decide(const State& s, const Target& t) {
+    if (!s.valid || !s.mapReady || s.waitingMap) return Action::Wait;
+    if (AtTarget(s, t)) {
+        if (s.autoPathing) return Action::StopPath;
+        if (s.riding) return Action::Dismount;
+        return Action::Hold;
+    }
+    if (!s.riding) return Action::Mount;
+    if (!s.autoPathing) return Action::StartPath;
+    return Action::Wait;
+}
+
+} // namespace cleanroute_logic

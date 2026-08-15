@@ -1,0 +1,111 @@
+name: Build Clean Route Windows x64
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ agent/clean-route-v1.0.0 ]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Reconstruct Clean Route v1.5.0 sources
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          function Restore-Source([string]$name,[string]$sha) {
+            $parts=Get-ChildItem "clean-route/transport/$name.gz.b64.*" | Sort-Object Name
+            if($parts.Count -lt 1){throw "Missing transport parts for $name"}
+            $b64=($parts | ForEach-Object {[IO.File]::ReadAllText($_.FullName).Trim()}) -join ''
+            $gzBytes=[Convert]::FromBase64String($b64)
+            $ms=[IO.MemoryStream]::new($gzBytes)
+            $gz=[IO.Compression.GZipStream]::new($ms,[IO.Compression.CompressionMode]::Decompress)
+            $out=[IO.File]::Create("clean-route/src/$name")
+            $gz.CopyTo($out); $out.Dispose(); $gz.Dispose(); $ms.Dispose()
+            $actual=(Get-FileHash -Algorithm SHA256 "clean-route/src/$name").Hash.ToLowerInvariant()
+            Write-Host "$name SHA256=$actual"
+            if($actual -ne $sha){throw "$name transport hash mismatch"}
+          }
+          Restore-Source 'bridge.cpp' '0e8271d32e8a621f58eb1f884a4a3537e89e42d45610f4af065cb30d6e7de093'
+          Restore-Source 'controller.cpp' 'b9f420c77d022da4ad7525b24a77dea92fb99eab8089419ea2f687381baf8366'
+
+      - name: Build + scope audit + route self-test
+        shell: cmd
+        working-directory: clean-route
+        run: build.cmd
+
+      - name: Package source and release root
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force 'clean-route/release' | Out-Null
+          $src='clean-route/release/ThanLongCleanRoute_Source_v1.5.0.zip'
+          if(Test-Path $src){Remove-Item $src -Force}
+          Compress-Archive -Path 'clean-route/src','clean-route/resources','clean-route/build.cmd','clean-route/README.md','clean-route/CLEAN_REWRITE_AUDIT.md','clean-route/PROJECT_KNOWLEDGE.md','clean-route/CHANGELOG.md' -DestinationPath $src -CompressionLevel Optimal
+          Copy-Item 'clean-route/dist/ThanLongCleanRoute_v1.5.0.exe' 'clean-route/release/ThanLongCleanRoute_v1.5.0.exe'
+          Copy-Item 'clean-route/dist/ThanLongCleanRouteBridge.dll' 'clean-route/release/ThanLongCleanRouteBridge.dll'
+          Copy-Item 'clean-route/README.md' 'clean-route/release/README.md'
+          Copy-Item 'clean-route/CLEAN_REWRITE_AUDIT.md' 'clean-route/release/CLEAN_REWRITE_AUDIT.md'
+          Copy-Item 'clean-route/PROJECT_KNOWLEDGE.md' 'clean-route/release/PROJECT_KNOWLEDGE.md'
+          Copy-Item 'clean-route/CHANGELOG.md' 'clean-route/release/CHANGELOG.md'
+
+      - name: Verify artifacts
+        id: verify
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $exe='clean-route/release/ThanLongCleanRoute_v1.5.0.exe'
+          $dll='clean-route/release/ThanLongCleanRouteBridge.dll'
+          $src='clean-route/release/ThanLongCleanRoute_Source_v1.5.0.zip'
+          $kb='clean-route/release/PROJECT_KNOWLEDGE.md'
+          $cl='clean-route/release/CHANGELOG.md'
+          foreach($p in @($exe,$dll,$src,$kb,$cl)){if(!(Test-Path $p)){throw "Missing $p"}}
+          $b=[IO.File]::ReadAllBytes($dll)
+          if($b.Length -lt 256){throw 'Bridge DLL too small'}
+          if($b[0] -ne 0x4D -or $b[1] -ne 0x5A){throw 'Bridge is not PE/MZ'}
+          $pe=[BitConverter]::ToInt32($b,0x3C)
+          if($pe -lt 0 -or $pe+24 -ge $b.Length){throw 'Invalid PE header'}
+          if($b[$pe] -ne 0x50 -or $b[$pe+1] -ne 0x45 -or $b[$pe+2] -ne 0 -or $b[$pe+3] -ne 0){throw 'Missing PE signature'}
+          $ch=[BitConverter]::ToUInt16($b,$pe+22)
+          if(($ch -band 0x2000) -eq 0){throw 'Bridge PE missing DLL characteristic'}
+          Write-Host ('BRIDGE FORMAT PASS: MZ/PE, characteristics=0x{0:X4}' -f $ch)
+          $full=(Resolve-Path $dll).Path
+          $h=[System.Runtime.InteropServices.NativeLibrary]::Load($full)
+          if($h -eq [IntPtr]::Zero){throw 'NativeLibrary.Load returned NULL'}
+          try {
+            $p=[System.Runtime.InteropServices.NativeLibrary]::GetExport($h,'TlcGetMessageHook')
+            if($p -eq [IntPtr]::Zero){throw 'Missing TlcGetMessageHook export'}
+            Write-Host 'BRIDGE LOADLIBRARY/EXPORT PASS'
+          } finally {
+            [System.Runtime.InteropServices.NativeLibrary]::Free($h)
+          }
+          $eh=(Get-FileHash -Algorithm SHA256 $exe).Hash.ToLowerInvariant()
+          $dh=(Get-FileHash -Algorithm SHA256 $dll).Hash.ToLowerInvariant()
+          $sh=(Get-FileHash -Algorithm SHA256 $src).Hash.ToLowerInvariant()
+          $kh=(Get-FileHash -Algorithm SHA256 $kb).Hash.ToLowerInvariant()
+          Write-Host "EXE SHA256: $eh"
+          Write-Host "DLL SHA256: $dh"
+          Write-Host "SOURCE SHA256: $sh"
+          Write-Host "KNOWLEDGE SHA256: $kh"
+          "exe_sha256=$eh" >> $env:GITHUB_OUTPUT
+          "dll_sha256=$dh" >> $env:GITHUB_OUTPUT
+          "source_sha256=$sh" >> $env:GITHUB_OUTPUT
+          "knowledge_sha256=$kh" >> $env:GITHUB_OUTPUT
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ThanLongCleanRoute_v1.5.0_3m_MountRetry_ConfirmRetry
+          path: clean-route/release/*
+          if-no-files-found: error
