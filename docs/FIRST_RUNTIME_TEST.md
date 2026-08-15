@@ -1,77 +1,68 @@
-# Runtime test - v1.0.8 Continuous Read-Only Scanner
+# Runtime test - v1.0.9 Scanner Qualification
 
-Mục tiêu: chứng minh donor-state parity và map-transition guard. Không test action vì action chưa tồn tại.
+## 1. Foundation
 
-## 1. Khởi động
+Tick client -> `Kiểm tra nền + Scanner`.
 
-1. Build bằng `build.cmd`.
-2. Mở game và vào map ổn định.
-3. Chạy tool Administrator.
-4. `Quét client`.
-5. Tick đúng PID.
-6. Bấm **Kiểm tra nền + Scanner**.
+Expected:
+- HOOK PASS
+- IL2CPP metadata exports PASS
+- FGStudio MainThread metadata PASS
+- UnityMainThreadDispatcher metadata PASS
+- MAINTHREAD PROVEN
+- SNAPSHOT PASS
 
-PASS nền mong đợi:
+## 2. Stability qualification
 
-- `ValidateNative` PASS
-- metadata MainThread/Dispatcher PASS
-- `MAINTHREAD PROVEN`
-- snapshot đầu PASS
-- cuối cùng `SCANNER PASS`
+Không thao tác game khoảng 30-40 giây.
 
-Dòng snapshot phải có dạng gần giống:
+Expected milestones:
+- `SCANNER QUALIFYING 1/60`
+- `SCANNER QUALIFYING 10/60`
+- `SCANNER QUALIFYING 30/60`
+- `SCANNER CORE QUALIFIED 60/60 (~30s)`
 
-`SNAPSHOT PASS seq=... role=... map=... pos=... HP=... bag=... dead=0 riding=0 moving=0 auto=0 autoPath=0 mapReady=1 waitingMap=0. READ-ONLY; action LOCKED.`
+Không được báo qualified sau snapshot đầu.
 
-Nếu cuối cùng là `SCANNER PARTIAL@, gửi nguyên log; đặc biệt xem nó báo thiếu `position`, `moving` hay `autoPath`.
+Nếu query lỗi/partial/đổi map trong khoảng này, qualification phải reset thay vì giả PASS.
 
-## 2. Test Moving
+## 3. Moving edge
 
-- Đứng im vài giây: `Moving=NO`.
-- Tự kéo nhân vật chạy bằng game: `Moving=YES`.
-- Dừng lại: về `Moving=NO`.
+Đi bộ thủ công rồi đứng lại.
+Expected `STATE EDGE` có `moving=0→1` và `moving=1→0`.
 
-Log phải có edge `moving=0→1` và `moving=1→0`.
+## 4. Riding edge
 
-## 3. Test Riding
+Lên/xuống ngựa thủ công.
+Expected `STATE EDGE` cho `riding`.
 
-- Tự bấm lên ngựa bằng game.
-- `Riding` phải chuyển NO -> YES.
-- Tự xuống ngựa.
-- `Riding` phải về NO.
+## 5. AutoPath edge
 
-Tool không được tự gọi ngựa.
+Bật/tắt đường chạy tự động của game.
+Expected `STATE EDGE` cho `autoPath`.
 
-## 4. Test AutoPath
+## 6. Dead/revive edge
 
-- Dùng chính game để bắt đầu chạy đường tự động tới một vị trí/NPC.
-- `AutoPath` phải lên ON.
-- Khi đường dừng/kết thúc, phải về OFF.
+Cho nhân vật chết và hồi sinh thủ công. Tool không được tự bấm gì.
+Expected `STATE EDGE` cho `dead`.
 
-Nếu luôn `?`, gửi log `SCANNER PARTIAL`; đó là probe cần sửa tiếp, không được fallback sang donor RVA.
+## 7. Map transition guard
 
-## 5. Test Map transition - quan trọng nhất
+Đổi map thủ công.
+Expected:
+- `MAP TRANSITION`
+- không fail vì LeaderRoleData/AutoPath trong lúc scene rebuild
+- `MAP RECOVERY 1/2`
+- `MAP RECOVERY PASS 2/2`
+- qualification bắt đầu lại từ đầu sau transition
 
-- Tự qua cổng/đổi map bằng game.
-- Trong lúc đổi map tool phải chuyển `CHỜ MAP ỔN ĐỊNH` hoặc log `SNAPSHOT TRANSITION`.
-- Không được báo `LeaderRoleData=null` chỉ vì scene đang rebuild.
-- Khi map ổn định, scanner phải qua `MAP RECOVERY 1/2`, rồi `MAP RECOVERY PASS 2/2`, sau đó mới trở về `SCANNER PASS/PARTIAL`.
-- MapID/X/Y phải cập nhật theo map mới.
+## 8. Coverage
 
-## 6. Test Dead
+Log `RUNTIME EDGE COVERAGE • pending=...` phải bỏ dần các mục:
+`moving, riding, autoPath, dead, mapTransition`.
 
-Nếu tiện test an toàn trong game:
+Khi hết: `pending=none`.
 
-- khi nhân vật chết, `Dead=YES`;
-- sau khi tự hồi sinh bằng game, `Dead=NO`.
+## Gate
 
-Tool không tự bấm Đầu thai/Hồi sinh ở v1.0.8.
-
-## 7. Dấu hiệu phải dừng và gửi log
-
-- `VALIDATOR FAIL`;
-- `SCANNER PARTIAL` kéo dài;
-- AutoPath luôn `?`;
-- Moving/Riding không đổi theo thao tác thật;
-- map transition làm bridge fault;
-- game giật rõ hoặc disconnect đúng lúc scanner bắt đầu.
+Dù 60/60 + coverage PASS, v1.0.9 vẫn **không có gameplay action**. Kết quả này chỉ cho phép chuyển sang scaffold SafetyGuard + ActionQueue(max=1) + FSM ở phase tiếp theo.

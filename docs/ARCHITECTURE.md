@@ -1,4 +1,4 @@
-# NewCore architecture - v1.0.8 phase gate
+# NewCore architecture - v1.0.9 phase gate
 
 > Architectural invariants: see `docs/GOLDEN_RULES.md`. `Legacy v0.9.0` always means the old pre-NewCore source, never a NewCore version.
 
@@ -6,7 +6,7 @@ Pipeline đích:
 
 `Resolver -> Read-only Scanner -> Snapshot/State Store -> Observer -> FSM -> SafetyGuard -> ActionQueue(max=1) -> Proven MainThread Dispatcher -> Internal Action Engine -> Game -> ACK/Observer`
 
-## Đã triển khai đến v1.0.8
+## Đã triển khai đến v1.0.9
 
 `Window discovery -> Hook bridge -> native validation -> IL2CPP metadata -> MainThread proof -> continuous read-only Scanner -> State Store -> state-edge Observer`
 
@@ -33,3 +33,8 @@ Không được mở action cho tới khi runtime test chứng minh:
 4. dead/alive edge đúng;
 5. multi-client không lẫn state;
 6. không có dấu hiệu scanner gây disconnect/stutter bất thường.
+
+
+## v1.0.9 qualification gate
+
+Scanner chỉ được gọi là core-qualified sau 60 snapshot observer-valid liên tiếp (~30 giây). Scanner error, partial mask hoặc map transition reset qualification. Runtime edge coverage vẫn là test riêng và không tạo gameplay action.

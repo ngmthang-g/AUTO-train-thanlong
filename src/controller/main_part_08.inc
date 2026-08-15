@@ -1,39 +1,48 @@
-            MoveWindow(g_log, 12, 332, w - 24, std::max(80, h - 344), TRUE);
-            return 0;
+    static void AddChange(std::wstring& out, const wchar_t* name, std::int32_t before, std::int32_t after) {
+        if (!out.empty()) out += L" • ";
+        out += name;
+        out += L"=";
+        out += std::to_wstring(before);
+        out += L"→";
+        out += std::to_wstring(after);
+    }
+
+    void EmitStateEdges(const GameSnapshot& before, const GameSnapshot& after) {
+        const std::uint32_t coverageBefore = edgeCoverageMask_;
+        std::wstring changes;
+        if (HasBoth(before, after, ValidMapId) && before.mapID != after.mapID)
+            AddChange(changes, L"map", before.mapID, after.mapID);
+        if (HasBoth(before, after, ValidLifeState) && before.dead != after.dead) {
+            edgeCoverageMask_ |= EdgeDead;
+            AddChange(changes, L"dead", before.dead, after.dead);
         }
-        case WM_DESTROY:
-            KillTimer(hwnd, TIMER_ID);
-            PostQuitMessage(0);
-            return 0;
+        if (HasBoth(before, after, ValidRideState) && before.riding != after.riding) {
+            edgeCoverageMask_ |= EdgeRiding;
+            AddChange(changes, L"riding", before.riding, after.riding);
+        }
+        if (HasBoth(before, after, ValidMovingState) && before.moving != after.moving) {
+            edgeCoverageMask_ |= EdgeMoving;
+            AddChange(changes, L"moving", before.moving, after.moving);
+        }
+        if (HasBoth(before, after, ValidAutoFightState) && before.autoFight != after.autoFight)
+            AddChange(changes, L"auto", before.autoFight, after.autoFight);
+        if (HasBoth(before, after, ValidAutoPathState) && before.autoPathing != after.autoPathing) {
+            edgeCoverageMask_ |= EdgeAutoPath;
+            AddChange(changes, L"autoPath", before.autoPathing, after.autoPathing);
+        }
+        if (HasBoth(before, after, ValidMapReadyState) && before.mapReady != after.mapReady)
+            AddChange(changes, L"mapReady", before.mapReady, after.mapReady);
+        if (HasBoth(before, after, ValidMapTransitionState) && before.waitingChangeMap != after.waitingChangeMap)
+            AddChange(changes, L"waitingMap", before.waitingChangeMap, after.waitingChangeMap);
+        if (!changes.empty()) events_.push_back(L"PID " + std::to_wstring(game_.pid) + L": STATE EDGE • " + changes);
+        EmitCoverageIfChanged(coverageBefore);
     }
-    return DefWindowProcW(hwnd, msg, wp, lp);
-}
 
-} // namespace
-
-int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
-    INITCOMMONCONTROLSEX icc{sizeof(icc), ICC_LISTVIEW_CLASSES};
-    InitCommonControlsEx(&icc);
-    WNDCLASSEXW wc{};
-    wc.cbSize = sizeof(wc);
-    wc.lpfnWndProc = WndProc;
-    wc.hInstance = instance;
-    wc.lpszClassName = L"ThanLongNewCoreWindow";
-    wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-    wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
-    wc.hIcon = LoadIcon(instance, MAKEINTRESOURCE(1));
-    RegisterClassExW(&wc);
-
-    g_main = CreateWindowExW(0, wc.lpszClassName, kTitle, WS_OVERLAPPEDWINDOW,
-                             CW_USEDEFAULT, CW_USEDEFAULT, 1200, 640,
-                             nullptr, nullptr, instance, nullptr);
-    if (!g_main) return 1;
-    ShowWindow(g_main, show);
-    UpdateWindow(g_main);
-    MSG msg{};
-    while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
-        TranslateMessage(&msg);
-        DispatchMessageW(&msg);
-    }
-    return static_cast<int>(msg.wParam);
-}
+    static std::wstring MissingObserverFields(const GameSnapshot& game) {
+        std::wstring missing;
+        auto add = [&](std::uint32_t mask, const wchar_t* name) {
+            if (game.validMask & mask) return;
+            if (!missing.empty()) missing += L", ";
+            missing += name;
+        };
+        add(ValidPosition, L"position");

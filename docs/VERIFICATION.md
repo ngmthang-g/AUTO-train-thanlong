@@ -1,46 +1,20 @@
-# Verification status - v1.0.8
+# Verification status - v1.0.9
 
-## Static/source verification
+## Static contract
 
-- Protocol bumped to `0x00010008`.
-- Không `CreateRemoteThread`, `remote_worker.S`, `il2cpp_thread_attach` trong NewCore source path.
-- Không `Sleep()`.
-- Không gameplay action token trong `src`: ClickNPC / HandleClickEvent / StartAutoFight / RequestSellItem.
-- Mỗi client chỉ có tối đa 1 bridge request.
-- Main-thread proof vẫn được chạy lại trước mỗi `ReadGameSnapshot`.
-- AutoPath state resolve qua metadata `FGStudio.Engine.Logic.AutoPathManager.get_IsAutoPathing`.
-- Supplied `global-metadata.dat` chứa class/method strings tương ứng.
-- Donor role offsets không được dùng làm runtime fallback.
+- Protocol: `0x00010009`.
+- Scanner period: 500 ms.
+- Observer stable mask: core + position + moving + autoPath.
+- Qualification: 60 consecutive stable scans (~30 s).
+- Reset qualification on scanner failure, partial mask or map transition.
+- Transition recovery remains 2/2.
+- Runtime edge coverage: moving/riding/autoPath/dead/mapTransition.
+- No gameplay action enabled.
 
-## Stable observer parity mask
+## Pass definitions
 
-`SCANNER PASS` chỉ khi snapshot stable có:
+`SCANNER CORE QUALIFIED` means only that the read-only scanner stayed stable for 60 consecutive observer-valid snapshots. It does **not** mean all manual state edges have been exercised.
 
-- RoleID
-- MapID
-- X/Y
-- HP/MaxHP
-- Dead
-- Riding
-- Moving
-- AutoFight
-- FreeBagSpace
-- MapReady
-- WaitingChangeMap
-- AutoPathing
+`RUNTIME EDGE COVERAGE pending=none` means all required manual observation edges were seen at least once in this process session.
 
-Character name vẫn là optional display field.
-
-Nếu thiếu Position/Moving/AutoPath, trạng thái là `SCANNER PARTIAL`; scanner vẫn read-only và action vẫn khóa.
-
-## Transition snapshot
-
-Khi `MapReady=false` hoặc `WaitingChangeMap=true`, snapshot transition được coi là **thành công read-only có chủ đích**, không phải lỗi core. Nó chỉ mang transition flags và sequence; Leader/AutoPath không được query trong nhịp đó. Sau transition phải có 2 stable snapshots liên tiếp trước khi observer quay lại PASS/PARTIAL.
-
-## Runtime proof cần test
-
-Xem `docs/FIRST_RUNTIME_TEST.md`.
-
-## Build note
-
-Authoritative Windows build vẫn là `build.cmd` / GitHub Actions với Zig 0.15.2. Môi trường Linux tạo source này kdông có Zig local, nên không được tuyên bố đã link PE tại chỗ.
+Only after both are proven in the live client may the next phase scaffold SafetyGuard/ActionQueue/FSM; gameplay mutation stays separately gated.

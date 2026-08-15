@@ -1,0 +1,31 @@
+ThanLongAutoTrain NewCore v1.0.9
+Date: 2026-08-15
+Scope: Scanner Qualification / read-only watchdog only
+
+INTENT
+- Prevent a single valid snapshot from being reported as a fully qualified scanner.
+- Require 60 consecutive stable observer snapshots (~30 s at 500 ms).
+- Track manual runtime edge coverage without generating gameplay actions.
+
+STATIC EXPECTATIONS
+- No CreateRemoteThread.
+- No il2cpp_thread_attach.
+- No Sleep( state transitions.
+- No ClickNPC / HandleClickEvent / StartAutoFight / RequestSellItem.
+- One outstanding bridge request/client maximum.
+- Qualification resets on scanner error, partial observer mask or map transition.
+- Map transition still uses 2/2 stable recovery.
+- Gameplay action remains LOCKED.
+
+WINDOWS CI REQUIRED
+- Zig 0.15.2 build.cmd.
+- Bridge LoadLibrary self-test.
+- Controller EXE + bridge DLL artifact.
+
+RUNTIME REQUIRED
+- 60/60 stable qualification.
+- Moving edge.
+- Riding edge.
+- AutoPath edge.
+- Dead/revive edge.
+- Map transition + recovery 2/2 edge.
