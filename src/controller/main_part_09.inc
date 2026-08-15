@@ -57,7 +57,16 @@
                 const std::uint32_t coverageBefore = edgeCoverageMask_;
                 edgeCoverageMask_ |= EdgeMapTransition;
                 ++mapTransitionCount_;
+                transitionLatched_ = true;
+                transitionStartedByIdentity_ = false;
+                transitionFlagJoinedLogged_ = true;
                 EmitCoverageIfChanged(coverageBefore);
+                events_.push_back(L"PID " + std::to_wstring(game_.pid) +
+                                  L": MAP TRANSITION • source=flags • MapReady/WaitingChangeMap active • action LOCKED");
+            } else if (transitionStartedByIdentity_ && !transitionFlagJoinedLogged_) {
+                transitionFlagJoinedLogged_ = true;
+                events_.push_back(L"PID " + std::to_wstring(game_.pid) +
+                                  L": MAP TRANSITION SIGNAL • source=flags joined existing source=identity • action LOCKED");
             }
             transitionLatched_ = true;
             recoveryCandidateValid_ = false;

@@ -61,6 +61,8 @@
     bool autoPathProbeLogged_ = false;
     bool autoPathObservedOnLogged_ = false;
     bool transitionLatched_ = false;
+    bool transitionStartedByIdentity_ = false;
+    bool transitionFlagJoinedLogged_ = false;
     bool recoveryCandidateValid_ = false;
     std::int32_t recoveryCandidateRoleID_ = 0;
     std::int32_t recoveryCandidateMapID_ = 0;

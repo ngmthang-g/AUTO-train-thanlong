@@ -6,7 +6,7 @@
 namespace tlcore {
 
 constexpr std::uint32_t kMagic = 0x544C4E43u; // TLNC
-constexpr std::uint32_t kProtocolVersion = 0x0001000Au;
+constexpr std::uint32_t kProtocolVersion = 0x0001000Bu;
 constexpr UINT kWakeMessage = WM_APP + 0x4A1;
 constexpr wchar_t kMappingPrefix[] = L"Local\\ThanLongNewCore_";
 
@@ -58,6 +58,7 @@ enum GameSnapshotValid : std::uint32_t {
     ValidAutoPathState       = 1u << 12,
 };
 
+
 enum AutoPathProbeMask : std::uint32_t {
     AutoPathClassResolved          = 1u << 0,
     AutoPathInstanceGetterResolved = 1u << 1,
@@ -75,7 +76,7 @@ constexpr std::uint32_t kRequiredGameCoreMask =
     ValidRideState | ValidAutoFightState | ValidBagSpace | ValidMapReadyState |
     ValidMapTransitionState;
 
-// v1.0.10 observer parity gate: these are the read-only states already proven useful in
+// v1.0.11 observer parity gate: these are the read-only states already proven useful in
 // the v0.9.0 donor state machine. NewCore still resolves them by metadata rather than
 // copying donor RVAs/offsets. No gameplay action is enabled by this mask.
 constexpr std::uint32_t kRequiredObserverStableMask =
