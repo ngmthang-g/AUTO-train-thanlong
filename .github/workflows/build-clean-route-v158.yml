@@ -37,18 +37,33 @@ jobs:
             $out=[IO.File]::Create($OutPath)
             try {$zs.CopyTo($out)} finally {$out.Dispose();$zs.Dispose();$ms.Dispose()}
             $sha=(Get-FileHash -Algorithm SHA256 $OutPath).Hash.ToLowerInvariant()
-            Write-Host "$OutPath SHA256=$sha"
+            Write-Host "$OutPath transport SHA256=$sha"
             if($sha -ne $ExpectedSha){throw "$OutPath transport mismatch $sha"}
           }
-          Restore-Transport 'clean-route/transport-v158/controller.cpp.gz.b64.*' 'clean-route/src/controller.cpp' 'f2a7dc1b5d1a94544011bb56a1f7b8e3df30fc54776fb706ec1c0424c8e00af9'
-          Restore-Transport 'clean-route/transport-v158/bridge.cpp.gz.b64.*' 'clean-route/src/bridge.cpp' '64967db0d72cd584c909ce12dd4fdf20cace1128784b9e43214bd419014ed05f'
+          $controllerPath='clean-route/src/controller.cpp'
+          $bridgePath='clean-route/src/bridge.cpp'
+          Restore-Transport 'clean-route/transport-v158/controller.cpp.gz.b64.*' $controllerPath 'f2a7dc1b5d1a94544011bb56a1f7b8e3df30fc54776fb706ec1c0424c8e00af9'
+          Restore-Transport 'clean-route/transport-v158/bridge.cpp.gz.b64.*' $bridgePath '64967db0d72cd584c909ce12dd4fdf20cace1128784b9e43214bd419014ed05f'
 
-          $controller=[IO.File]::ReadAllText('clean-route/src/controller.cpp')
+          # Build-only normalization: the generated v1.5.8 source accidentally added a
+          # second IDC_ENABLE_CONFIRM case immediately before IDC_CONFIRM_INTERVAL.
+          # Remove exactly that duplicate; the original shared toggle case remains.
+          $controller=[IO.File]::ReadAllText($controllerPath)
+          $dup='(?m)^[ \t]+case IDC_ENABLE_CONFIRM:\r?\n[ \t]+if \(HIWORD\(wp\) == BN_CLICKED\) PersistSelectedEditor\(\);\r?\n[ \t]+break;\r?\n(?=[ \t]+case IDC_CONFIRM_INTERVAL:)'
+          $matches=[Regex]::Matches($controller,$dup)
+          if($matches.Count -ne 1){throw "Expected exactly one duplicate IDC_ENABLE_CONFIRM case; got $($matches.Count)"}
+          $controller=[Regex]::Replace($controller,$dup,'',1)
+          [IO.File]::WriteAllText($controllerPath,$controller,[Text.UTF8Encoding]::new($false))
+          $fixed=(Get-FileHash -Algorithm SHA256 $controllerPath).Hash.ToLowerInvariant()
+          Write-Host "v1.5.8 compile controller SHA256=$fixed"
+          if($fixed -ne '01cafd0a490a140da10db5a92ac23f7b70d794f88cb4936f002f07962dfb0ca0'){throw 'v1.5.8 normalized controller mismatch'}
+
+          $controller=[IO.File]::ReadAllText($controllerPath)
           foreach($marker in @('HandlePeriodicConfirmClick','PeriodicConfirmBusy','ConfirmIntervalSec','kConfirmIntervalDefaultSec = 5','globalLastRealInputTick_')){
             if(-not $controller.Contains($marker)){throw "Missing v1.5.8 marker $marker"}
           }
           if($controller.Contains('HandleCrossMapConfirm(a, now')){throw 'Semantic Confirm is still invoked'}
-          $bridge=[IO.File]::ReadAllText('clean-route/src/bridge.cpp')
+          $bridge=[IO.File]::ReadAllText($bridgePath)
           foreach($forbidden in @('ReadSemanticUiPresent','MainFindUI')){
             if($bridge.Contains($forbidden)){throw "Bridge still contains forbidden v1.5.8 UI probe $forbidden"}
           }
