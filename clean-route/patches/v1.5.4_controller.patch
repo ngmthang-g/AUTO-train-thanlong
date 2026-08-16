@@ -1,0 +1,333 @@
+--- a/src/controller.cpp
++++ b/src/controller.cpp
+@@ -19,11 +19,15 @@
+ 
+ namespace {
+ 
+-constexpr wchar_t kTitle[] = L"Thần Long Clean Route v1.5.3 • Path-ON Semantic Confirm";
++constexpr wchar_t kTitle[] = L"Thần Long Clean Route v1.5.4 • Transition Freeze";
+ constexpr wchar_t kGameModule[] = L"GameAssembly.dll";
+ constexpr UINT_PTR kTimer = 1;
+ constexpr int kCaptureHotkeyId = 9001;
+ constexpr int kPauseHotkeyId = 9002;
++constexpr DWORD kClientStableResumeMs = 2000;
++constexpr DWORD kBridgeNudgeMs = 750;
++constexpr DWORD kReadFailLogIntervalMs = 2000;
++constexpr UINT kWindowResponsiveProbeMs = 120;
+ constexpr DWORD kMouseSettleMs = 100;
+ constexpr DWORD kMouseHoldMs = 140;
+ constexpr DWORD kMouseAfterMs = 90;
+@@ -230,6 +234,15 @@
+     int sellLastFreeBag = -1;
+     DWORD sellBagStableSince = 0;
+     bool sellTriggeredByFullBag = false;
++
++    // Global per-PID transition/unresponsive safety gate. While active, no mutable
++    // gameplay/window action may be dispatched. Read-only state polling continues
++    // until the client is continuously healthy for kClientStableResumeMs.
++    bool clientFreezeActive = false;
++    DWORD clientFreezeSinceTick = 0;
++    DWORD clientStableSinceTick = 0;
++    int readStateFailStreak = 0;
++    DWORD lastReadFailureLogTick = 0;
+ };
+ 
+ template <typename T>
+@@ -691,6 +704,8 @@
+         shared_ = nullptr;
+         mapping_ = nullptr;
+         attached_ = false;
++        pendingSeq_ = 0;
++        pendingWakeTick_ = 0;
+     }
+ 
+     bool AttachedTo(DWORD pid) const { return attached_ && game_.pid == pid; }
+@@ -699,6 +714,31 @@
+     bool Call(Command command, int a0, int a1, int a2, Response& out,
+               std::wstring& error, DWORD timeoutMs = 1000) {
+         if (!attached_ || !shared_) { error = L"Bridge chưa attach"; return false; }
++
++        // Never overwrite a request that timed out on the controller side but may still
++        // be executing on the game thread. A late completion is discarded safely; until
++        // then only re-post the SAME wake message when the bridge is not busy.
++        if (pendingSeq_ > 0) {
++            if (shared_->completedSeq == pendingSeq_) {
++                MemoryBarrier();
++                pendingSeq_ = 0;
++                pendingWakeTick_ = 0;
++            } else {
++                const DWORD now = GetTickCount();
++                if (shared_->bridgeBusy == 0 &&
++                    (pendingWakeTick_ == 0 || now - pendingWakeTick_ >= kBridgeNudgeMs)) {
++                    (void)PostThreadMessageW(game_.threadId, kWakeMessage, 0, 0);
++                    pendingWakeTick_ = now;
++                }
++                error = L"Bridge còn bận sau timeout; không gửi chồng request";
++                return false;
++            }
++        }
++        if (shared_->bridgeBusy != 0) {
++            error = L"Bridge busy; không gửi chồng request";
++            return false;
++        }
++
+         const LONG next = shared_->requestSeq + 1;
+         shared_->request = {};
+         shared_->request.command = static_cast<std::uint32_t>(command);
+@@ -715,6 +755,8 @@
+         while (GetTickCount() - begin < timeoutMs) {
+             if (shared_->completedSeq == next) {
+                 MemoryBarrier();
++                pendingSeq_ = 0;
++                pendingWakeTick_ = 0;
+                 out = shared_->response;
+                 if (!out.ok) {
+                     error = out.detail[0] ? out.detail : L"Bridge trả lỗi";
+@@ -724,6 +766,8 @@
+             }
+             Sleep(2);
+         }
++        pendingSeq_ = next;
++        pendingWakeTick_ = GetTickCount();
+         error = L"Bridge timeout; fail-closed";
+         return false;
+     }
+@@ -735,6 +779,8 @@
+     HMODULE localDll_ = nullptr;
+     HHOOK hook_ = nullptr;
+     bool attached_ = false;
++    LONG pendingSeq_ = 0;
++    DWORD pendingWakeTick_ = 0;
+ };
+ 
+ struct Account {
+@@ -1601,6 +1647,10 @@
+     }
+ 
+     bool ClickSlotNow(Account& a, ClickSlot slot, const wchar_t* reason, bool verbose = true) {
++        if (a.runtime.running && a.runtime.clientFreezeActive) {
++            if (verbose) LogAccount(a, L"CLICK bị chặn: client/map đang FREEZE");
++            return false;
++        }
+         const int index = static_cast<int>(slot);
+         if (index < 0 || index >= 6) return false;
+         POINT point{};
+@@ -1663,11 +1713,12 @@
+     }
+ 
+     void StopAccount(Account& a) {
++        const bool wasFrozen = a.runtime.clientFreezeActive;
+         a.runtime.running = false;
+         ResetRuntime(a.runtime);
+         a.runtime.running = false;
+         a.runtime.status = L"Đã dừng";
+-        if (a.bridge.Attached()) {
++        if (a.bridge.Attached() && !wasFrozen) {
+             Response r{};
+             std::wstring ignored;
+             (void)a.bridge.Call(Command::StopPath, 0, 0, 0, r, ignored, 700);
+@@ -1687,6 +1738,96 @@
+         if (stopped == 0) Log(L"Không có acc nào được tick để dừng.");
+     }
+ 
++    static bool BridgeLooksUnresponsive(const std::wstring& error) {
++        return error.find(L"timeout") != std::wstring::npos ||
++               error.find(L"Bridge còn bận") != std::wstring::npos ||
++               error.find(L"Bridge busy") != std::wstring::npos;
++    }
++
++    bool WindowResponsive(const GameClient& game) const {
++        if (!game.window || !IsWindow(game.window)) return false;
++        DWORD_PTR ignored = 0;
++        const LRESULT ok = SendMessageTimeoutW(game.window, WM_NULL, 0, 0,
++                                               SMTO_ABORTIFHUNG | SMTO_BLOCK,
++                                               kWindowResponsiveProbeMs, &ignored);
++        return ok != 0;
++    }
++
++    void EnterClientFreeze(Account& a, const wchar_t* reason, DWORD now) {
++        RuntimeState& rt = a.runtime;
++        const bool first = !rt.clientFreezeActive;
++        rt.clientFreezeActive = true;
++        if (rt.clientFreezeSinceTick == 0) rt.clientFreezeSinceTick = now;
++        rt.clientStableSinceTick = 0;
++        rt.candidateCount = 0;
++        rt.qualifiedMap = 0;
++        rt.stallSinceTick = 0;
++        rt.fightPhase = 0;
++        if (first) {
++            LogAccount(a, L"FREEZE ACTION: " + std::wstring(reason ? reason : L"client/map chưa ổn định"));
++        }
++    }
++
++    void MarkReadStateFailure(Account& a, const std::wstring& error, DWORD now) {
++        RuntimeState& rt = a.runtime;
++        EnterClientFreeze(a, L"ReadState/Bridge không phản hồi", now);
++        ++rt.readStateFailStreak;
++        rt.clientStableSinceTick = 0;
++        rt.status = L"CLIENT KHÔNG PHẢN HỒI • FREEZE ACTION";
++        if (rt.lastReadFailureLogTick == 0 || now - rt.lastReadFailureLogTick >= kReadFailLogIntervalMs) {
++            LogAccount(a, L"ReadState fail x" + std::to_wstring(rt.readStateFailStreak) + L": " + error +
++                          L" • FREEZE, không gửi action mới");
++            rt.lastReadFailureLogTick = now;
++        }
++    }
++
++    bool HoldUntilClientStable(Account& a, DWORD now) {
++        RuntimeState& rt = a.runtime;
++        const Snapshot& s = a.snapshot;
++
++        if (!s.mapReady || s.waitingChangeMap) {
++            EnterClientFreeze(a, L"game đang chuyển map", now);
++            rt.clientStableSinceTick = 0;
++            rt.status = L"ĐANG CHUYỂN MAP • FREEZE ACTION";
++            return true;
++        }
++
++        if (!rt.clientFreezeActive) {
++            rt.readStateFailStreak = 0;
++            rt.lastReadFailureLogTick = 0;
++            return false;
++        }
++
++        if (!WindowResponsive(a.game)) {
++            rt.clientStableSinceTick = 0;
++            rt.status = L"CỬA SỔ GAME CHƯA PHẢN HỒI • FREEZE ACTION";
++            return true;
++        }
++
++        if (rt.clientStableSinceTick == 0) {
++            rt.clientStableSinceTick = now;
++            rt.status = L"MAP/CLIENT ĐÃ PHẢN HỒI • chờ ổn định 2.0s";
++            return true;
++        }
++        if (!Elapsed(now, rt.clientStableSinceTick, kClientStableResumeMs)) {
++            const DWORD elapsed = now - rt.clientStableSinceTick;
++            const DWORD remainMs = elapsed >= kClientStableResumeMs ? 0 : kClientStableResumeMs - elapsed;
++            rt.status = L"CLIENT ĐANG ỔN ĐỊNH • chờ " + std::to_wstring((remainMs + 99) / 100) + L"00ms";
++            return true;
++        }
++
++        rt.clientFreezeActive = false;
++        rt.clientFreezeSinceTick = 0;
++        rt.clientStableSinceTick = 0;
++        rt.readStateFailStreak = 0;
++        rt.lastReadFailureLogTick = 0;
++        rt.lastActionTick = 0;
++        rt.lastAction = Action::Wait;
++        LogAccount(a, L"CLIENT ỔN ĐỊNH LIÊN TỤC 2s → mở khóa action, tiếp tục auto.");
++        rt.status = L"Client ổn định 2s • tiếp tục auto";
++        return false;
++    }
++
+     bool CooldownReady(RuntimeState& rt, Action a, DWORD now) {
+         DWORD delay = 1500;
+         if (a == Action::Mount || a == Action::Dismount) delay = 4000;
+@@ -1700,6 +1841,10 @@
+ 
+     bool SendDecision(Account& a, Action action, const TargetProfile& t, const wchar_t* context) {
+         RuntimeState& rt = a.runtime;
++        if (rt.clientFreezeActive) {
++            rt.status = L"FREEZE ACTION • bỏ qua route/mount command";
++            return false;
++        }
+         const DWORD now = GetTickCount();
+         if (!CooldownReady(rt, action, now)) return false;
+         Response r{};
+@@ -1727,6 +1872,9 @@
+                 return false;
+         }
+         rt.lastActionTick = now;
++        if (!ok && BridgeLooksUnresponsive(error)) {
++            EnterClientFreeze(a, L"Bridge action timeout/busy", now);
++        }
+         if (ok && action == Action::StartPath && t.mapID != a.snapshot.mapID) {
+             // Arm cross-map confirmation from the command itself. Movement/autoPath
+             // evidence is still required before any Confirm click is allowed.
+@@ -1952,6 +2100,10 @@
+                 LogAccount(a, L"Cross-map Confirm v1.5.3: MessageBox=1 • moving=0 • click " +
+                               std::to_wstring(rt.confirmAttempts) + L"/2 • Path=" +
+                               std::wstring(s.autoPathing ? L"ON(after StopPath)" : L"OFF") + L".");
++                // A successful Confirm click means a map transition is now expected even if
++                // the client has not published WaitingChangeMap yet. Freeze immediately so
++                // no second click/route/mount/AutoFight action races the loading transition.
++                EnterClientFreeze(a, L"đã click Confirm • chờ map/client ổn định", now);
+             }
+         } else {
+             rt.status = rt.confirmAttempts >= 2
+@@ -2260,8 +2412,10 @@
+         rt.crossMapRouteMoved = false;
+         ResetRobustTravel(rt);
+         if (a.bridge.Attached()) {
+-            Response r{}; std::wstring ignored;
+-            (void)a.bridge.Call(Command::StopPath, 0, 0, 0, r, ignored, 700);
++            Response r{}; std::wstring error;
++            if (!a.bridge.Call(Command::StopPath, 0, 0, 0, r, error, 700) && BridgeLooksUnresponsive(error)) {
++                EnterClientFreeze(a, L"Bridge timeout lúc bắt đầu Auto Sell", now);
++            }
+         }
+         const SellNpcPreset& npc = kSellNpcs[static_cast<std::size_t>(a.profile.sellNpcPreset)];
+         LogAccount(a, L"TÚI FULL → bắt đầu bán • " + std::wstring(npc.name));
+@@ -2362,6 +2516,7 @@
+             const SellNpcPreset& npc = kSellNpcs[static_cast<std::size_t>(a.profile.sellNpcPreset)];
+             Response r{}; std::wstring error;
+             if (!a.bridge.Call(Command::ClickNpc, npc.npcID, 0, 0, r, error, 1200)) {
++                if (BridgeLooksUnresponsive(error)) EnterClientFreeze(a, L"Bridge timeout/busy khi ClickNPC", now);
+                 ++rt.sellOpenAttempts;
+                 LogAccount(a, L"ClickNPC " + std::to_wstring(npc.npcID) + L" FAIL: " + error);
+                 if (rt.sellOpenAttempts >= 2) { rt.sellPhase = 10; rt.status = L"Không mở được NPC • chờ thủ công"; }
+@@ -2647,7 +2802,8 @@
+         if (s.validMask & ValidConfirmUi) text += L" • MessageBox " + std::wstring(s.confirmUiVisible ? L"ON" : L"OFF");
+         else text += L" • MessageBox ?";
+         if (globalPaused_) text += L" • F4 PAUSE";
+-        if (!s.mapReady || s.waitingChangeMap) text = L"STATE " + AccountTag(*a) + L" • ĐANG CHUYỂN MAP";
++        if (a->runtime.clientFreezeActive) text += L" • FREEZE ACTION";
++        if (!s.mapReady || s.waitingChangeMap) text = L"STATE " + AccountTag(*a) + L" • ĐANG CHUYỂN MAP • FREEZE ACTION";
+         SetText(live_, text);
+     }
+ 
+@@ -2735,7 +2891,7 @@
+         Log(L"ĐẾN GIỜ HẸN → dừng route và đóng TOOL (không tắt Windows).");
+         for (auto& item : accounts_) {
+             Account& a = *item;
+-            if (a.runtime.running && a.bridge.Attached()) {
++            if (a.runtime.running && a.bridge.Attached() && !a.runtime.clientFreezeActive) {
+                 Response r{}; std::wstring ignored;
+                 (void)a.bridge.Call(Command::StopPath, 0, 0, 0, r, ignored, 700);
+             }
+@@ -2756,15 +2912,22 @@
+                 continue;
+             }
+             std::wstring error;
++            const DWORD now = GetTickCount();
+             if (!ReadSnapshot(a, error, a.runtime.running ? 700 : 900)) {
+-                a.runtime.status = L"Mất state/bridge";
+-                if (a.runtime.running) LogAccount(a, L"ReadState fail: " + error);
++                if (a.runtime.running) MarkReadStateFailure(a, error, now);
++                else a.runtime.status = L"Mất state/bridge";
+                 UpdateAccountRow(static_cast<int>(i), a);
+                 continue;
+             }
+             RefreshAccountIdentityIfNeeded(a);
+-            if (a.runtime.running && !globalPaused_) TickAccount(a);
+-            else if (a.runtime.running && globalPaused_) a.runtime.status = L"TẠM DỪNG F4";
++            if (a.runtime.running) {
++                if (HoldUntilClientStable(a, now)) {
++                    UpdateAccountRow(static_cast<int>(i), a);
++                    continue;
++                }
++                if (!globalPaused_) TickAccount(a);
++                else a.runtime.status = L"TẠM DỪNG F4";
++            }
+             UpdateAccountRow(static_cast<int>(i), a);
+         }
+         UpdateSelectedLive();
+@@ -2792,7 +2955,7 @@
+             for (auto& item : accounts_) {
+                 Account& a = *item;
+                 if (!a.runtime.running) continue;
+-                if (a.bridge.Attached()) {
++                if (a.bridge.Attached() && !a.runtime.clientFreezeActive) {
+                     Response r{}; std::wstring ignored;
+                     (void)a.bridge.Call(Command::StopPath, 0, 0, 0, r, ignored, 700);
+                 }

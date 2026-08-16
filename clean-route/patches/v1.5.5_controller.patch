@@ -1,0 +1,168 @@
+--- a/src/controller.cpp
++++ b/src/controller.cpp
+@@ -19,7 +19,7 @@
+ 
+ namespace {
+ 
+-constexpr wchar_t kTitle[] = L"Thần Long Clean Route v1.5.4 • Transition Freeze";
++constexpr wchar_t kTitle[] = L"Thần Long Clean Route v1.5.5 • Địa Phủ AutoFight Guard";
+ constexpr wchar_t kGameModule[] = L"GameAssembly.dll";
+ constexpr UINT_PTR kTimer = 1;
+ constexpr int kCaptureHotkeyId = 9001;
+@@ -35,6 +35,10 @@
+ constexpr DWORD kAutoFightRecheckMs = 60000;
+ constexpr DWORD kMountRetryWaitMs = 5000;
+ constexpr DWORD kFootWalkMaxMs = 15000;
++constexpr int kUnderworldMapId = 87;
++constexpr DWORD kUnderworldStopStepMs = 700;
++constexpr DWORD kUnderworldVerifyMs = 1200;
++constexpr int kUnderworldMaxStopAttempts = 3;
+ 
+ 
+ 
+@@ -243,6 +247,14 @@
+     DWORD clientStableSinceTick = 0;
+     int readStateFailStreak = 0;
+     DWORD lastReadFailureLogTick = 0;
++
++    // Map 87 = Địa Phủ. After revive, the built-in AutoFight may remain ON and
++    // compete with return-to-train pathing. Stop it with the two user-captured
++    // stop-Auto clicks and verify AutoFight OFF before any route resumes.
++    int underworldStopPhase = 0;
++    DWORD underworldStopTick = 0;
++    int underworldStopAttempts = 0;
++    bool underworldGuardLogged = false;
+ };
+ 
+ template <typename T>
+@@ -1932,7 +1944,25 @@
+         }
+ 
+         rt.status = L"Nhân vật đang chết";
+-        if (rt.deadSinceTick == 0) rt.deadSinceTick = now;
++        if (rt.deadSinceTick == 0) {
++            rt.deadSinceTick = now;
++            // A new death starts a new travel/Confirm generation. Never inherit
++            // route ownership, popup debounce or retry counters from the prior life.
++            rt.crossMapSeenAutoPath = false;
++            rt.crossMapRouteArmed = false;
++            rt.crossMapRouteMoved = false;
++            rt.stallSinceTick = 0;
++            rt.confirmAttempts = 0;
++            rt.lastConfirmClickTick = 0;
++            rt.confirmUiFirstSeenTick = 0;
++            rt.confirmStopPathTick = 0;
++            rt.suppressRouteSinceTick = 0;
++            rt.underworldStopPhase = 0;
++            rt.underworldStopTick = 0;
++            rt.underworldStopAttempts = 0;
++            rt.underworldGuardLogged = false;
++            LogAccount(a, L"NEW DEATH CYCLE: reset route/Confirm ownership trước Đầu thai.");
++        }
+         if (!a.profile.enableRevive || !a.profile.points[static_cast<std::size_t>(ClickSlot::Revive)].valid) {
+             rt.status = L"CHẾT • chờ Đầu thai thủ công";
+             return true;
+@@ -1968,6 +1998,95 @@
+         return true;
+     }
+ 
++    bool HandleUnderworldAutoFightGuard(Account& a, DWORD now) {
++        RuntimeState& rt = a.runtime;
++        const Snapshot& s = a.snapshot;
++
++        if (s.mapID != kUnderworldMapId) {
++            rt.underworldStopPhase = 0;
++            rt.underworldStopTick = 0;
++            rt.underworldStopAttempts = 0;
++            rt.underworldGuardLogged = false;
++            return false;
++        }
++
++        // Địa Phủ is a recovery-only map for this flow. No train/sell/route action
++        // may compete until the authoritative AutoFight getter proves OFF.
++        if ((s.validMask & ValidAutoFight) == 0) {
++            rt.status = L"ĐỊA PHỦ M87 • chờ đọc AutoFight authoritative";
++            return true;
++        }
++
++        if (!s.autoFight) {
++            if (!rt.underworldGuardLogged) {
++                LogAccount(a, L"ĐỊA PHỦ M87: AutoFight OFF đã xác nhận → cho phép tiếp tục route về bãi.");
++                rt.underworldGuardLogged = true;
++            }
++            rt.underworldStopPhase = 0;
++            rt.underworldStopTick = 0;
++            rt.underworldStopAttempts = 0;
++            return false;
++        }
++
++        rt.underworldGuardLogged = false;
++        if (!a.profile.points[static_cast<std::size_t>(ClickSlot::StopAuto1)].valid ||
++            !a.profile.points[static_cast<std::size_t>(ClickSlot::StopAuto2)].valid) {
++            rt.status = L"ĐỊA PHỦ M87 • AutoFight ON nhưng chưa lấy đủ DỪNG AUTO 1/2";
++            return true;
++        }
++
++        if (rt.underworldStopAttempts >= kUnderworldMaxStopAttempts && rt.underworldStopPhase == 0) {
++            rt.status = L"ĐỊA PHỦ M87 • không tắt được AutoFight sau 3 lần • chờ thủ công";
++            return true;
++        }
++
++        if (rt.underworldStopPhase == 0) {
++            if (ClickSlotNow(a, ClickSlot::StopAuto1, L"Địa Phủ M87: AutoFight ON → mở Dừng Auto", false)) {
++                rt.underworldStopPhase = 1;
++                rt.underworldStopTick = now;
++                rt.status = L"ĐỊA PHỦ M87 • đã click DỪNG AUTO 1";
++                LogAccount(a, L"ĐỊA PHỦ M87: AutoFight=ON → DỪNG AUTO 1.");
++            }
++            return true;
++        }
++
++        if (rt.underworldStopPhase == 1) {
++            if (!Elapsed(now, rt.underworldStopTick, kUnderworldStopStepMs)) {
++                rt.status = L"ĐỊA PHỦ M87 • chờ click DỪNG AUTO 2";
++                return true;
++            }
++            if (ClickSlotNow(a, ClickSlot::StopAuto2, L"Địa Phủ M87: chọn dừng đánh", false)) {
++                rt.underworldStopPhase = 2;
++                rt.underworldStopTick = now;
++                ++rt.underworldStopAttempts;
++                rt.status = L"ĐỊA PHỦ M87 • đã click DỪNG AUTO 2 • verify OFF";
++                LogAccount(a, L"ĐỊA PHỦ M87: DỪNG AUTO 2 → verify AutoFight OFF.");
++            }
++            return true;
++        }
++
++        if (!s.autoFight) {
++            rt.underworldStopPhase = 0;
++            rt.underworldStopTick = 0;
++            rt.underworldStopAttempts = 0;
++            rt.underworldGuardLogged = true;
++            rt.status = L"ĐỊA PHỦ M87 • AutoFight OFF • tiếp tục route";
++            LogAccount(a, L"ĐỊA PHỦ M87: verify AutoFight OFF PASS → tiếp tục auto train.");
++            return false;
++        }
++
++        if (!Elapsed(now, rt.underworldStopTick, kUnderworldVerifyMs)) {
++            rt.status = L"ĐỊA PHỦ M87 • AutoFight vẫn ON • đang verify";
++            return true;
++        }
++
++        rt.underworldStopPhase = 0;
++        rt.underworldStopTick = 0;
++        rt.status = L"ĐỊA PHỦ M87 • AutoFight vẫn ON • retry dừng auto";
++        LogAccount(a, L"ĐỊA PHỦ M87: AutoFight vẫn ON sau verify → retry chuỗi DỪNG AUTO.");
++        return true;
++    }
++
+     bool HandleCrossMapConfirm(Account& a, DWORD now, const TargetProfile& spot) {
+         RuntimeState& rt = a.runtime;
+         const Snapshot& s = a.snapshot;
+@@ -2617,6 +2736,7 @@
+ 
+         ObserveMovement(a, now);
+         if (HandleDeath(a, now)) return;
++        if (HandleUnderworldAutoFightGuard(a, now)) return;
+ 
+         if (rt.qualifiedMap != s.mapID) {
+             if (rt.candidateMap == s.mapID) ++rt.candidateCount;
