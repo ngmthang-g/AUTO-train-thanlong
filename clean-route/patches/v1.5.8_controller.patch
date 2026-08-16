@@ -122,57 +122,7 @@
          }
          if (rt.revivePhase == 1 && Elapsed(now, rt.revivePhaseTick, 900)) {
 -            if (a.profile.enableConfirm && a.profile.points[static_cast<std::size_t>(ClickSlot::Confirm)].valid) {
--                if (ClickSlotNow(a, ClickSlot::Confirm, L"xác nhận sau Đầu thai")) {
--                    rt.lastConfirmClickTick = now;
--                    rt.revivePhase = 2;
--                    rt.revivePhaseTick = now;
--                    rt.status = L"Đã click Xác nhận sau Đầu thai";
--                }
--            } else {
--                rt.revivePhase = 2;
--                rt.revivePhaseTick = now;
--            }
-+            // v1.5.8: map Confirm is no longer injected as a special revive action.
-+            // The independent periodic Confirm timer owns that click and will resume
-+            // only after this revive flow/client transition is idle again.
-+            rt.revivePhase = 2;
-+            rt.revivePhaseTick = now;
-+            rt.status = L"Đầu thai đã gửi • chờ sống lại; Auto XN map đang nhường quyền";
-             return true;
-         }
-         if (rt.revivePhase == 2 && Elapsed(now, rt.revivePhaseTick, 4500)) {
-@@ -2390,12 +2410,70 @@
-         return true;
-     }
- 
-+    bool PeriodicConfirmBusy(const Account& a, DWORD now) const {
-+        const RuntimeState& rt = a.runtime;
-+        const Snapshot& s = a.snapshot;
-+        // User-requested priority rule: periodic Confirm never competes with a map
-+        // transition, frozen/unresponsive client, death/revive, sell macro, recovery,
-+        // AutoFight click sequence, M87 stop-Auto sequence, route-ownership reset, or
-+        // any other recent REAL INPUT click (including another account).
-+        if (globalPaused_ || rt.clientFreezeActive || !a.snapshotValid) return true;
-+        if (!s.mapReady || s.waitingChangeMap) return true;
-+        if ((s.validMask & ValidLifeState) && s.dead) return true;
-+        if (a.deathSessionLatched || rt.revivePhase != 0) return true;
-+        // Selling/recovery travel phases are allowed because a cross-map portal may
-+        // need the periodic Confirm while AutoPath is moving. Only phases that own
-+        // another click/UI action keep the mouse lock.
-+        if (rt.sellPhase != 0 && rt.sellPhase != 4 && rt.sellPhase != 8) return true;
-+        if (rt.trainRecoveryPhase != 0 && rt.trainRecoveryPhase != 4) return true;
-+        if (a.profile.enableSell && (s.validMask & ValidBagSpace) && s.freeBagSpace <= 0 && rt.sellPhase == 0) return true;
-+        if (rt.underworldStopPhase != 0 || rt.routeOwnershipResetPending) return true;
-+        if (rt.fightPhase != 0 && rt.fightPhase != 3) return true;
-+        if (rt.lastRealInputTick != 0 && !Elapsed(now, rt.lastRealInputTick, kConfirmOtherClickGuardMs)) return true;
-+        if (globalLastRealInputTick_ != 0 && !Elapsed(now, globalLastRealInputTick_, kConfirmOtherClickGuardMs)) return true;
-+        return false;
-+    }
-+
-+    bool HandlePeriodicConfirmClick(Account& a, DWORD now) {
-+        RuntimeState& rt = a.runtime;
-+        if (!a.profile.enableConfirm) return false;
-+        if (!a.profile.points[static_cast<std::size_t>(ClickSlot::Confirm)].valid) return false;
+-                if (ClickSlotNow(a, ClickSlot::Confirm, L"xác,�H�@L��_cast<std::size_t>(ClickSlot::Confirm)].valid) return false;
 +
 +        int sec = a.profile.confirmIntervalSec;
 +        if (sec < kConfirmIntervalMinSec) sec = kConfirmIntervalMinSec;
@@ -212,7 +162,7 @@
          if (rt.sellPhase != 0 || rt.trainRecoveryPhase != 0 || rt.revivePhase != 0) return true;
          if (rt.confirmAttempts != 0 || rt.stallSinceTick != 0) return true;
          if (rt.crossMapRouteArmed || rt.crossMapRouteMoved) return true;
-@@ -2545,7 +2623,6 @@
+@@ -2545,7 +2622,6 @@
              return true;
          }
          if (rt.trainRecoveryPhase == 4) {
@@ -220,7 +170,7 @@
              bool arrived = false;
              (void)HandleRobustTravel(a, now, a.profile.target, L"bãi train", arrived);
              if (arrived) {
-@@ -2700,7 +2777,6 @@
+@@ -2700,7 +2776,6 @@
                  rt.status = L"NPC bán chưa có tọa độ • nhập X/Y hoặc LẤY VỊ TRÍ";
                  return true;
              }
@@ -228,7 +178,7 @@
              bool arrived = false;
              (void)HandleRobustTravel(a, now, npcTarget, L"NPC bán", arrived);
              if (arrived) {
-@@ -2770,7 +2846,6 @@
+@@ -2770,7 +2845,6 @@
  
          if (rt.sellPhase == 8) {
              const TargetProfile& trainTarget = a.profile.target;
@@ -236,7 +186,7 @@
              bool arrived = false;
              (void)HandleRobustTravel(a, now, trainTarget, L"bãi train", arrived);
              if (arrived) {
-@@ -2819,6 +2894,10 @@
+@@ -2819,6 +2893,10 @@
          if (HandleDeath(a, now)) return;
          if (HandleRouteOwnershipReset(a, now)) return;
          if (HandleUnderworldAutoFightGuard(a, now)) return;
@@ -247,7 +197,7 @@
  
          if (rt.qualifiedMap != s.mapID) {
              if (rt.candidateMap == s.mapID) ++rt.candidateCount;
-@@ -2852,14 +2931,8 @@
+@@ -2852,14 +2930,8 @@
              if (HandleTrainRecovery(a, now)) return;
          }
  
@@ -264,7 +214,7 @@
          // Steady training mode: AutoFight is checked once per minute, but ONLY when
          // no death/sell/recovery/confirm/path action is active. A busy state does not
          // advance the timer; the check is deferred until the account becomes idle.
-@@ -2978,6 +3051,10 @@
+@@ -2978,6 +3050,10 @@
                  if (!persistent.points[i].valid && a.profile.points[i].valid) persistent.points[i] = a.profile.points[i];
              }
              if (persistent.sellMacro.empty() && !a.profile.sellMacro.empty()) persistent.sellMacro = a.profile.sellMacro;
@@ -275,7 +225,7 @@
          }
          persistent.section = newSection;
          SaveProfile(persistent);
-@@ -3001,8 +3078,7 @@
+@@ -3001,8 +3077,7 @@
          if (s.validMask & ValidLifeState) text += L" • " + std::wstring(s.dead ? L"CHẾT" : L"SỐNG");
          if (s.validMask & ValidAutoFight) text += L" • Đánh quái " + std::wstring(s.autoFight ? L"ON" : L"OFF");
          if (s.validMask & ValidBagSpace) text += L" • Túi trống " + std::to_wstring(s.freeBagSpace);
@@ -285,7 +235,7 @@
          if (globalPaused_) text += L" • F4 PAUSE";
          if (a->runtime.clientFreezeActive) text += L" • FREEZE ACTION";
          if (!s.mapReady || s.waitingChangeMap) text = L"STATE " + AccountTag(*a) + L" • ĐANG CHUYỂN MAP • FREEZE ACTION";
-@@ -3201,6 +3277,12 @@
+@@ -3201,6 +3276,12 @@
                      case IDC_SHUTDOWN_ENABLE:
                          if (HIWORD(wp) == BN_CLICKED) ApplyShutdownScheduleFromUi();
                          break;
@@ -298,7 +248,7 @@
                      case IDC_SAVE_TARGET:
                          SaveTargetForSelected();
                          break;
-@@ -3324,6 +3406,7 @@
+@@ -3324,6 +3405,7 @@
      HWND tolerance_ = nullptr;
      HWND enableRevive_ = nullptr;
      HWND enableConfirm_ = nullptr;
@@ -306,7 +256,7 @@
      HWND enableFight_ = nullptr;
      HWND enableSell_ = nullptr;
      HWND sellNpcCombo_ = nullptr;
-@@ -3344,6 +3427,7 @@
+@@ -3344,6 +3426,7 @@
      int captureMacroIndex_ = -1;
      DWORD capturePid_ = 0;
      bool globalPaused_ = false;
