@@ -1,3 +1,27 @@
+# v1.5.8 — 2026-08-16
+
+Requested:
+- abandon semantic/game-state-driven map Confirm;
+- fixed periodic real click at saved Confirm coordinate, default 5s and user-configurable;
+- pause/yield while map transition, unresponsive/frozen client, or another auto-click/action flow owns the mouse.
+
+Changed:
+- added per-account `ConfirmIntervalSec` (1–300s, default 5) with persistent UI control;
+- added `HandlePeriodicConfirmClick` + `PeriodicConfirmBusy`;
+- timer stays overdue while busy and fires on first idle tick;
+- global REAL INPUT mutex guard prevents another account's recent click from being immediately preempted;
+- periodic Confirm is allowed during ordinary AutoPath/travel and sell/recovery travel phases;
+- removed special revive Confirm injection;
+- semantic `HandleCrossMapConfirm` is no longer invoked;
+- Bridge `ReadState` no longer performs `MainFindUI/FindUI("MessageBox")`; `ValidConfirmUi` remains protocol-compatible but intentionally unset.
+
+Validation:
+- local route/mount self-test 15/15 PASS;
+- Windows x64 staging CI **PASS** — run `31942843638`, job `95154396882`; audit + route/mount self-test 15/15 + Bridge/EXE/package verification passed.
+- compile controller SHA256 `01cafd0a490a140da10db5a92ac23f7b70d794f88cb4936f002f07962dfb0ca0`; Bridge source SHA256 `64967db0d72cd584c909ce12dd4fdf20cace1128784b9e43214bd419014ed05f`.
+- staging EXE SHA256 `e6862b4aad90c28e272408cde08f1aadea641a7783f63acec381702d2e688f4d`; Bridge DLL `5d7adcb842378cdd91225ee476efb5e5e8dbe4bf67929af7afc97af6eb951a24`.
+- runtime: **NEEDS USER TEST**; BUILD PASS is not runtime PASS.
+
 # v1.5.6 — Death Session Cold Restart
 - Every new death is now a full RuntimeState boundary, not a partial flag reset.
 - Added Account-level `deathSessionLatched` outside RuntimeState to prevent repeated hard-reset loops.
