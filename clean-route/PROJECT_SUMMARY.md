@@ -1,46 +1,11 @@
-## Current candidate: v1.5.6 Death Session Cold Restart
-Repeated deaths are now isolated by a full dual-boundary `ResetRuntime()` with an Account-level lifecycle latch. Every post-revive route starts from the same transient state as a fresh Start while keeping account configuration. Runtime validation pending.
+# PROJECT SUMMARY — Clean Route v1.5.8
 
-# CLEAN ROUTE — PROJECT SUMMARY
+Current candidate: **Fixed Interval Confirm Click**. Automatic map Confirm has been deliberately simplified by user decision: every running account periodically real-clicks the saved Confirm coordinate (default 5s, configurable 1–300s). No popup/game-state evidence is used to decide whether to click.
 
-## Current version
-**v1.5.6 — Death Session Cold Restart**
+Priority contract: transition/freeze/unresponsive/death/revive and any other click-owning flow wins. The Confirm timer stays overdue while blocked and runs at the first safe tick. Normal AutoPath is allowed so a portal popup can be clicked while pathing. Global REAL INPUT guard: 1000ms.
 
-## Runtime evidence driving this version
-- v1.5.4 first tested return path: semantic `MessageBox=1` while Path ON → StopPath → saved Confirm click → Transition Freeze; this gate worked.
-- v1.5.4 freeze logs show map/Bridge instability is held until the client is stable continuously for 2 seconds.
-- on a later/second death cycle, the character routed back out but automatic Confirm was no longer observed. Exact causal chain remains unproven.
+Bridge ReadState no longer probes MessageBox/UI. Protocol compatibility fields may remain but are not used for automatic Confirm.
 
-## Verified map identity
-Canonical DATA repo `database/MAPS.csv` contains:
-`87,Địa Phủ,siwang,0,Wild,1,siwang`
+Preserved: M87 AutoFight-OFF guard, Transition Freeze, Bridge request serialization, death-session cold restart, route ownership cleanup, AutoFight watchdog, 3-minute train-coordinate guard, Auto Sell, shared spots and persistent six-click calibration.
 
-Therefore **Địa Phủ = MapID 87**.
-
-## v1.5.5 behavior
-1. New death (`get_IsDeath=1` new cycle) resets all route/Confirm ownership, movement evidence, stall/debounce/retry timing and M87 recovery state.
-2. After revive, if fresh state says `MapID==87`, the M87 guard owns the PID before normal route logic.
-3. If `ValidAutoFight` is unavailable, fail closed.
-4. If AutoFight ON: saved `DỪNG AUTO 1` → 700 ms → `DỪNG AUTO 2` → verify getter.
-5. If still ON after 1200 ms, retry, maximum 3 sequences.
-6. Only verified AutoFight OFF releases the normal route/Confirm FSM.
-7. v1.5.4 Transition Freeze and v1.5.3 semantic Path-ON Confirm remain intact.
-
-## Architecture
-`Resolver → read-only Snapshot → Observer → per-PID ownership/State Machine → Safety Guard → serialized action → fresh proof`
-
-Hard rules:
-- no overlapping mutable requests/actions;
-- timeout/invalid getter = unknown, never success;
-- no blind M87 stop clicks if AutoFight getter is invalid;
-- no route while M87 AutoFight is authoritatively ON;
-- do not restore CreateRemoteThread/remote_worker/WriteProcessMemory gameplay architecture.
-
-## Status
-- MapID 87 = Địa Phủ: **VERIFIED static client data**.
-- v1.5.4 first Confirm/freeze behavior: **RUNTIME PARTIAL PASS**.
-- second-death Confirm miss: **RUNTIME FAIL/PARTIAL observed**.
-- v1.5.5 source: **IMPLEMENTED**.
-- v1.5.5 Windows code-validation CI: **PASS** — run `31934654526`, job `95134583587`, artifact `9260311819`.
-- v1.5.5 runtime: **NEEDS USER TEST**.
-- v1.5.6 dual-boundary full RuntimeState reset: **WINDOWS CI PASS / RUNTIME UNTESTED** — run `31938154271`, job `95143227671`, artifact `9261270126`.
+Build evidence: Windows x64 staging CI PASS `31942843638` / job `95154396882`; self-test 15/15. Compile controller SHA256 `01cafd0a490a140da10db5a92ac23f7b70d794f88cb4936f002f07962dfb0ca0`; Bridge source SHA256 `64967db0d72cd584c909ce12dd4fdf20cace1128784b9e43214bd419014ed05f`. Runtime remains NEEDS USER TEST.
