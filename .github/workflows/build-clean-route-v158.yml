@@ -21,60 +21,32 @@ jobs:
         with:
           version: 0.15.2
 
-      - name: Reconstruct v1.5.7 proven source then apply v1.5.8
+      - name: Reconstruct hash-gated v1.5.8 sources
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-
-          # Execute the exact v1.5.7 reconstruction step that already passed CI.
-          $workflow='.github/workflows/build-clean-route-v157.yml'
-          $lines=Get-Content $workflow
-          $start=[Array]::IndexOf($lines,'      - name: Reconstruct v1.5.6 proven baseline then apply v1.5.7')
-          $next=[Array]::IndexOf($lines,'      - name: Build + safety audit + route self-test')
-          if($start -lt 0 -or $next -le $start){throw 'Cannot locate v1.5.7 proven reconstruction step'}
-          $runLine=$start+2
-          if($lines[$runLine].Trim() -ne 'run: |'){throw 'Unexpected v1.5.7 workflow layout'}
-          $body=$lines[($runLine+1)..($next-1)] | ForEach-Object {
-            if($_.Length -ge 10){$_.Substring(10)} else {''}
+          function Restore-Transport([string]$Pattern,[string]$OutPath,[string]$ExpectedSha) {
+            $parts=Get-ChildItem $Pattern | Sort-Object Name
+            if($parts.Count -lt 1){throw "Missing transport $Pattern"}
+            $b64=($parts | ForEach-Object {[IO.File]::ReadAllText($_.FullName).Trim()}) -join ''
+            $gz=[Convert]::FromBase64String($b64)
+            $ms=[IO.MemoryStream]::new($gz)
+            $zs=[IO.Compression.GZipStream]::new($ms,[IO.Compression.CompressionMode]::Decompress)
+            $out=[IO.File]::Create($OutPath)
+            try {$zs.CopyTo($out)} finally {$out.Dispose();$zs.Dispose();$ms.Dispose()}
+            $sha=(Get-FileHash -Algorithm SHA256 $OutPath).Hash.ToLowerInvariant()
+            Write-Host "$OutPath SHA256=$sha"
+            if($sha -ne $ExpectedSha){throw "$OutPath transport mismatch $sha"}
           }
-          Invoke-Expression ($body -join [Environment]::NewLine)
+          Restore-Transport 'clean-route/transport-v158/controller.cpp.gz.b64.*' 'clean-route/src/controller.cpp' 'f2a7dc1b5d1a94544011bb56a1f7b8e3df30fc54776fb706ec1c0424c8e00af9'
+          Restore-Transport 'clean-route/transport-v158/bridge.cpp.gz.b64.*' 'clean-route/src/bridge.cpp' '64967db0d72cd584c909ce12dd4fdf20cace1128784b9e43214bd419014ed05f'
 
-          $controllerPath='clean-route/src/controller.cpp'
-          $bridgePath='clean-route/src/bridge.cpp'
-          $v157c=(Get-FileHash -Algorithm SHA256 $controllerPath).Hash.ToLowerInvariant()
-          $v157b=(Get-FileHash -Algorithm SHA256 $bridgePath).Hash.ToLowerInvariant()
-          Write-Host "v1.5.7 controller baseline SHA256=$v157c"
-          Write-Host "v1.5.7 bridge baseline SHA256=$v157b"
-          if($v157c -ne 'b625e3530be6856022d563d1aaef2a6b359edf8ff15a8fe8710960493f4353e3'){throw 'v1.5.7 controller baseline mismatch'}
-          if($v157b -ne 'a7f35862224e8174f36182569056871495b5575ca676e03726e8be287420c629'){throw 'v1.5.7 bridge baseline mismatch'}
-
-          # v1.5.7 reconstruction mutates build metadata to 1.5.7. Restore the v1.5.8
-          # build/resource files committed on this head before applying the new source patch.
-          & git checkout -- clean-route/build.cmd clean-route/resources/app.rc
-          if($LASTEXITCODE -ne 0){throw 'Failed to restore v1.5.8 build metadata from HEAD'}
-
-          $patchExe='C:\Program Files\Git\usr\bin\patch.exe'
-          Push-Location clean-route
-          try {
-            Get-Content 'patches/v1.5.8_controller.patch' -Raw | & $patchExe -p1 --forward --batch --fuzz=0
-            if($LASTEXITCODE -ne 0){throw 'v1.5.8 controller patch failed'}
-            Get-Content 'patches/v1.5.8_bridge.patch' -Raw | & $patchExe -p1 --forward --batch --fuzz=0
-            if($LASTEXITCODE -ne 0){throw 'v1.5.8 bridge patch failed'}
-          } finally { Pop-Location }
-
-          $v158c=(Get-FileHash -Algorithm SHA256 $controllerPath).Hash.ToLowerInvariant()
-          $v158b=(Get-FileHash -Algorithm SHA256 $bridgePath).Hash.ToLowerInvariant()
-          Write-Host "v1.5.8 controller final SHA256=$v158c"
-          Write-Host "v1.5.8 bridge final SHA256=$v158b"
-          if($v158c -ne 'f2a7dc1b5d1a94544011bb56a1f7b8e3df30fc54776fb706ec1c0424c8e00af9'){throw 'v1.5.8 controller final mismatch'}
-          if($v158b -ne '64967db0d72cd584c909ce12dd4fdf20cace1128784b9e43214bd419014ed05f'){throw 'v1.5.8 bridge final mismatch'}
-
-          $controller=[IO.File]::ReadAllText($controllerPath)
+          $controller=[IO.File]::ReadAllText('clean-route/src/controller.cpp')
           foreach($marker in @('HandlePeriodicConfirmClick','PeriodicConfirmBusy','ConfirmIntervalSec','kConfirmIntervalDefaultSec = 5','globalLastRealInputTick_')){
             if(-not $controller.Contains($marker)){throw "Missing v1.5.8 marker $marker"}
           }
           if($controller.Contains('HandleCrossMapConfirm(a, now')){throw 'Semantic Confirm is still invoked'}
-          $bridge=[IO.File]::ReadAllText($bridgePath)
+          $bridge=[IO.File]::ReadAllText('clean-route/src/bridge.cpp')
           foreach($forbidden in @('ReadSemanticUiPresent','MainFindUI','MessageBox')){
             if($bridge.Contains($forbidden)){throw "Bridge still contains forbidden v1.5.8 UI probe $forbidden"}
           }
