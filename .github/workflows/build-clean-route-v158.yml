@@ -65,9 +65,9 @@ jobs:
           try {$pzs.CopyTo($pout)} finally {$pout.Dispose();$pzs.Dispose();$pms.Dispose()}
           $patchSha=(Get-FileHash -Algorithm SHA256 $patchPath).Hash.ToLowerInvariant()
           if($patchSha -ne 'd3ce9108b183e478958593d20eb2a06b65426ede77f486bdf8cea578cd19c75b'){throw "v1.5.9 patch mismatch $patchSha"}
-          & git apply --check --whitespace=nowarn $patchPath
+          & git apply --check --whitespace=nowarn --directory=clean-route $patchPath
           if($LASTEXITCODE -ne 0){throw 'v1.5.9 patch --check failed'}
-          & git apply --whitespace=nowarn $patchPath
+          & git apply --whitespace=nowarn --directory=clean-route $patchPath
           if($LASTEXITCODE -ne 0){throw 'v1.5.9 patch apply failed'}
           $finalSha=(Get-FileHash -Algorithm SHA256 $controllerPath).Hash.ToLowerInvariant()
           Write-Host "v1.5.9 controller SHA256=$finalSha"
