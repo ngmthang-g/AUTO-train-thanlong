@@ -1,0 +1,125 @@
+name: Build Clean Route v1.5.8 Windows x64
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ agent/v158-staging, agent/clean-route-v1.0.0 ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+  build-v158:
+    runs-on: windows-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Reconstruct hash-gated v1.5.8 sources
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          function Restore-Transport([string]$Pattern,[string]$OutPath,[string]$ExpectedSha) {
+            $parts=Get-ChildItem $Pattern | Sort-Object Name
+            if($parts.Count -lt 1){throw "Missing transport $Pattern"}
+            $raw=($parts | ForEach-Object {[IO.File]::ReadAllText($_.FullName)}) -join ''
+            $b64=[Regex]::Replace($raw,'[^A-Za-z0-9+/=]','')
+            Write-Host "$Pattern parts=$($parts.Count) rawChars=$($raw.Length) base64Chars=$($b64.Length)"
+            $gz=[Convert]::FromBase64String($b64)
+            $ms=[IO.MemoryStream]::new($gz)
+            $zs=[IO.Compression.GZipStream]::new($ms,[IO.Compression.CompressionMode]::Decompress)
+            $out=[IO.File]::Create($OutPath)
+            try {$zs.CopyTo($out)} finally {$out.Dispose();$zs.Dispose();$ms.Dispose()}
+            $sha=(Get-FileHash -Algorithm SHA256 $OutPath).Hash.ToLowerInvariant()
+            Write-Host "$OutPath transport SHA256=$sha"
+            if($sha -ne $ExpectedSha){throw "$OutPath transport mismatch $sha"}
+          }
+          $controllerPath='clean-route/src/controller.cpp'
+          $bridgePath='clean-route/src/bridge.cpp'
+          Restore-Transport 'clean-route/transport-v158/controller.cpp.gz.b64.*' $controllerPath 'f2a7dc1b5d1a94544011bb56a1f7b8e3df30fc54776fb706ec1c0424c8e00af9'
+          Restore-Transport 'clean-route/transport-v158/bridge.cpp.gz.b64.*' $bridgePath '64967db0d72cd584c909ce12dd4fdf20cace1128784b9e43214bd419014ed05f'
+
+          # Build-only normalization: the generated v1.5.8 source accidentally added a
+          # second IDC_ENABLE_CONFIRM case immediately before IDC_CONFIRM_INTERVAL.
+          # Remove exactly that duplicate; the original shared toggle case remains.
+          $controller=[IO.File]::ReadAllText($controllerPath)
+          $dup='(?m)^[ \t]+case IDC_ENABLE_CONFIRM:\r?\n[ \t]+if \(HIWORD\(wp\) == BN_CLICKED\) PersistSelectedEditor\(\);\r?\n[ \t]+break;\r?\n(?=[ \t]+case IDC_CONFIRM_INTERVAL:)'
+          $matches=[Regex]::Matches($controller,$dup)
+          if($matches.Count -ne 1){throw "Expected exactly one duplicate IDC_ENABLE_CONFIRM case; got $($matches.Count)"}
+          $controller=[Regex]::Replace($controller,$dup,'',1)
+          [IO.File]::WriteAllText($controllerPath,$controller,[Text.UTF8Encoding]::new($false))
+          $fixed=(Get-FileHash -Algorithm SHA256 $controllerPath).Hash.ToLowerInvariant()
+          Write-Host "v1.5.8 compile controller SHA256=$fixed"
+          if($fixed -ne '01cafd0a490a140da10db5a92ac23f7b70d794f88cb4936f002f07962dfb0ca0'){throw 'v1.5.8 normalized controller mismatch'}
+
+          $controller=[IO.File]::ReadAllText($controllerPath)
+          foreach($marker in @('HandlePeriodicConfirmClick','PeriodicConfirmBusy','ConfirmIntervalSec','kConfirmIntervalDefaultSec = 5','globalLastRealInputTick_')){
+            if(-not $controller.Contains($marker)){throw "Missing v1.5.8 marker $marker"}
+          }
+          if($controller.Contains('HandleCrossMapConfirm(a, now')){throw 'Semantic Confirm is still invoked'}
+          $bridge=[IO.File]::ReadAllText($bridgePath)
+          foreach($forbidden in @('ReadSemanticUiPresent','MainFindUI')){
+            if($bridge.Contains($forbidden)){throw "Bridge still contains forbidden v1.5.8 UI probe $forbidden"}
+          }
+
+      - name: Build + safety audit + route self-test
+        shell: pwsh
+        working-directory: clean-route
+        run: |
+          $ErrorActionPreference='Continue'
+          & cmd /c build.cmd 2>&1 | Tee-Object -FilePath build-v158.log
+          $code=$LASTEXITCODE
+          if($code -ne 0){
+            $tail=((Get-Content build-v158.log -Tail 140) -join ' | ')
+            $tail=$tail.Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
+            Write-Host "::error title=v1.5.8 build diagnostic::$tail"
+            exit $code
+          }
+
+      - name: Package v1.5.8
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force 'clean-route/release-v158' | Out-Null
+          $src='clean-route/release-v158/ThanLongCleanRoute_Source_v1.5.8.zip'
+          Compress-Archive -Path 'clean-route/src','clean-route/resources','clean-route/docs','clean-route/build.cmd','clean-route/README.md','clean-route/CLEAN_REWRITE_AUDIT.md','clean-route/PROJECT_SUMMARY.md','PROJECT_KNOWLEDGE.md','CHANGELOG.md' -DestinationPath $src -CompressionLevel Optimal
+          Copy-Item 'clean-route/dist/ThanLongCleanRoute_v1.5.8.exe' 'clean-route/release-v158/ThanLongCleanRoute_v1.5.8.exe'
+          Copy-Item 'clean-route/dist/ThanLongCleanRouteBridge.dll' 'clean-route/release-v158/ThanLongCleanRouteBridge.dll'
+          Copy-Item 'clean-route/docs/features/FIXED_INTERVAL_CONFIRM.md' 'clean-route/release-v158/FIXED_INTERVAL_CONFIRM.md'
+          Copy-Item 'clean-route/docs/history/VERSION_v1.5.8.md' 'clean-route/release-v158/VERSION_v1.5.8.md'
+          Copy-Item 'clean-route/docs/decisions/DECISION_012_FIXED_INTERVAL_CONFIRM.md' 'clean-route/release-v158/DECISION_012_FIXED_INTERVAL_CONFIRM.md'
+          Copy-Item 'clean-route/docs/bugs/BUG_005_SEMANTIC_CONFIRM_RELIABILITY.md' 'clean-route/release-v158/BUG_005_SEMANTIC_CONFIRM_RELIABILITY.md'
+
+      - name: Verify v1.5.8 artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $exe='clean-route/release-v158/ThanLongCleanRoute_v1.5.8.exe'
+          $dll='clean-route/release-v158/ThanLongCleanRouteBridge.dll'
+          $src='clean-route/release-v158/ThanLongCleanRoute_Source_v1.5.8.zip'
+          foreach($p in @($exe,$dll,$src)){if(!(Test-Path $p)){throw "Missing $p"}}
+          $b=[IO.File]::ReadAllBytes($dll)
+          if($b[0] -ne 0x4D -or $b[1] -ne 0x5A){throw 'Bridge is not PE/MZ'}
+          $pe=[BitConverter]::ToInt32($b,0x3C)
+          $ch=[BitConverter]::ToUInt16($b,$pe+22)
+          if(($ch -band 0x2000) -eq 0){throw 'Bridge missing DLL characteristic'}
+          $h=[System.Runtime.InteropServices.NativeLibrary]::Load((Resolve-Path $dll).Path)
+          try {
+            $p=[System.Runtime.InteropServices.NativeLibrary]::GetExport($h,'TlcGetMessageHook')
+            if($p -eq [IntPtr]::Zero){throw 'Missing TlcGetMessageHook export'}
+          } finally { [System.Runtime.InteropServices.NativeLibrary]::Free($h) }
+          Write-Host ('EXE SHA256: ' + (Get-FileHash -Algorithm SHA256 $exe).Hash.ToLowerInvariant())
+          Write-Host ('DLL SHA256: ' + (Get-FileHash -Algorithm SHA256 $dll).Hash.ToLowerInvariant())
+          Write-Host ('SOURCE SHA256: ' + (Get-FileHash -Algorithm SHA256 $src).Hash.ToLowerInvariant())
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ThanLongCleanRoute_v1.5.8_FixedIntervalConfirm
+          path: clean-route/release-v158/*
+          if-no-files-found: error
