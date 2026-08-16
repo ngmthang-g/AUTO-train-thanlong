@@ -71,7 +71,7 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'v1.5.9 patch apply failed'}
           $finalSha=(Get-FileHash -Algorithm SHA256 $controllerPath).Hash.ToLowerInvariant()
           Write-Host "v1.5.9 controller SHA256=$finalSha"
-          if($finalSha -ne '5900c02b44a62d72ba2e197cd92e8cf6736245d70bd355b9f72f331f7516d559'){throw 'v1.5.9 controller final mismatch'}
+          if($finalSha -ne '11739f9d11d056107d6733a34f7d88ae60008a0c9ace2d2eaca97409a4831bbf'){throw 'v1.5.9 controller final mismatch'}
 
           $expected=@{
             'clean-route/src/rotation_logic.h'='f217c8566673d6fe030bc9c71f9285beb6a195aa31d3277a530e0847c0601e10'
