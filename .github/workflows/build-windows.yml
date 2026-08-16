@@ -44,6 +44,24 @@ jobs:
           Get-ChildItem -Force $stage | Copy-Item -Destination $PWD -Recurse -Force
           if (Test-Path bootstrap) { Remove-Item bootstrap -Recurse -Force }
 
+      - name: Normalize Windows batch line endings and manifest
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $path = (Resolve-Path 'build.cmd').Path
+          $text = [IO.File]::ReadAllText($path)
+          $text = $text -replace "`r`n", "`n"
+          $text = $text -replace "`r", "`n"
+          $text = $text -replace "`n", "`r`n"
+          [IO.File]::WriteAllText($path, $text, (New-Object Text.UTF8Encoding($false)))
+          $actual = (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
+          $expected = '1813bf66e12c9680f51f46bad7bb0dfe2ba24ffb07b9e93dd70002349aae0828'
+          if ($actual -ne $expected) { throw "Normalized build.cmd SHA256 mismatch: $actual" }
+          $manifest = 'SOURCE_MANIFEST_v1.5.10.sha256'
+          $m = [IO.File]::ReadAllText($manifest)
+          $m = [regex]::Replace($m, '(?m)^[0-9a-f]{64}  \./build\.cmd$', "$expected  ./build.cmd")
+          [IO.File]::WriteAllText($manifest, $m, (New-Object Text.UTF8Encoding($false)))
+
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.15.2
