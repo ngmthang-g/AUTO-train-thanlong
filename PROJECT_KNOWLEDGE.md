@@ -1,3 +1,16 @@
+## v1.5.9 — Auto Rotate Train Spots (WINDOWS CI PASS / RUNTIME UNTESTED)
+- Rotation members are complete shared train spots (`Name/MapID/X/Y`), not raw maps.
+- Per-account checked pool; one item = stay, multiple = round-robin.
+- Death evidence is a rolling window outside RuntimeState so death hard resets do not erase it. Default: >10 deaths / 10 minutes.
+- Efficiency evidence is productive train time outside RuntimeState. Default: 15 minutes without a FULL-bag edge.
+- Productive time requires alive + at target + AutoFight ON + authoritative FreeBagSpace.
+- FULL bag resets only the efficiency timer; death history remains independent until a spot switch.
+- Switching spots resets both trigger windows for the new spot.
+- Live spot switch uses existing train-recovery Stop-Auto flow before routing; death switch changes target before revive return.
+- Windows x64 staging CI **PASS** — run `31949891312`, job `95171640279`, artifact `9264382136`; route test 15/15, rotation test 8/8, Bridge/EXE/package verification PASS.
+- v1.5.9 Windows controller SHA256 `11739f9d11d056107d6733a34f7d88ae60008a0c9ace2d2eaca97409a4831bbf`; canonical LF source `5900c02b44a62d72ba2e197cd92e8cf6736245d70bd355b9f72f331f7516d559`; EXE `d6bcc8fd9e02ae818499d776498877ee51099854633556febd94ee945ef8d2bc`; DLL `5d7adcb842378cdd91225ee476efb5e5e8dbe4bf67929af7afc97af6eb951a24`; source ZIP `7c1297f717ebb880932d83cccb90e0fc9236b49762ab8b14b1cc288ee37b3b1e`; artifact digest `efc36d0fb66593370b49e92e63bfabe67ce09edbbd70a34488ce6c6920ce807d`.
+- Runtime auto-rotation is **NEEDS USER TEST**; build success must not be treated as runtime proof.
+
 # CURRENT v1.5.6 KNOWLEDGE
 - Repeated-death bug motivated replacing partial per-field death reset with full `ResetRuntime()`.
 - `deathSessionLatched` MUST remain outside RuntimeState.

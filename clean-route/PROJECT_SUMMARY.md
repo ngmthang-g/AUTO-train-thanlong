@@ -1,3 +1,10 @@
+# Current candidate: v1.5.9 — Auto Rotate Train Spots
+Adds per-account shared-spot rotation driven by repeated deaths or insufficient bag-fill productivity, while preserving v1.5.8 fixed periodic Confirm and all existing route/revive/sell safety gates.
+
+Rotation defaults: **more than 10 deaths in rolling 10 minutes** (11th death at default limit), or **15 minutes of productive train time without a new FULL-bag edge**. One checked spot remains fixed; multiple checked spots rotate round-robin in shared-list order.
+
+Build evidence: Windows x64 staging CI **PASS** — run `31949891312`, job `95171640279`, artifact `9264382136`; route test **15/15 PASS**, rotation test **8/8 PASS**; EXE `d6bcc8fd9e02ae818499d776498877ee51099854633556febd94ee945ef8d2bc`, DLL `5d7adcb842378cdd91225ee476efb5e5e8dbe4bf67929af7afc97af6eb951a24`. Runtime rotation remains NEEDS USER TEST.
+
 # PROJECT SUMMARY — Clean Route v1.5.8
 
 Current candidate: **Fixed Interval Confirm Click**. Automatic map Confirm has been deliberately simplified by user decision: every running account periodically real-clicks the saved Confirm coordinate (default 5s, configurable 1–300s). No popup/game-state evidence is used to decide whether to click.

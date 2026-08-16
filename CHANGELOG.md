@@ -1,3 +1,18 @@
+# v1.5.9 — Auto Rotate Train Spots
+- Per-account checkbox rotation pool over existing shared train spots.
+- Defaults: rotate after **more than 10 deaths in rolling 10 minutes** (11th death triggers with limit=10).
+- Defaults: rotate after **15 minutes of productive training without a new FULL-bag event**.
+- Productive timer counts only alive + at target + AutoFight ON + authoritative FreeBagSpace.
+- FULL-bag edge resets the no-FULL timer.
+- One selected spot stays fixed; multiple spots cycle and wrap to the first.
+- Live rotation reuses train recovery to stop AutoFight before pathing; death-triggered rotation changes target before revive return.
+- Settings persisted per RoleID: RotationSpot list + death/window/no-FULL thresholds.
+- v1.5.8 fixed periodic Confirm remains unchanged.
+- Windows x64 staging CI **PASS** — run `31949891312`, job `95171640279`, artifact `9264382136`.
+- Route/mount test **15/15 PASS**; rotation test **8/8 PASS**; Bridge PE/EXE/package/artifact verification PASS.
+- v1.5.9 EXE SHA256 `d6bcc8fd9e02ae818499d776498877ee51099854633556febd94ee945ef8d2bc`; DLL `5d7adcb842378cdd91225ee476efb5e5e8dbe4bf67929af7afc97af6eb951a24`; source ZIP `7c1297f717ebb880932d83cccb90e0fc9236b49762ab8b14b1cc288ee37b3b1e`; artifact digest `efc36d0fb66593370b49e92e63bfabe67ce09edbbd70a34488ce6c6920ce807d`.
+- Runtime auto-rotation: **NEEDS USER TEST**.
+
 # v1.5.8 — 2026-08-16
 
 Requested:
@@ -70,7 +85,7 @@ Requested:
 
 Runtime evidence:
 - v1.5.3 fast transition: semantic MessageBox detected while Path ON, StopPath sent, saved Confirm clicked, destination reached — **RUNTIME PARTIAL PASS**;
-- v1.5.3 slow transition: repeated `ReadState fail: Bridge timeout; fail-closed` for multiple seconds — state is non-authoritative during loading.
+- v1.5.3 slow transition: repeated `ReadState fail: Bridge timeout; fail-closed` for multiple seconds; state is non-authoritative during loading.
 
 Changed:
 - per-PID `clientFreezeActive` safety gate on explicit map transition or ReadState/Bridge timeout/busy;
