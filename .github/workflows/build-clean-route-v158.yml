@@ -28,7 +28,9 @@ jobs:
           function Restore-Transport([string]$Pattern,[string]$OutPath,[string]$ExpectedSha) {
             $parts=Get-ChildItem $Pattern | Sort-Object Name
             if($parts.Count -lt 1){throw "Missing transport $Pattern"}
-            $b64=($parts | ForEach-Object {[IO.File]::ReadAllText($_.FullName).Trim()}) -join ''
+            $raw=($parts | ForEach-Object {[IO.File]::ReadAllText($_.FullName)}) -join ''
+            $b64=[Regex]::Replace($raw,'[^A-Za-z0-9+/=]','')
+            Write-Host "$Pattern parts=$($parts.Count) rawChars=$($raw.Length) base64Chars=$($b64.Length)"
             $gz=[Convert]::FromBase64String($b64)
             $ms=[IO.MemoryStream]::new($gz)
             $zs=[IO.Compression.GZipStream]::new($ms,[IO.Compression.CompressionMode]::Decompress)
