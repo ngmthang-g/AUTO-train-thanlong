@@ -1,9 +1,9 @@
-name: Build Clean Route v1.5.8 Windows x64
+name: Build Clean Route v1.5.9 Windows x64
 
 on:
   workflow_dispatch:
   push:
-    branches: [ agent/v158-staging, agent/clean-route-v1.0.0 ]
+    branches: [ agent/v159-staging, agent/clean-route-v1.0.0 ]
   pull_request:
     branches: [ main ]
 
@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 jobs:
-  build-v158:
+  build-v159:
     runs-on: windows-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -21,7 +21,7 @@ jobs:
         with:
           version: 0.15.2
 
-      - name: Reconstruct hash-gated v1.5.8 sources
+      - name: Reconstruct and verify v1.5.9 sources
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
@@ -30,79 +30,102 @@ jobs:
             if($parts.Count -lt 1){throw "Missing transport $Pattern"}
             $raw=($parts | ForEach-Object {[IO.File]::ReadAllText($_.FullName)}) -join ''
             $b64=[Regex]::Replace($raw,'[^A-Za-z0-9+/=]','')
-            Write-Host "$Pattern parts=$($parts.Count) rawChars=$($raw.Length) base64Chars=$($b64.Length)"
             $gz=[Convert]::FromBase64String($b64)
             $ms=[IO.MemoryStream]::new($gz)
             $zs=[IO.Compression.GZipStream]::new($ms,[IO.Compression.CompressionMode]::Decompress)
             $out=[IO.File]::Create($OutPath)
             try {$zs.CopyTo($out)} finally {$out.Dispose();$zs.Dispose();$ms.Dispose()}
             $sha=(Get-FileHash -Algorithm SHA256 $OutPath).Hash.ToLowerInvariant()
-            Write-Host "$OutPath transport SHA256=$sha"
+            Write-Host "$OutPath SHA256=$sha"
             if($sha -ne $ExpectedSha){throw "$OutPath transport mismatch $sha"}
           }
-          $controllerPath='clean-route/src/controller.cpp'
-          $bridgePath='clean-route/src/bridge.cpp'
-          Restore-Transport 'clean-route/transport-v158/controller.cpp.gz.b64.*' $controllerPath 'f2a7dc1b5d1a94544011bb56a1f7b8e3df30fc54776fb706ec1c0424c8e00af9'
-          Restore-Transport 'clean-route/transport-v158/bridge.cpp.gz.b64.*' $bridgePath '64967db0d72cd584c909ce12dd4fdf20cace1128784b9e43214bd419014ed05f'
+          Restore-Transport 'clean-route/transport-v158/controller.cpp.gz.b64.*' 'clean-route/src/controller.cpp' 'f2a7dc1b5d1a94544011bb56a1f7b8e3df30fc54776fb706ec1c0424c8e00af9'
+          Restore-Transport 'clean-route/transport-v158/bridge.cpp.gz.b64.*' 'clean-route/src/bridge.cpp' '64967db0d72cd584c909ce12dd4fdf20cace1128784b9e43214bd419014ed05f'
 
-          # Build-only normalization: the generated v1.5.8 source accidentally added a
-          # second IDC_ENABLE_CONFIRM case immediately before IDC_CONFIRM_INTERVAL.
-          # Remove exactly that duplicate; the original shared toggle case remains.
+          # Same compile normalization used by proven v1.5.8 CI.
+          $controllerPath='clean-route/src/controller.cpp'
           $controller=[IO.File]::ReadAllText($controllerPath)
           $dup='(?m)^[ \t]+case IDC_ENABLE_CONFIRM:\r?\n[ \t]+if \(HIWORD\(wp\) == BN_CLICKED\) PersistSelectedEditor\(\);\r?\n[ \t]+break;\r?\n(?=[ \t]+case IDC_CONFIRM_INTERVAL:)'
           $matches=[Regex]::Matches($controller,$dup)
-          if($matches.Count -ne 1){throw "Expected exactly one duplicate IDC_ENABLE_CONFIRM case; got $($matches.Count)"}
+          if($matches.Count -ne 1){throw "Expected one v1.5.8 normalization case; got $($matches.Count)"}
           $controller=[Regex]::Replace($controller,$dup,'',1)
           [IO.File]::WriteAllText($controllerPath,$controller,[Text.UTF8Encoding]::new($false))
-          $fixed=(Get-FileHash -Algorithm SHA256 $controllerPath).Hash.ToLowerInvariant()
-          Write-Host "v1.5.8 compile controller SHA256=$fixed"
-          if($fixed -ne '01cafd0a490a140da10db5a92ac23f7b70d794f88cb4936f002f07962dfb0ca0'){throw 'v1.5.8 normalized controller mismatch'}
+          $baseSha=(Get-FileHash -Algorithm SHA256 $controllerPath).Hash.ToLowerInvariant()
+          if($baseSha -ne '01cafd0a490a140da10db5a92ac23f7b70d794f88cb4936f002f07962dfb0ca0'){throw "v1.5.8 normalized baseline mismatch $baseSha"}
 
-          $controller=[IO.File]::ReadAllText($controllerPath)
-          foreach($marker in @('HandlePeriodicConfirmClick','PeriodicConfirmBusy','ConfirmIntervalSec','kConfirmIntervalDefaultSec = 5','globalLastRealInputTick_')){
-            if(-not $controller.Contains($marker)){throw "Missing v1.5.8 marker $marker"}
+          # Reconstruct exact generated v1.5.9 patch and apply with zero fuzz.
+          $patchParts=Get-ChildItem 'clean-route/transport-v159/controller_v158_to_v159.patch.gz.b64.*' | Sort-Object Name
+          if($patchParts.Count -lt 1){throw 'Missing v1.5.9 patch transport'}
+          $patchB64=(($patchParts | ForEach-Object {[IO.File]::ReadAllText($_.FullName)}) -join '') -replace '[^A-Za-z0-9+/=]',''
+          $patchGz=[Convert]::FromBase64String($patchB64)
+          $pms=[IO.MemoryStream]::new($patchGz)
+          $pzs=[IO.Compression.GZipStream]::new($pms,[IO.Compression.CompressionMode]::Decompress)
+          $patchPath=(Join-Path $PWD 'v159_controller.patch')
+          $pout=[IO.File]::Create($patchPath)
+          try {$pzs.CopyTo($pout)} finally {$pout.Dispose();$pzs.Dispose();$pms.Dispose()}
+          $patchSha=(Get-FileHash -Algorithm SHA256 $patchPath).Hash.ToLowerInvariant()
+          if($patchSha -ne 'd3ce9108b183e478958593d20eb2a06b65426ede77f486bdf8cea578cd19c75b'){throw "v1.5.9 patch mismatch $patchSha"}
+          & git apply --check --whitespace=nowarn $patchPath
+          if($LASTEXITCODE -ne 0){throw 'v1.5.9 patch --check failed'}
+          & git apply --whitespace=nowarn $patchPath
+          if($LASTEXITCODE -ne 0){throw 'v1.5.9 patch apply failed'}
+          $finalSha=(Get-FileHash -Algorithm SHA256 $controllerPath).Hash.ToLowerInvariant()
+          Write-Host "v1.5.9 controller SHA256=$finalSha"
+          if($finalSha -ne '5900c02b44a62d72ba2e197cd92e8cf6736245d70bd355b9f72f331f7516d559'){throw 'v1.5.9 controller final mismatch'}
+
+          $expected=@{
+            'clean-route/src/rotation_logic.h'='f217c8566673d6fe030bc9c71f9285beb6a195aa31d3277a530e0847c0601e10'
+            'clean-route/src/rotation_logic_test.cpp'='af3969e7a399e68c2529553b56f8122d2595e078142ce4242fee89e05a751616'
           }
-          if($controller.Contains('HandleCrossMapConfirm(a, now')){throw 'Semantic Confirm is still invoked'}
-          $bridge=[IO.File]::ReadAllText($bridgePath)
+          foreach($p in $expected.Keys){
+            $sha=(Get-FileHash -Algorithm SHA256 $p).Hash.ToLowerInvariant()
+            Write-Host "$p SHA256=$sha"
+            if($sha -ne $expected[$p]){throw "Source hash mismatch: $p"}
+          }
+          $controller=[IO.File]::ReadAllText('clean-route/src/controller.cpp')
+          foreach($marker in @('SwitchToNextRotationSpot','RecordDeathForRotation','UpdateRotationEfficiency','IDC_ROTATION_LIST','RotationCount','RotateDeathLimit','RotateDeathWindowMin','RotateNoFullBagMin','rotationActiveTrainMs')){
+            if(-not $controller.Contains($marker)){throw "Missing v1.5.9 marker $marker"}
+          }
+          if($controller.Contains('HandleCrossMapConfirm(a, now')){throw 'Semantic Confirm invocation returned'}
+          $bridge=[IO.File]::ReadAllText('clean-route/src/bridge.cpp')
           foreach($forbidden in @('ReadSemanticUiPresent','MainFindUI')){
-            if($bridge.Contains($forbidden)){throw "Bridge still contains forbidden v1.5.8 UI probe $forbidden"}
+            if($bridge.Contains($forbidden)){throw "Bridge still contains forbidden UI probe $forbidden"}
           }
 
-      - name: Build + safety audit + route self-test
+      - name: Build + audit + self-tests
         shell: pwsh
         working-directory: clean-route
         run: |
           $ErrorActionPreference='Continue'
-          & cmd /c build.cmd 2>&1 | Tee-Object -FilePath build-v158.log
+          & cmd /c build.cmd 2>&1 | Tee-Object -FilePath build-v159.log
           $code=$LASTEXITCODE
           if($code -ne 0){
-            $tail=((Get-Content build-v158.log -Tail 140) -join ' | ')
+            $tail=((Get-Content build-v159.log -Tail 180) -join ' | ')
             $tail=$tail.Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
-            Write-Host "::error title=v1.5.8 build diagnostic::$tail"
+            Write-Host "::error title=v1.5.9 build diagnostic::$tail"
             exit $code
           }
 
-      - name: Package v1.5.8
+      - name: Package v1.5.9
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          New-Item -ItemType Directory -Force 'clean-route/release-v158' | Out-Null
-          $src='clean-route/release-v158/ThanLongCleanRoute_Source_v1.5.8.zip'
+          New-Item -ItemType Directory -Force 'clean-route/release-v159' | Out-Null
+          $src='clean-route/release-v159/ThanLongCleanRoute_Source_v1.5.9.zip'
           Compress-Archive -Path 'clean-route/src','clean-route/resources','clean-route/docs','clean-route/build.cmd','clean-route/README.md','clean-route/CLEAN_REWRITE_AUDIT.md','clean-route/PROJECT_SUMMARY.md','PROJECT_KNOWLEDGE.md','CHANGELOG.md' -DestinationPath $src -CompressionLevel Optimal
-          Copy-Item 'clean-route/dist/ThanLongCleanRoute_v1.5.8.exe' 'clean-route/release-v158/ThanLongCleanRoute_v1.5.8.exe'
-          Copy-Item 'clean-route/dist/ThanLongCleanRouteBridge.dll' 'clean-route/release-v158/ThanLongCleanRouteBridge.dll'
-          Copy-Item 'clean-route/docs/features/FIXED_INTERVAL_CONFIRM.md' 'clean-route/release-v158/FIXED_INTERVAL_CONFIRM.md'
-          Copy-Item 'clean-route/docs/history/VERSION_v1.5.8.md' 'clean-route/release-v158/VERSION_v1.5.8.md'
-          Copy-Item 'clean-route/docs/decisions/DECISION_012_FIXED_INTERVAL_CONFIRM.md' 'clean-route/release-v158/DECISION_012_FIXED_INTERVAL_CONFIRM.md'
-          Copy-Item 'clean-route/docs/bugs/BUG_005_SEMANTIC_CONFIRM_RELIABILITY.md' 'clean-route/release-v158/BUG_005_SEMANTIC_CONFIRM_RELIABILITY.md'
+          Copy-Item 'clean-route/dist/ThanLongCleanRoute_v1.5.9.exe' 'clean-route/release-v159/ThanLongCleanRoute_v1.5.9.exe'
+          Copy-Item 'clean-route/dist/ThanLongCleanRouteBridge.dll' 'clean-route/release-v159/ThanLongCleanRouteBridge.dll'
+          Copy-Item 'clean-route/docs/features/TRAIN_SPOT_ROTATION.md' 'clean-route/release-v159/TRAIN_SPOT_ROTATION.md'
+          Copy-Item 'clean-route/docs/history/VERSION_v1.5.9.md' 'clean-route/release-v159/VERSION_v1.5.9.md'
+          Copy-Item 'clean-route/docs/decisions/DECISION_013_TRAIN_SPOT_ROTATION.md' 'clean-route/release-v159/DECISION_013_TRAIN_SPOT_ROTATION.md'
 
-      - name: Verify v1.5.8 artifacts
+      - name: Verify v1.5.9 artifacts
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          $exe='clean-route/release-v158/ThanLongCleanRoute_v1.5.8.exe'
-          $dll='clean-route/release-v158/ThanLongCleanRouteBridge.dll'
-          $src='clean-route/release-v158/ThanLongCleanRoute_Source_v1.5.8.zip'
+          $exe='clean-route/release-v159/ThanLongCleanRoute_v1.5.9.exe'
+          $dll='clean-route/release-v159/ThanLongCleanRouteBridge.dll'
+          $src='clean-route/release-v159/ThanLongCleanRoute_Source_v1.5.9.zip'
           foreach($p in @($exe,$dll,$src)){if(!(Test-Path $p)){throw "Missing $p"}}
           $b=[IO.File]::ReadAllBytes($dll)
           if($b[0] -ne 0x4D -or $b[1] -ne 0x5A){throw 'Bridge is not PE/MZ'}
@@ -120,6 +143,6 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ThanLongCleanRoute_v1.5.8_FixedIntervalConfirm
-          path: clean-route/release-v158/*
+          name: ThanLongCleanRoute_v1.5.9_AutoRotateTrainSpots
+          path: clean-route/release-v159/*
           if-no-files-found: error
