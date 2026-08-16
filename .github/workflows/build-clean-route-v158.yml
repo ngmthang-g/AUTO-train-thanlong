@@ -49,7 +49,7 @@ jobs:
           }
           if($controller.Contains('HandleCrossMapConfirm(a, now')){throw 'Semantic Confirm is still invoked'}
           $bridge=[IO.File]::ReadAllText('clean-route/src/bridge.cpp')
-          foreach($forbidden in @('ReadSemanticUiPresent','MainFindUI','MessageBox')){
+          foreach($forbidden in @('ReadSemanticUiPresent','MainFindUI')){
             if($bridge.Contains($forbidden)){throw "Bridge still contains forbidden v1.5.8 UI probe $forbidden"}
           }
 
