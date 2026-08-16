@@ -1,0 +1,9 @@
+.zig-cache/
+zig-cache/
+dist/
+*.exe
+*.dll
+*.pdb
+*.obj
+*.res
+*.zip

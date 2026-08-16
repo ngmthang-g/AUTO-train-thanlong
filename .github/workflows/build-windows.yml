@@ -1,80 +1,30 @@
-name: Publish ThanLong Clean Route v1.5.10
+name: Build ThanLong Clean Route Windows x64
 
 on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
   push:
-    branches:
-      - agent/v1.5.10-internal-ui-v087
+    branches: [main]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  publish-source:
-    if: "!contains(github.event.head_commit.message, '[source-published]')"
+  build:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Reassemble and verify source archive
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $parts = Get-ChildItem bootstrap -Filter 'part*' | Sort-Object Name
-          if ($parts.Count -ne 13) { throw "Expected 13 payload parts, found $($parts.Count)" }
-          $b64 = ($parts | ForEach-Object { Get-Content $_.FullName -Raw }) -join ''
-          $archive = Join-Path $env:RUNNER_TEMP 'source.tar.xz'
-          [IO.File]::WriteAllBytes($archive, [Convert]::FromBase64String($b64))
-          $actual = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
-          $expected = '8c7651bee7e596ae8914bb07a51032ca58aa3d2ed5b6a0680dc9c98542811902'
-          if ($actual -ne $expected) { throw "Archive SHA256 mismatch: $actual" }
-          $stage = Join-Path $env:RUNNER_TEMP 'thanlong-v1510'
-          New-Item -ItemType Directory -Force -Path $stage | Out-Null
-          tar -xJf $archive -C $stage
-          if ($LASTEXITCODE -ne 0) { throw 'tar extraction failed' }
-          if (!(Test-Path (Join-Path $stage 'build.cmd'))) { throw 'Extracted source missing build.cmd' }
-
-      - name: Replace repository working tree with v1.5.10 source
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $stage = Join-Path $env:RUNNER_TEMP 'thanlong-v1510'
-          Get-ChildItem -Force | Where-Object { $_.Name -notin @('.git', '.github') } | Remove-Item -Recurse -Force
-          Get-ChildItem -Force $stage | Copy-Item -Destination $PWD -Recurse -Force
-          if (Test-Path bootstrap) { Remove-Item bootstrap -Recurse -Force }
-
-      - name: Normalize Windows batch and UTF-8 audit
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $path = (Resolve-Path 'build.cmd').Path
-          $text = [IO.File]::ReadAllText($path)
-          $text = $text -replace "`r`n", "`n"
-          $text = $text -replace "`r", "`n"
-          $text = $text.Replace('Get-Content $_ -Raw', 'Get-Content -Encoding UTF8 $_ -Raw')
-          foreach($f in @('src/controller.cpp','src/bridge.cpp','src/protocol.h','src/route_logic.h')) {
-            $text = $text.Replace("Get-Content '$f' -Raw", "Get-Content -Encoding UTF8 '$f' -Raw")
-          }
-          $text = $text -replace "`n", "`r`n"
-          [IO.File]::WriteAllText($path, $text, (New-Object Text.UTF8Encoding($false)))
-          $actual = (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
-          $expected = 'da68323032e4eaa45d22187d66891153c98dcdf3edae0076c6c8147322fb16a7'
-          if ($actual -ne $expected) { throw "Normalized UTF-8 build.cmd SHA256 mismatch: $actual" }
-          $manifest = 'SOURCE_MANIFEST_v1.5.10.sha256'
-          $m = [IO.File]::ReadAllText($manifest)
-          $m = [regex]::Replace($m, '(?m)^[0-9a-f]{64}  \./build\.cmd$', "$expected  ./build.cmd")
-          [IO.File]::WriteAllText($manifest, $m, (New-Object Text.UTF8Encoding($false)))
 
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.15.2
 
-      - name: Build and self-test before publishing source
+      - name: Build and self-test
         shell: cmd
         run: build.cmd
 
-      - name: Verify build artifacts
+      - name: Verify artifacts
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -84,15 +34,10 @@ jobs:
           if (!(Test-Path $dll)) { throw "Missing $dll" }
           Get-FileHash -Algorithm SHA256 $exe,$dll | Format-Table -AutoSize
 
-      - name: Commit verified source to branch
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          if (Test-Path dist) { Remove-Item dist -Recurse -Force }
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
-          git diff --cached --quiet
-          if ($LASTEXITCODE -eq 0) { throw 'No source changes to publish' }
-          git commit -m 'publish v1.5.10 internal UI [source-published]'
-          git push origin HEAD:${{ github.ref_name }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ThanLongCleanRoute_v1.5.10
+          path: |
+            dist/ThanLongCleanRoute_v1.5.10.exe
+            dist/ThanLongCleanRouteBridge.dll
+          if-no-files-found: error
