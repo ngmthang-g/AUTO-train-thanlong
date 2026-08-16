@@ -1,8 +1,8 @@
 #include <windows.h>
 1 RT_MANIFEST "app.manifest"
 1 VERSIONINFO
-FILEVERSION 1,5,6,0
-PRODUCTVERSION 1,5,6,0
+FILEVERSION 1,5,8,0
+PRODUCTVERSION 1,5,8,0
 FILEFLAGSMASK 0x3fL
 FILEOS 0x40004L
 FILETYPE 0x1L
@@ -13,11 +13,11 @@ BEGIN
     BEGIN
       VALUE "CompanyName", "Thang Nguyen\0"
       VALUE "FileDescription", "Than Long Clean Route\0"
-      VALUE "FileVersion", "1.5.6.0\0"
+      VALUE "FileVersion", "1.5.8.0\0"
       VALUE "InternalName", "ThanLongCleanRoute\0"
-      VALUE "OriginalFilename", "ThanLongCleanRoute_v1.5.6.exe\0"
+      VALUE "OriginalFilename", "ThanLongCleanRoute_v1.5.8.exe\0"
       VALUE "ProductName", "Than Long Clean Route\0"
-      VALUE "ProductVersion", "1.5.6.0\0"
+      VALUE "ProductVersion", "1.5.8.0\0"
     END
   END
   BLOCK "VarFileInfo"
