@@ -1,33 +1,76 @@
-name: Build NewCore Windows x64
+name: Publish ThanLong Clean Route v1.5.10
+
 on:
-  workflow_dispatch:
   push:
-    branches: [main, master]
+    branches:
+      - agent/v1.5.10-internal-ui-v087
+
 permissions:
-  contents: read
+  contents: write
+
 jobs:
-  build:
+  publish-source:
+    if: "!contains(github.event.head_commit.message, '[source-published]')"
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Reassemble and verify source archive
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $parts = Get-ChildItem bootstrap -Filter 'part*' | Sort-Object Name
+          if ($parts.Count -ne 13) { throw "Expected 13 payload parts, found $($parts.Count)" }
+          $b64 = ($parts | ForEach-Object { Get-Content $_.FullName -Raw }) -join ''
+          $archive = Join-Path $env:RUNNER_TEMP 'source.tar.xz'
+          [IO.File]::WriteAllBytes($archive, [Convert]::FromBase64String($b64))
+          $actual = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          $expected = '8c7651bee7e596ae8914bb07a51032ca58aa3d2ed5b6a0680dc9c98542811902'
+          if ($actual -ne $expected) { throw "Archive SHA256 mismatch: $actual" }
+          $stage = Join-Path $env:RUNNER_TEMP 'thanlong-v1510'
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          tar -xJf $archive -C $stage
+          if ($LASTEXITCODE -ne 0) { throw 'tar extraction failed' }
+          if (!(Test-Path (Join-Path $stage 'build.cmd'))) { throw 'Extracted source missing build.cmd' }
+
+      - name: Replace repository working tree with v1.5.10 source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $stage = Join-Path $env:RUNNER_TEMP 'thanlong-v1510'
+          Get-ChildItem -Force | Where-Object { $_.Name -notin @('.git', '.github') } | Remove-Item -Recurse -Force
+          Get-ChildItem -Force $stage | Copy-Item -Destination $PWD -Recurse -Force
+          if (Test-Path bootstrap) { Remove-Item bootstrap -Recurse -Force }
+
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.15.2
-      - name: Build
+
+      - name: Build and self-test before publishing source
         shell: cmd
         run: build.cmd
-      - name: Verify
+
+      - name: Verify build artifacts
         shell: pwsh
         run: |
-          $ErrorActionPreference='Stop'
-          $exe='dist/ThanLongAutoTrain_NewCore_v1.0.7.exe'
-          $dll='dist/ThanLongNewCoreBridge.dll'
-          if (!(Test-Path $exe)) { throw 'Missing EXE' }
-          if (!(Test-Path $dll)) { throw 'Missing bridge DLL' }
+          $ErrorActionPreference = 'Stop'
+          $exe = 'dist/ThanLongCleanRoute_v1.5.10.exe'
+          $dll = 'dist/ThanLongCleanRouteBridge.dll'
+          if (!(Test-Path $exe)) { throw "Missing $exe" }
+          if (!(Test-Path $dll)) { throw "Missing $dll" }
           Get-FileHash -Algorithm SHA256 $exe,$dll | Format-Table -AutoSize
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ThanLongAutoTrain_NewCore_v1.0.7
-          path: |
-            dist/ThanLongAutoTrain_NewCore_v1.0.7.exe
-            dist/ThanLongNewCoreBridge.dll
+
+      - name: Commit verified source to branch
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (Test-Path dist) { Remove-Item dist -Recurse -Force }
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) { throw 'No source changes to publish' }
+          git commit -m 'publish v1.5.10 internal UI [source-published]'
+          git push origin HEAD:${{ github.ref_name }}
