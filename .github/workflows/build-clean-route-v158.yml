@@ -74,8 +74,8 @@ jobs:
           if($finalSha -ne '11739f9d11d056107d6733a34f7d88ae60008a0c9ace2d2eaca97409a4831bbf'){throw 'v1.5.9 controller final mismatch'}
 
           $expected=@{
-            'clean-route/src/rotation_logic.h'='f217c8566673d6fe030bc9c71f9285beb6a195aa31d3277a530e0847c0601e10'
-            'clean-route/src/rotation_logic_test.cpp'='af3969e7a399e68c2529553b56f8122d2595e078142ce4242fee89e05a751616'
+            'clean-route/src/rotation_logic.h'='70c04ec1ee9df7c5b6ff9e31c258379916c8704a5cb5ae2062311cdc7747fba4'
+            'clean-route/src/rotation_logic_test.cpp'='1ee1ec32ff16d7ddc4c68fd295d909230f07f975440b2d348a8216261042e207'
           }
           foreach($p in $expected.Keys){
             $sha=(Get-FileHash -Algorithm SHA256 $p).Hash.ToLowerInvariant()
