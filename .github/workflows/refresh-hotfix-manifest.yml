@@ -1,0 +1,38 @@
+name: Refresh hotfix source manifest
+
+on:
+  push:
+    branches:
+      - agent/v1.5.10-internal-ui-v087
+
+permissions:
+  contents: read
+
+jobs:
+  manifest:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Recompute manifest from current checkout
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $manifest = 'SOURCE_MANIFEST_v1.5.10.sha256'
+          $paths = @()
+          foreach ($line in Get-Content $manifest -Encoding UTF8) {
+            if ($line -match '^[0-9a-fA-F]{64}  \./(.+)$') { $paths += $Matches[1] }
+          }
+          $bug = 'docs/bugs/BUG_006_STARTUP_SCAN_BRIDGE_DISS.md'
+          if ($paths -notcontains $bug) { $paths += $bug }
+          $out = foreach ($p in $paths) {
+            if (!(Test-Path -LiteralPath $p -PathType Leaf)) { throw "Manifest path missing: $p" }
+            $h = (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$h  ./$($p -replace '\\','/')"
+          }
+          [IO.File]::WriteAllText((Resolve-Path $manifest), (($out -join "`n") + "`n"), (New-Object Text.UTF8Encoding($false)))
+          Get-Content $manifest
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SourceManifest_v1.5.10_runtime_hotfix
+          path: SOURCE_MANIFEST_v1.5.10.sha256
+          if-no-files-found: error
