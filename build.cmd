@@ -1,112 +1,59 @@
 @echo off
-setlocal EnableExtensions
+setlocal
 cd /d "%~dp0"
-
 where zig >nul 2>nul
-if errorlevel 1 (
-  echo KHONG TIM THAY ZIG TRONG PATH
-  echo Yeu cau Zig 0.15.2.
-  exit /b 1
-)
-for /f "delims=" %%V in ('zig version') do set "ZIG_VERSION=%%V"
-echo Zig: %ZIG_VERSION%
-
+if errorlevel 1 (echo KHONG TIM THAY ZIG & exit /b 1)
 if not exist dist mkdir dist
-del /q dist\*.exe dist\*.dll dist\*.res dist\*.lib dist\*.a >nul 2>nul
-del /q ThanLongNewCoreBridge.dll BridgeSelfTest.exe ThanLongAutoTrain_NewCore_v1.0.7.exe app.res >nul 2>nul
+del /q dist\* >nul 2>nul
 
-echo [1/6] Architecture safety audit...
-findstr /S /I /N /C:"CreateRemoteThread" src\*.cpp src\*.h >nul 2>nul
-if not errorlevel 1 goto :forbid_remote
-findstr /S /I /N /C:"il2cpp_thread_attach" src\*.cpp src\*.h >nul 2>nul
-if not errorlevel 1 goto :forbid_attach
-findstr /S /I /N /C:"Sleep(" src\*.cpp src\*.h >nul 2>nul
-if not errorlevel 1 goto :forbid_sleep
-findstr /S /I /N /C:"ClickNPC" src\*.cpp src\*.h >nul 2>nul
-if not errorlevel 1 goto :forbid_clicknpc
-findstr /S /I /N /C:"HandleClickEvent" src\*.cpp src\*.h >nul 2>nul
-if not errorlevel 1 goto :forbid_handleclick
-findstr /S /I /N /C:"StartAutoFight" src\*.cpp src\*.h >nul 2>nul
-if not errorlevel 1 goto :forbid_autofight
-findstr /S /I /N /C:"RequestSellItem" src\*.cpp src\*.h >nul 2>nul
-if not errorlevel 1 goto :forbid_sell
-echo Architecture audit PASS.
-goto :audit_pass
+echo [1/8] Clean Route v1.5.10 Internal Confirm + Revive v0.8.7 audit...
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$ErrorActionPreference='Stop'; $files=@('src/controller.cpp','src/bridge.cpp','src/protocol.h','src/route_logic.h','src/rotation_logic.h'); $all=($files|%%{Get-Content -Encoding UTF8 $_ -Raw}) -join [Environment]::NewLine;" ^
+  "$forbidden=@('CreateRemoteThread','WriteProcessMemory','remote_worker','StartAutoFight','RequestSellItem','RequestUsingSkill','SelectTarget','ProcessRemoveItem','mouse_event'); foreach($x in $forbidden){if($all -match [regex]::Escape($x)){throw ('Forbidden unsafe/legacy token: '+$x)}};" ^
+  "$scan=[regex]::Match($controller,'(?s)void ScanClients\(\).*?void InsertAccountRow').Value; if($scan -match 'bridge\.Attach|bridge\.Call|ReadSnapshot'){throw 'ScanClients must stay passive: no bridge attach/call/snapshot'};" ^
+  "$controller=Get-Content -Encoding UTF8 'src/controller.cpp' -Raw; $oldConfirm=@('enableConfirm','confirmIntervalSec','IDC_ENABLE_CONFIRM','IDC_CONFIRM_INTERVAL','IDC_CAPTURE_CONFIRM','IDC_POINT_CONFIRM','IDC_TEST_CONFIRM','ClickSlot::Confirm','ClickSlot::Revive','HandlePeriodicConfirmClick','PeriodicConfirmBusy','lastPeriodicConfirmTick'); foreach($x in $oldConfirm){if($controller -cmatch [regex]::Escape($x)){throw ('Old coordinate/timer Confirm-Revive residue: '+$x)}};" ^
+  "foreach($x in @('ClickSlot::AutoMenu','ClickSlot::Attack','ClickSlot::StopAuto1','ClickSlot::StopAuto2','std::array<ClickPoint, 4>','Tự Đầu thai (nội bộ v0.8.7)','HandleCrossMapConfirm','ProbeInternalConfirmUi','Command::ClickInternalConfirm','Command::ClickInternalRevive','Command::ProbeInternalConfirm','HandleDeath','HandleUnderworldAutoFightGuard','HandleAutoSell','HandleTrainRecovery','SwitchToNextRotationSpot','RemoveLegacyConfirmReviveKeys')){if($controller -notmatch [regex]::Escape($x)){throw ('Missing required v1.5.10 controller token: '+$x)}};" ^
+  "if(([regex]::Matches($controller,'HandleCrossMapConfirm\(a, now, a\.profile\.target\)')).Count -ne 1){throw 'Cross-map internal Confirm must be invoked exactly once per TickAccount path'};" ^
+  "$bridge=Get-Content -Encoding UTF8 'src/bridge.cpp' -Raw; foreach($x in @('LuaMainFindUI','LuaFindUI','UIObject.instances','UIButtonHandleClick','ProbeInternalConfirm','ClickInternalConfirm','ClickInternalRevive','get_IsDeath','il2cpp_gchandle_new','il2cpp_gchandle_get_target','0x6A410C14u','0x03DCB000u')){if($bridge -notmatch [regex]::Escape($x)){throw ('Missing donor v0.8.7 bridge token: '+$x)}}; if($bridge -match 'ReadConfirmVisible'){throw 'Core ReadState must not poll donor UI on every snapshot'}; if($bridge -match 'bool ClickAt\(' -or $bridge -match 'Command::ClickAt'){throw 'Unused generic bridge coordinate ClickAt must stay removed'};" ^
+  "$proto=Get-Content -Encoding UTF8 'src/protocol.h' -Raw; foreach($x in @('ReadState = 1','ToggleRide = 2','StartPath = 3','StopPath = 4','ClickNpc = 6','ClickInternalConfirm = 7','ClickInternalRevive = 8','ProbeInternalConfirm = 9','ValidConfirmUi','0x00010510u')){if($proto -notmatch [regex]::Escape($x)){throw ('Protocol missing v1.5.10 token: '+$x)}}; if($proto -match 'ClickAt ='){throw 'Protocol still exposes removed generic ClickAt'};" ^
+  "$route=Get-Content -Encoding UTF8 'src/route_logic.h' -Raw; foreach($x in @('MountAssistAction','DecideMountAssist','mountRetryWaitMs = 5000','footWalkMaxMs = 15000')){if($route -notmatch [regex]::Escape($x)){throw ('Route logic missing '+$x)}};" ^
+  "if($controller -match 'xác nhận sau Đầu thai'){throw 'Special post-revive coordinate Confirm must stay removed'}; if($controller -match '284,188' -or $controller -match '96,168' -or $controller -match 'displayX' -or $controller -match 'displayY'){throw 'NPC route coordinates must not be hard-coded'}; if($controller -match 'ExitWindowsEx' -or $controller -match 'InitiateSystemShutdown'){throw 'Timer must close tool only, never Windows'}; Write-Host 'CLEAN ROUTE v1.5.10 AUDIT PASS: donor v0.8.7 internal Confirm + Revive, no old Confirm/Revive coordinate/timer UI, four AutoFight click slots retained.'"
+if errorlevel 1 exit /b 1
 
-:forbid_remote
-echo FORBIDDEN TOKEN FOUND: CreateRemoteThread
-goto :fail
-:forbid_attach
-echo FORBIDDEN TOKEN FOUND: il2cpp_thread_attach
-goto :fail
-:forbid_sleep
-echo FORBIDDEN TOKEN FOUND: Sleep(
-goto :fail
-:forbid_clicknpc
-echo FORBIDDEN TOKEN FOUND: ClickNPC
-goto :fail
-:forbid_handleclick
-echo FORBIDDEN TOKEN FOUND: HandleClickEvent
-goto :fail
-:forbid_autofight
-echo FORBIDDEN TOKEN FOUND: StartAutoFight
-goto :fail
-:forbid_sell
-echo FORBIDDEN TOKEN FOUND: RequestSellItem
-goto :fail
+echo [2/8] Route FSM self-test...
+zig c++ -target x86_64-windows-gnu -O2 -std=c++17 -Wall -Wextra -Werror src\route_logic_test.cpp -o dist\RouteLogicTest.exe
+if errorlevel 1 exit /b 1
+dist\RouteLogicTest.exe
+if errorlevel 1 exit /b 1
 
-:audit_pass
+echo [3/8] Rotation self-test...
+zig c++ -target x86_64-windows-gnu -O2 -std=c++17 -Wall -Wextra -Werror src\rotation_logic_test.cpp -o dist\RotationLogicTest.exe
+if errorlevel 1 exit /b 1
+dist\RotationLogicTest.exe
+if errorlevel 1 exit /b 1
 
-echo [2/6] Resource...
+echo [4/8] Build bridge DLL...
+zig c++ -target x86_64-windows-gnu -O2 -std=c++17 -Wall -Wextra -Werror -shared -s ^
+  src\bridge.cpp -luser32 -lkernel32 -o dist\ThanLongCleanRouteBridge.dll
+if errorlevel 1 exit /b 1
+
+echo [5/8] Verify bridge is a real PE DLL...
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$ErrorActionPreference='Stop'; $p='dist\ThanLongCleanRouteBridge.dll'; $b=[IO.File]::ReadAllBytes($p); if($b.Length -lt 256){throw 'Bridge DLL too small'}; if($b[0] -ne 0x4D -or $b[1] -ne 0x5A){throw 'Bridge is not PE/MZ'}; $pe=[BitConverter]::ToInt32($b,0x3C); if($pe -lt 0 -or $pe+24 -ge $b.Length){throw 'Invalid PE header offset'}; if($b[$pe] -ne 0x50 -or $b[$pe+1] -ne 0x45 -or $b[$pe+2] -ne 0 -or $b[$pe+3] -ne 0){throw 'Missing PE signature'}; $ch=[BitConverter]::ToUInt16($b,$pe+22); if(($ch -band 0x2000) -eq 0){throw 'PE does not have DLL characteristic'}; Write-Host ('BRIDGE PE DLL PASS characteristics=0x{0:X4}' -f $ch)"
+if errorlevel 1 exit /b 1
+
+echo [6/8] Build resources...
 pushd resources
-zig rc /c 65001 /fo ..\app.res app.rc
+zig rc /c 65001 /fo ..\dist\app.res app.rc
 popd
-if errorlevel 1 goto :fail
+if errorlevel 1 exit /b 1
 
-echo [3/6] Bridge DLL - read-only snapshot runtime...
-rem Bridge stays on the already-proven hook/main thread. No remote worker, no thread attach, no gameplay action.
-zig c++ -target x86_64-windows-gnu -O2 -std=c++17 -DUNICODE -D_UNICODE ^
-  -Wall -Wextra -Werror -fno-exceptions -fno-rtti -shared ^
-  src\bridge\bridge.cpp -luser32 -lkernel32 -o ThanLongNewCoreBridge.dll
-if errorlevel 1 goto :fail
-if not exist ThanLongNewCoreBridge.dll goto :fail
+echo [7/8] Build controller EXE...
+zig c++ -target x86_64-windows-gnu -O2 -std=c++17 -Wall -Wextra -Werror -municode -static -s ^
+  src\controller.cpp dist\app.res -Wl,--subsystem,windows ^
+  -lcomctl32 -luser32 -lkernel32 -lgdi32 ^
+  -o dist\ThanLongCleanRoute_v1.5.10.exe
+if errorlevel 1 exit /b 1
 
-echo [4/6] Bridge LoadLibrary self-test...
-zig c++ -target x86_64-windows-gnu -O2 -std=c++17 -DUNICODE -D_UNICODE ^
-  -Wall -Wextra -Werror -municode -static ^
-  src\bridge\selftest.cpp -lkernel32 -o BridgeSelfTest.exe
-if errorlevel 1 goto :fail
-BridgeSelfTest.exe "%CD%\ThanLongNewCoreBridge.dll"
-if errorlevel 1 (
-  echo.
-  echo LOI: DLL vua build khong LoadLibrary duoc tren chinh Windows nay.
-  echo DUNG BUILD tai day; khong chay controller voi DLL loi.
-  goto :fail
-)
-
-echo [5/6] Controller EXE...
-zig c++ -target x86_64-windows-gnu -O2 -std=c++17 -DUNICODE -D_UNICODE -Wall -Wextra -Werror -municode -static ^
-  src\controller\main.cpp app.res ^
-  -Wl,--subsystem,windows -lcomctl32 -luser32 -lkernel32 -lgdi32 ^
-  -o ThanLongAutoTrain_NewCore_v1.0.7.exe
-if errorlevel 1 goto :fail
-
-echo [6/6] Package...
-move /y ThanLongNewCoreBridge.dll dist\ThanLongNewCoreBridge.dll >nul
-move /y ThanLongAutoTrain_NewCore_v1.0.7.exe dist\ThanLongAutoTrain_NewCore_v1.0.7.exe >nul
-move /y app.res dist\app.res >nul
-del /q BridgeSelfTest.exe >nul 2>nul
-
-echo.
-echo BUILD + LOADLIBRARY SELFTEST THANH CONG:
-echo   dist\ThanLongAutoTrain_NewCore_v1.0.7.exe
-echo   dist\ThanLongNewCoreBridge.dll
-echo.
-echo Sau khi chay: tick client - bam "Kiem tra nen + Snapshot".
-echo Ban nay CHI DOC snapshot. Action game van KHOA.
-exit /b 0
-
-:fail
-echo.
-echo BUILD/SELFTEST THAT BAI. KHONG DUNG DLL neu self-test khong PASS.
-exit /b 1
+echo [8/8] Done.
+echo BUILD THANH CONG v1.5.10
