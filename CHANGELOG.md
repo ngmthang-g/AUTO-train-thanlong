@@ -171,3 +171,8 @@ Added:
 
 Changed:
 - NPC X/Y user-captured; no hard-coded sell coordinates.
+
+## v1.5.10 runtime hotfix — passive scan / lazy donor UI
+- Fix first live-test regression: opening/scanning could diss the game because ScanClients attached bridge and called ReadState immediately.
+- Scan now performs no bridge attach and no ReadState.
+- Core ReadState no longer polls donor MessageBox UI. Dedicated ProbeInternalConfirm is lazy and cross-map-context-only.

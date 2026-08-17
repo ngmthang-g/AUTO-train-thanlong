@@ -202,6 +202,7 @@ struct RuntimeState {
     DWORD revivePhaseTick = 0;
     DWORD lastReviveClickTick = 0;
     DWORD lastConfirmClickTick = 0;
+    DWORD lastConfirmProbeTick = 0;
     DWORD lastRealInputTick = 0;
 
     int lastObservedMap = 0;
@@ -1187,28 +1188,20 @@ private:
         accounts_.clear();
         ListView_DeleteAllItems(clientList_);
 
+        // Runtime hotfix: scanning must be STRICTLY PASSIVE. Enumerating windows and
+        // GameAssembly.dll is enough to show clients. Do not SetWindowsHookEx, load the
+        // bridge into the game, or issue ReadState merely because the tool opened or the
+        // user pressed Scan. The bridge is attached only after an explicit Start.
         const auto found = FindClients();
         for (const auto& game : found) {
             auto a = std::make_unique<Account>();
             a->game = game;
-            std::wstring error;
-            if (a->bridge.Attach(game, error)) {
-                Response r{};
-                if (a->bridge.Call(Command::ReadState, 0, 0, 0, r, error, 1200)) {
-                    a->snapshot = r.snapshot;
-                    a->snapshotValid = true;
-                }
-            }
-            if (!a->snapshotValid) {
-                a->snapshot = {};
-                a->displayName = L"? • PID " + std::to_wstring(game.pid);
-                Log(L"PID " + std::to_wstring(game.pid) + L": chưa đọc được identity: " + error);
-            } else {
-                a->displayName = DisplayName(a->snapshot, game.pid);
-            }
+            a->snapshot = {};
+            a->snapshotValid = false;
+            a->displayName = L"? • PID " + std::to_wstring(game.pid);
             a->profile = LoadProfile(ProfileSection(a->snapshot, game.pid));
             MigrateLegacySpot(a->profile);
-            a->runtime.status = L"Đã dừng";
+            a->runtime.status = L"Đã dừng • scan thụ động";
             accounts_.push_back(std::move(a));
         }
 
@@ -1221,7 +1214,8 @@ private:
         } else {
             ClearEditor();
         }
-        Log(L"Quét thấy " + std::to_wstring(accounts_.size()) + L" client GameAssembly.dll.");
+        Log(L"Quét thụ động thấy " + std::to_wstring(accounts_.size()) +
+            L" client GameAssembly.dll • KHÔNG attach bridge / KHÔNG ReadState.");
     }
 
     void InsertAccountRow(int row, const Account& a) {
@@ -1897,6 +1891,21 @@ private:
         return ok;
     }
 
+    bool ProbeInternalConfirmUi(Account& a, std::wstring& detail) {
+        Response r{};
+        std::wstring error;
+        const bool ok = a.bridge.Call(Command::ProbeInternalConfirm, 0, 0, 0, r, error, 1000);
+        if (!ok) {
+            detail = error;
+            if (BridgeLooksUnresponsive(error)) {
+                EnterClientFreeze(a, L"Bridge donor Confirm probe timeout/busy", GetTickCount());
+            }
+            return false;
+        }
+        detail = r.detail;
+        return true;
+    }
+
     void TestClick(ClickSlot slot) {
         Account* a = SelectedAccount();
         if (!a) { Log(L"TEST: chưa chọn acc"); return; }
@@ -1915,15 +1924,36 @@ private:
         for (int i = 0; i < count && i < static_cast<int>(accounts_.size()); ++i) {
             if (!ListView_GetCheckState(clientList_, i)) continue;
             Account& a = *accounts_[static_cast<std::size_t>(i)];
-            if (!a.profile.target.valid) {
-                LogAccount(a, L"Không start: acc chưa chọn bãi chung.");
-                continue;
-            }
+
+            // Explicit Start is the first point where the tool is allowed to attach.
+            // Immediately perform ONE core-only snapshot so RoleID-based config can be
+            // loaded before automation starts. If this read fails, detach and fail closed.
             std::wstring error;
             if (!EnsureAttach(a, error)) {
                 LogAccount(a, L"Không start: " + error);
                 continue;
             }
+            if (!ReadSnapshot(a, error, 1200)) {
+                LogAccount(a, L"Không start: core ReadState thất bại • " + error);
+                a.bridge.Close();
+                continue;
+            }
+
+            a.displayName = DisplayName(a.snapshot, a.game.pid);
+            const std::wstring identitySection = ProfileSection(a.snapshot, a.game.pid);
+            if (_wcsicmp(identitySection.c_str(), a.profile.section.c_str()) != 0) {
+                a.profile = LoadProfile(identitySection);
+                MigrateLegacySpot(a.profile);
+                if (SelectedAccount() == &a) LoadSelectedProfileToUi();
+            }
+            UpdateAccountRow(i, a);
+
+            if (!a.profile.target.valid) {
+                LogAccount(a, L"Không start: acc chưa chọn bãi chung.");
+                a.bridge.Close();
+                continue;
+            }
+
             a.deathSessionLatched = false;
             a.rotationDeathTicks.clear();
             a.rotationMetricTick = GetTickCount();
@@ -1935,8 +1965,8 @@ private:
             a.runtime.routeOwnershipResetPending = true;
             a.runtime.status = L"Đang giám sát • chuẩn hóa ownership AutoPath";
             ++started;
-            LogAccount(a, L"BẮT ĐẦU • bãi " + a.profile.target.name + L" • M" +
-                           std::to_wstring(a.profile.target.mapID) + L" • " +
+            LogAccount(a, L"BẮT ĐẦU • core snapshot PASS • donor UI CHƯA đụng tới • bãi " +
+                           a.profile.target.name + L" • M" + std::to_wstring(a.profile.target.mapID) + L" • " +
                            std::to_wstring(a.profile.target.x) + L"," + std::to_wstring(a.profile.target.y) +
                            L" • vòng " + std::to_wstring(a.profile.rotationSpots.size()) + L" bãi • chết quá " +
                            std::to_wstring(a.profile.rotateDeathLimit) + L"/" + std::to_wstring(a.profile.rotateDeathWindowMin) +
@@ -2504,23 +2534,14 @@ private:
         RuntimeState& rt = a.runtime;
         const Snapshot& s = a.snapshot;
 
-        // Do NOT key ownership off the configured train-map ID. The same serialized
-        // route engine is also used by recovery/sell travel, so the only authoritative
-        // ownership boundary is a successful cross-map StartPath issued by this tool.
-        // ObserveMovement() clears this ownership immediately when MapID really changes.
-
-        // Only a route started by this tool may consume a MessageBox as a map-confirm
-        // candidate.  This route ownership is the primary unrelated-dialog guard.
+        // Only a cross-map route explicitly started by this tool may even probe the
+        // donor UI. Generic ReadState never touches donor RVAs.
         if (!rt.crossMapRouteArmed) return false;
         if ((s.validMask & ValidMapTransition) && (!s.mapReady || s.waitingChangeMap)) {
             rt.status = L"Cross-map • game đang transition thật";
             return true;
         }
 
-        // v1.5.3 correction from the v0.8.7 runtime-known-good donor:
-        // AutoPath may remain logically ON while the character is already stopped at a
-        // portal and MessageBox is visible.  Therefore Path ON is route evidence, NOT a
-        // reason to return before inspecting the authoritative popup state.
         if (s.autoPathing) rt.crossMapSeenAutoPath = true;
         const bool routeEvidence = rt.crossMapSeenAutoPath || rt.crossMapRouteMoved;
         if (!routeEvidence) {
@@ -2528,73 +2549,76 @@ private:
             return false;
         }
 
-        if ((s.validMask & ValidConfirmUi) == 0) {
-            rt.status = s.autoPathing
-                ? L"Cross-map • Path ON • MessageBox ? → không click mù"
-                : L"Cross-map • Confirm UI detector chưa authoritative → không click mù";
-            return true;
-        }
-
-        if (!s.confirmUiVisible) {
+        // After a successful Confirm, do not probe/click again. Wait for the real map
+        // transition. A timeout only re-arms pathing; it never authorizes another blind click.
+        if (rt.lastConfirmClickTick != 0) {
+            if (!Elapsed(now, rt.lastConfirmClickTick, 5000)) {
+                rt.status = L"Confirm đã gửi • chờ chuyển map thật";
+                return true;
+            }
+            rt.crossMapSeenAutoPath = false;
+            rt.crossMapRouteMoved = false;
+            rt.confirmAttempts = 0;
+            rt.lastConfirmClickTick = 0;
+            rt.lastConfirmProbeTick = 0;
             rt.confirmUiFirstSeenTick = 0;
             rt.confirmStopPathTick = 0;
-
-            // After a successful click the MessageBox should disappear before the map changes.
-            // Wait for real transition/map-id proof.  Timeout only re-arms route; it never
-            // becomes evidence for another Confirm click.
-            if (rt.lastConfirmClickTick != 0) {
-                if (!Elapsed(now, rt.lastConfirmClickTick, 5000)) {
-                    rt.status = L"MessageBox đã đóng • chờ chuyển map";
-                    return true;
-                }
-                rt.crossMapSeenAutoPath = false;
-                rt.crossMapRouteMoved = false;
-                rt.confirmAttempts = 0;
-                rt.lastConfirmClickTick = 0;
-                rt.suppressRouteSinceTick = 0;
-                rt.status = L"Confirm UI đã đóng nhưng map chưa đổi • cho phép AutoPath re-arm";
-                return false;
-            }
-
-            rt.status = s.autoPathing ? L"Cross-map • Path ON • chờ MessageBox thật"
-                                      : L"Cross-map • chờ MessageBox thật";
-            return true;
+            rt.suppressRouteSinceTick = 0;
+            rt.status = L"Confirm đã gửi nhưng map chưa đổi • cho phép AutoPath re-arm";
+            return false;
         }
 
-        // From this point the authoritative MessageBox is ON.  Require a trustworthy
-        // movement observer and the character to be physically stopped, but do NOT wait
-        // for AutoPath's logical flag to become OFF; the donor proves that flag can stay
-        // ON at the portal while the popup is already waiting for the player.
+        // The core snapshot must prove the character is physically stopped before any
+        // donor UI probe. This prevents raw donor UI access during ordinary training,
+        // startup, movement, map loading, selling, etc.
         if ((s.validMask & ValidMoving) == 0) {
-            rt.status = L"MessageBox ON • moving observer chưa authoritative → chờ";
+            rt.status = L"Cross-map • moving observer chưa authoritative → KHÔNG probe UI";
             return true;
         }
         if (s.moving) {
+            rt.lastConfirmProbeTick = 0;
             rt.confirmUiFirstSeenTick = 0;
             rt.confirmStopPathTick = 0;
-            rt.status = L"MessageBox ON • nhân vật còn di chuyển → chờ dừng";
-            return true;
-        }
-        if (rt.confirmUiFirstSeenTick == 0) {
-            rt.confirmUiFirstSeenTick = now;
-            rt.status = L"MessageBox ON • xác nhận ổn định popup";
-            return true;
-        }
-        if (!Elapsed(now, rt.confirmUiFirstSeenTick, 200)) {
-            rt.status = L"MessageBox ON • debounce 200ms";
+            rt.status = L"Cross-map • nhân vật còn di chuyển → KHÔNG probe UI";
             return true;
         }
 
-        // v0.8.7 stopped AutoPath immediately before Confirm even when AutoPath still
-        // reported running.  Preserve CleanRoute's serialized-action rule: StopPath in
-        // one controller cycle, then use a fresh snapshot before the internal UIButton callback.
+        if (rt.lastConfirmProbeTick != 0 && !Elapsed(now, rt.lastConfirmProbeTick, 600)) {
+            rt.status = L"Cross-map • đã dừng • debounce donor UI probe";
+            return true;
+        }
+        rt.lastConfirmProbeTick = now;
+        std::wstring probeDetail;
+        if (!ProbeInternalConfirmUi(a, probeDetail)) {
+            if (!rt.clientFreezeActive) {
+                rt.confirmUiFirstSeenTick = 0;
+                rt.confirmStopPathTick = 0;
+                rt.status = s.autoPathing
+                    ? L"Cross-map • Path ON • chưa có Confirm donor authoritative"
+                    : L"Cross-map • đã dừng • chờ MessageBox Confirm thật";
+            }
+            return true;
+        }
+
+        if (rt.confirmUiFirstSeenTick == 0) {
+            rt.confirmUiFirstSeenTick = now;
+            rt.status = L"Donor Confirm READY • debounce popup 200ms";
+            return true;
+        }
+        if (!Elapsed(now, rt.confirmUiFirstSeenTick, 200)) {
+            rt.status = L"Donor Confirm READY • chờ debounce 200ms";
+            return true;
+        }
+
+        // Preserve the v0.8.7 ordering: if AutoPath still reports ON at the portal,
+        // stop it in one serialized cycle, then use a fresh snapshot before clicking.
         if (s.autoPathing && rt.confirmStopPathTick == 0) {
             if (SendDecision(a, Action::StopPath, spot, L"cổng trước Xác nhận")) {
                 rt.confirmStopPathTick = now;
-                rt.status = L"MessageBox ON + Path ON → đã StopPath • chờ snapshot mới";
-                LogAccount(a, L"INTERNAL CONFIRM v0.8.7: MessageBox=1 trong khi AutoPath=1 • StopPath trước callback Confirm.");
+                rt.status = L"Confirm READY + Path ON → đã StopPath • chờ snapshot mới";
+                LogAccount(a, L"INTERNAL CONFIRM v0.8.7: dedicated probe PASS • StopPath trước callback Confirm.");
             } else {
-                rt.status = L"MessageBox ON + Path ON • StopPath đang cooldown/fail-closed";
+                rt.status = L"Confirm READY + Path ON • StopPath đang cooldown/fail-closed";
             }
             return true;
         }
@@ -2603,28 +2627,18 @@ private:
             return true;
         }
 
-        // If AutoPath's logical flag is still ON after our explicit StopPath request,
-        // do not deadlock again.  MessageBox ON + tool-owned cross-map route + moving=OFF
-        // is sufficient authoritative context to perform the internal UIButton callback.
         const bool debounceReady = rt.lastConfirmClickTick == 0 || Elapsed(now, rt.lastConfirmClickTick, 2500);
         if (debounceReady && rt.confirmAttempts < 2) {
             if (InternalUiAction(a, Command::ClickInternalConfirm, L"XÁC NHẬN RA MAP NỘI BỘ v0.8.7")) {
                 rt.lastConfirmClickTick = now;
                 ++rt.confirmAttempts;
                 rt.suppressRouteSinceTick = now;
-                rt.status = L"MessageBox ON → UIButton Confirm nội bộ đã gửi • chờ UI/map đổi";
-                LogAccount(a, L"INTERNAL CONFIRM v0.8.7: MessageBox=1 • moving=0 • callback " +
+                rt.status = L"Donor Confirm READY → UIButton callback đã gửi • chờ UI/map đổi";
+                LogAccount(a, L"INTERNAL CONFIRM v0.8.7: dedicated probe + callback " +
                               std::to_wstring(rt.confirmAttempts) + L"/2 • Path=" +
                               std::wstring(s.autoPathing ? L"ON(after StopPath)" : L"OFF") + L".");
-                // A successful Confirm click means a map transition is now expected even if
-                // the client has not published WaitingChangeMap yet. Freeze immediately so
-                // no second click/route/mount/AutoFight action races the loading transition.
                 EnterClientFreeze(a, L"đã click Confirm • chờ map/client ổn định", now);
             }
-        } else {
-            rt.status = rt.confirmAttempts >= 2
-                ? L"MessageBox vẫn còn sau 2 click • chờ thủ công"
-                : L"MessageBox vẫn hiện • chờ debounce trước retry";
         }
         return true;
     }

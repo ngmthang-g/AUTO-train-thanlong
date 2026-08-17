@@ -20,6 +20,7 @@ enum class Command : std::uint32_t {
     ClickNpc = 6,
     ClickInternalConfirm = 7,
     ClickInternalRevive = 8,
+    ProbeInternalConfirm = 9,
 };
 
 enum SnapshotValid : std::uint32_t {

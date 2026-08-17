@@ -594,14 +594,6 @@ bool ClickDonorButton(std::uint64_t button) {
     return true;
 }
 
-bool ReadConfirmVisible(std::int32_t& visible, wchar_t* detail, std::size_t cap) {
-    visible = 0;
-    std::uint64_t root = 0;
-    if (!FindMessageBox(root, detail, cap)) return false;
-    visible = root ? 1 : 0;
-    return true;
-}
-
 struct Classes {
     Il2CppClass* gameApi = nullptr;
     Il2CppClass* guiApi = nullptr; // optional observer surface; route core must remain usable if unavailable
@@ -731,15 +723,8 @@ bool ReadState(Snapshot& s, wchar_t* detail, std::size_t cap) {
         s.freeBagSpace = freeBagSpace; s.validMask |= ValidBagSpace;
     }
 
-    // v1.5.10: restore the v0.8.7 semantic MessageBox observer. This is read-only;
-    // if the donor UI surface cannot be proven on this exact GameAssembly build,
-    // leave ValidConfirmUi unset so the controller fails closed and never clicks blind.
-    std::int32_t confirmVisible = 0;
-    optionalDetail[0] = 0;
-    if (ReadConfirmVisible(confirmVisible, optionalDetail, _countof(optionalDetail))) {
-        s.confirmUiVisible = confirmVisible ? 1 : 0;
-        s.validMask |= ValidConfirmUi;
-    }
+    // Runtime hotfix: core ReadState must never touch donor UI RVAs.
+    // Confirm UI is probed only by Command::ProbeInternalConfirm in cross-map context.
 
     Il2CppObject* ap = nullptr; Il2CppClass* ac = nullptr;
     if (!AutoPathInstance(c, ap, ac, detail, cap)) return false;
@@ -773,53 +758,74 @@ bool SafeForAction(const Classes& c, wchar_t* detail, std::size_t cap) {
     return true;
 }
 
-bool ClickInternalConfirm(wchar_t* detail, std::size_t cap) {
-    Classes c{};
-    if (!ResolveClasses(c, detail, cap) || !SafeForAction(c, detail, cap)) return false;
+bool ResolveInternalConfirmButton(std::uint64_t& button, std::wstring& label,
+                                  wchar_t* detail, std::size_t cap) {
+    button = 0;
+    label.clear();
     std::uint64_t root = 0;
     if (!FindMessageBox(root, detail, cap) || !root) {
-        SetText(detail, cap, L"Không bấm Confirm: MessageBox không tồn tại"); return false;
+        SetText(detail, cap, L"MessageBox Confirm chưa tồn tại");
+        return false;
     }
     std::vector<std::uint64_t> buttons;
     if (!CollectTreeButtons(root, buttons, detail, cap)) return false;
     struct Candidate { std::uint64_t object; int score; std::wstring label; };
     std::vector<Candidate> candidates;
-
-    // Keep v0.8.7's Confirm matcher literally accent-aware here. Do not replace
-    // this with CompactMatch(): "Đồng ý" -> dongy while "Đóng" -> dong, which
-    // would make the negative token a substring of the positive Vietnamese label.
     const std::vector<std::wstring> positive{
         L"đồng ý", L"dong y", L"xác nhận", L"xac nhan", L"confirm",
         L"buttonok", L"btnok", L"buttonyes", L"btnyes", L"yes"};
     const std::vector<std::wstring> negative{
         L"hủy", L"huy", L"không", L"khong", L"cancel", L"buttonno",
         L"btnno", L"đóng", L"close", L"thoát", L"thoat"};
-    for (std::uint64_t button : buttons) {
+    for (std::uint64_t candidate : buttons) {
         std::wstring name, text;
-        if (!InspectDonorButton(button, name, text)) continue;
-        const std::wstring label = DonorTrim(name + L" " + text);
-        const std::wstring normalized = DonorLower(label);
+        if (!InspectDonorButton(candidate, name, text)) continue;
+        const std::wstring candidateLabel = DonorTrim(name + L" " + text);
+        const std::wstring normalized = DonorLower(candidateLabel);
         int score = DonorContainsAny(normalized, positive) ? 20 : 0;
         if (DonorContainsAny(normalized, negative)) score -= 100;
         const std::wstring exactName = DonorTrim(DonorLower(name));
         const std::wstring exactText = DonorTrim(DonorLower(text));
-        if (exactName == L"ok" || exactText == L"ok" || exactText == L"có" ||
-            exactText == L"yes") score += 20;
-        candidates.push_back({button, score, label});
+        if (exactName == L"ok" || exactText == L"ok" || exactText == L"có" || exactText == L"yes") score += 20;
+        candidates.push_back({candidate, score, candidateLabel});
     }
     if (candidates.empty()) {
-        SetText(detail, cap, L"MessageBox không có UIButton đang hoạt động"); return false;
+        SetText(detail, cap, L"MessageBox không có UIButton Confirm hoạt động");
+        return false;
     }
     std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b){ return a.score > b.score; });
     const bool unambiguous = candidates.size() == 1
         ? candidates.front().score >= 0
         : candidates.front().score > 0 && candidates.front().score > candidates[1].score;
     if (!unambiguous) {
-        SetText(detail, cap, L"Không xác định duy nhất nút đồng ý trong MessageBox; không bấm mù"); return false;
+        SetText(detail, cap, L"MessageBox không có duy nhất một nút Confirm authoritative");
+        return false;
     }
-    if (!ClickDonorButton(candidates.front().object)) return false;
+    button = candidates.front().object;
+    label = candidates.front().label;
+    return true;
+}
+
+bool ProbeInternalConfirm(wchar_t* detail, std::size_t cap) {
+    Classes c{};
+    if (!ResolveClasses(c, detail, cap) || !SafeForAction(c, detail, cap)) return false;
+    std::uint64_t button = 0;
+    std::wstring label;
+    if (!ResolveInternalConfirmButton(button, label, detail, cap)) return false;
+    SetText(detail, cap, L"v0.8.7 Confirm probe READY: ");
+    Append(detail, cap, label.c_str());
+    return true;
+}
+
+bool ClickInternalConfirm(wchar_t* detail, std::size_t cap) {
+    Classes c{};
+    if (!ResolveClasses(c, detail, cap) || !SafeForAction(c, detail, cap)) return false;
+    std::uint64_t button = 0;
+    std::wstring label;
+    if (!ResolveInternalConfirmButton(button, label, detail, cap)) return false;
+    if (!ClickDonorButton(button)) return false;
     SetText(detail, cap, L"v0.8.7 UIButton.HandleClickEvent Confirm PASS: ");
-    Append(detail, cap, candidates.front().label.c_str());
+    Append(detail, cap, label.c_str());
     return true;
 }
 
@@ -981,6 +987,9 @@ void ProcessRequest() {
             case Command::ClickInternalRevive:
                 ok = ClickInternalRevive(detail, _countof(detail));
                 r.errorCode = ok ? 0 : 1801; break;
+            case Command::ProbeInternalConfirm:
+                ok = ProbeInternalConfirm(detail, _countof(detail));
+                r.errorCode = ok ? 0 : 1901; break;
             default:
                 SetText(detail, _countof(detail), L"Command không hợp lệ"); r.errorCode = 1002; break;
         }
