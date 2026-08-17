@@ -1,0 +1,56 @@
+name: Hotfix runtime passive scan
+
+on:
+  push:
+    branches:
+      - agent/v1.5.10-internal-ui-v087
+
+permissions:
+  contents: write
+
+jobs:
+  hotfix:
+    if: "!contains(github.event.head_commit.message, '[runtime-scan-hotfix]')"
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply deterministic hotfix
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python tools/hotfix_runtime_scan.py
+          if ($LASTEXITCODE -ne 0) { throw 'hotfix script failed' }
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Build and self-test patched source
+        shell: cmd
+        run: build.cmd
+
+      - name: Verify v1.5.10 artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (!(Test-Path 'dist/ThanLongCleanRoute_v1.5.10.exe')) { throw 'missing controller exe' }
+          if (!(Test-Path 'dist/ThanLongCleanRouteBridge.dll')) { throw 'missing bridge dll' }
+
+      - name: Commit hotfix source only
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (Test-Path dist) { Remove-Item dist -Recurse -Force }
+          if (Test-Path .zig-cache) { Remove-Item .zig-cache -Recurse -Force }
+          git rm -f tools/hotfix_runtime_scan.py .github/workflows/hotfix-runtime-scan.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/controller.cpp src/bridge.cpp src/protocol.h build.cmd CHANGELOG.md docs/bugs/BUG_006_STARTUP_SCAN_BRIDGE_DISS.md
+          git diff --cached --check
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) { throw 'No hotfix source changes staged' }
+          git commit -m 'fix startup scan bridge diss [runtime-scan-hotfix]'
+          git push origin HEAD:${{ github.ref_name }}
