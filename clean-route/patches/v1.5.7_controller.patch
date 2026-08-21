@@ -1,0 +1,127 @@
+--- a/src/controller.cpp
++++ b/src/controller.cpp
+@@ -19,7 +19,7 @@
+ 
+ namespace {
+ 
+-constexpr wchar_t kTitle[] = L"Thần Long Clean Route v1.5.6 • Death Session Cold Restart";
++constexpr wchar_t kTitle[] = L"Thần Long Clean Route v1.5.7 • Route Ownership Reacquire";
+ constexpr wchar_t kGameModule[] = L"GameAssembly.dll";
+ constexpr UINT_PTR kTimer = 1;
+ constexpr int kCaptureHotkeyId = 9001;
+@@ -39,6 +39,8 @@
+ constexpr DWORD kUnderworldStopStepMs = 700;
+ constexpr DWORD kUnderworldVerifyMs = 1200;
+ constexpr int kUnderworldMaxStopAttempts = 3;
++constexpr DWORD kRouteOwnershipStopRetryMs = 1200;
++constexpr int kRouteOwnershipStopMaxAttempts = 3;
+ 
+ 
+ 
+@@ -255,6 +257,14 @@
+     DWORD underworldStopTick = 0;
+     int underworldStopAttempts = 0;
+     bool underworldGuardLogged = false;
++
++    // A tool-runtime reset does not stop the game client's real AutoPath. After a
++    // fresh Start or revive cold-start, reacquire route ownership by forcing any
++    // stale AutoPath OFF and verifying it before a new StartPath may arm Confirm.
++    bool routeOwnershipResetPending = false;
++    DWORD routeOwnershipStopTick = 0;
++    int routeOwnershipStopAttempts = 0;
++    bool routeOwnershipResetLogged = false;
+ };
+ 
+ template <typename T>
+@@ -1720,7 +1730,8 @@
+             a.runtime.running = true;
+             ResetRuntime(a.runtime);
+             a.runtime.running = true;
+-            a.runtime.status = L"Đang giám sát";
++            a.runtime.routeOwnershipResetPending = true;
++            a.runtime.status = L"Đang giám sát • chuẩn hóa ownership AutoPath";
+             ++started;
+             LogAccount(a, L"BẮT ĐẦU • bãi " + a.profile.target.name + L" • M" +
+                            std::to_wstring(a.profile.target.mapID) + L" • " +
+@@ -1957,7 +1968,8 @@
+             // the existing Bridge attachment remain intact.
+             ResetRuntime(rt);
+             a.deathSessionLatched = false;
+-            rt.status = L"ALIVE • cold restart runtime như vừa BẮT ĐẦU";
++            rt.routeOwnershipResetPending = true;
++            rt.status = L"ALIVE • cold restart + chuẩn hóa ownership AutoPath";
+             LogAccount(a, L"POST-REVIVE COLD START: ResetRuntime toàn bộ • giữ nguyên setting/bãi/click • phiên auto mới.");
+             return true;
+         }
+@@ -2010,6 +2022,63 @@
+         return true;
+     }
+ 
++    bool HandleRouteOwnershipReset(Account& a, DWORD now) {
++        RuntimeState& rt = a.runtime;
++        const Snapshot& s = a.snapshot;
++        if (!rt.routeOwnershipResetPending) return false;
++
++        // This is the missing game-side half of a true cold start. ResetRuntime()
++        // clears controller ownership flags, but the client may preserve AutoPath=ON
++        // across death/revive. If we accepted that stale path as our route, then
++        // crossMapRouteArmed would stay false forever and Confirm would fail closed.
++        if ((s.validMask & ValidAutoPath) == 0) {
++            rt.status = L"SESSION ROUTE RESET • chờ AutoPath authoritative";
++            return true;
++        }
++
++        if (!s.autoPathing) {
++            rt.routeOwnershipResetPending = false;
++            rt.routeOwnershipStopTick = 0;
++            rt.routeOwnershipStopAttempts = 0;
++            rt.crossMapRouteArmed = false;
++            rt.crossMapRouteMoved = false;
++            rt.crossMapSeenAutoPath = false;
++            rt.confirmAttempts = 0;
++            rt.confirmUiFirstSeenTick = 0;
++            rt.confirmStopPathTick = 0;
++            rt.lastConfirmClickTick = 0;
++            rt.suppressRouteSinceTick = 0;
++            rt.status = L"SESSION ROUTE RESET • AutoPath OFF • ownership sạch";
++            if (!rt.routeOwnershipResetLogged) {
++                LogAccount(a, L"SESSION ROUTE RESET PASS: AutoPath OFF → route kế tiếp phải do tool StartPath mới để arm Confirm.");
++                rt.routeOwnershipResetLogged = true;
++            }
++            return true; // one-cycle barrier before normal route logic
++        }
++
++        rt.routeOwnershipResetLogged = false;
++        if (rt.routeOwnershipStopAttempts >= kRouteOwnershipStopMaxAttempts &&
++            rt.routeOwnershipStopTick != 0 &&
++            Elapsed(now, rt.routeOwnershipStopTick, kRouteOwnershipStopRetryMs)) {
++            rt.status = L"SESSION ROUTE RESET • AutoPath cũ vẫn ON sau 3 StopPath • fail-closed";
++            return true;
++        }
++
++        if (rt.routeOwnershipStopTick == 0 || Elapsed(now, rt.routeOwnershipStopTick, kRouteOwnershipStopRetryMs)) {
++            if (SendDecision(a, Action::StopPath, a.profile.target, L"session route ownership reset")) {
++                ++rt.routeOwnershipStopAttempts;
++                rt.routeOwnershipStopTick = now;
++                rt.status = L"SESSION ROUTE RESET • phát hiện AutoPath cũ ON → StopPath, chờ verify OFF";
++                LogAccount(a, L"SESSION ROUTE RESET: AutoPath=ON nhưng controller vừa cold-reset → StopPath để xóa path đời trước trước khi route mới.");
++            } else {
++                rt.status = L"SESSION ROUTE RESET • chờ gửi StopPath fail-closed";
++            }
++        } else {
++            rt.status = L"SESSION ROUTE RESET • đã StopPath → chờ snapshot AutoPath OFF";
++        }
++        return true;
++    }
++
+     bool HandleUnderworldAutoFightGuard(Account& a, DWORD now) {
+         RuntimeState& rt = a.runtime;
+         const Snapshot& s = a.snapshot;
+@@ -2748,6 +2817,7 @@
+ 
+         ObserveMovement(a, now);
+         if (HandleDeath(a, now)) return;
++        if (HandleRouteOwnershipReset(a, now)) return;
+         if (HandleUnderworldAutoFightGuard(a, now)) return;
+ 
+         if (rt.qualifiedMap != s.mapID) {

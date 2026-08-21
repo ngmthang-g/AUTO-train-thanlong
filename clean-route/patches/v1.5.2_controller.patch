@@ -1,0 +1,134 @@
+diff --git a/src/controller.cpp b/src/controller.cpp
+index ea5a8ef..c0734e1 100644
+--- a/src/controller.cpp
++++ b/src/controller.cpp
+@@ -19,7 +19,7 @@ using namespace cleanroute_logic;
+ 
+ namespace {
+ 
+-constexpr wchar_t kTitle[] = L"Thần Long Clean Route v1.5.1 • AutoFight 1m • Persist • Confirm v1.4.1";
++constexpr wchar_t kTitle[] = L"Thần Long Clean Route v1.5.2 • Semantic Confirm Detector";
+ constexpr wchar_t kGameModule[] = L"GameAssembly.dll";
+ constexpr UINT_PTR kTimer = 1;
+ constexpr int kCaptureHotkeyId = 9001;
+@@ -1831,50 +1831,80 @@ private:
+             rt.suppressRouteSinceTick = 0;
+             return false;
+         }
++
++        // Only a route that the tool itself started may consume a MessageBox as a
++        // cross-map confirmation candidate. This prevents unrelated MessageBoxes from
++        // being clicked while the character is otherwise idle.
++        if (!rt.crossMapRouteArmed) return false;
++        if ((s.validMask & ValidMapTransition) && (!s.mapReady || s.waitingChangeMap)) {
++            rt.status = L"Cross-map • game đang transition thật";
++            return true;
++        }
+         if (s.autoPathing) {
+             rt.crossMapSeenAutoPath = true;
+-            rt.stallSinceTick = 0;
+-            return false;
++            rt.status = L"Cross-map • AutoPath đang chạy";
++            return true;
+         }
+-        // Runtime-known-good v1.4.1 orchestration: only confirm after we have
+-        // actually observed AutoPath, then a stable portal stall. Do not invent
+-        // extra portal-arm heuristics here; the saved Confirm point itself is known-good.
+-        if (!rt.crossMapSeenAutoPath) return false;
+-        const bool stationaryLongEnough = rt.lastMovementTick != 0 && Elapsed(now, rt.lastMovementTick, 1400);
+-        if (!stationaryLongEnough) {
+-            rt.stallSinceTick = 0;
++
++        const bool routeEvidence = rt.crossMapSeenAutoPath || rt.crossMapRouteMoved;
++        if (!routeEvidence) {
++            // No proof the route ever started: let normal route logic retry StartPath.
++            rt.status = L"Cross-map đã arm • chưa có bằng chứng route → cho phép retry";
+             return false;
+         }
+-        if (rt.stallSinceTick == 0) rt.stallSinceTick = now;
++
++        // Critical v1.5.2 rule: timing/stall is NOT evidence that a Confirm dialog
++        // exists. The semantic MessageBox observer must be authoritative before any click.
++        if ((s.validMask & ValidConfirmUi) == 0) {
++            rt.status = L"Cross-map • Confirm UI detector chưa authoritative → không click mù";
++            return true;
++        }
+ 
+         if (!a.profile.enableConfirm || !a.profile.points[static_cast<std::size_t>(ClickSlot::Confirm)].valid) {
+-            rt.status = L"Khác map stall • chờ Xác nhận thủ công";
++            rt.status = s.confirmUiVisible ? L"MessageBox thật đã xuất hiện • chờ Xác nhận thủ công"
++                                           : L"Cross-map • chờ MessageBox thật";
+             return true;
+         }
+-        if (rt.confirmAttempts > 0 && rt.lastConfirmClickTick != 0 &&
+-            Elapsed(now, rt.lastConfirmClickTick, 2500) &&
+-            !Elapsed(now, rt.lastConfirmClickTick, 6000)) {
++
++        if (s.confirmUiVisible) {
++            // Retry is allowed only while the *same semantic condition* still exists.
++            // Time is merely a debounce guard, never the trigger for deciding a dialog exists.
++            const bool debounceReady = rt.lastConfirmClickTick == 0 || Elapsed(now, rt.lastConfirmClickTick, 2500);
++            if (debounceReady && rt.confirmAttempts < 2) {
++                if (ClickSlotNow(a, ClickSlot::Confirm, L"semantic MessageBox visible")) {
++                    rt.lastConfirmClickTick = now;
++                    ++rt.confirmAttempts;
++                    rt.suppressRouteSinceTick = now;
++                    rt.status = L"MessageBox thật → đã click Xác nhận • chờ UI/map đổi";
++                    LogAccount(a, L"Cross-map Confirm v1.5.2: detector MessageBox=1 • click " +
++                                  std::to_wstring(rt.confirmAttempts) + L"/2.");
++                }
++            } else {
++                rt.status = rt.confirmAttempts >= 2
++                    ? L"MessageBox vẫn còn sau 2 click • chờ thủ công"
++                    : L"MessageBox vẫn hiện • chờ debounce trước retry";
++            }
++            return true;
++        }
++
++        // After a successful click the MessageBox should disappear before the map changes.
++        // Wait for the real transition/map-id proof. Only after a timeout do we allow
++        // AutoPath to re-arm; the timeout never causes another Confirm click by itself.
++        if (rt.lastConfirmClickTick != 0) {
++            if (!Elapsed(now, rt.lastConfirmClickTick, 5000)) {
++                rt.status = L"MessageBox đã đóng • chờ chuyển map";
++                return true;
++            }
+             rt.crossMapSeenAutoPath = false;
+-            rt.stallSinceTick = 0;
++            rt.crossMapRouteMoved = false;
++            rt.confirmAttempts = 0;
++            rt.lastConfirmClickTick = 0;
+             rt.suppressRouteSinceTick = 0;
+-            rt.status = L"Xác nhận chưa đổi map • thử AutoPath lại";
++            rt.status = L"Confirm UI đã đóng nhưng map chưa đổi • cho phép AutoPath re-arm";
+             return false;
+         }
+-        const bool clickReady = Elapsed(now, rt.stallSinceTick, 1500) &&
+-                                (rt.lastConfirmClickTick == 0 || Elapsed(now, rt.lastConfirmClickTick, 6000)) &&
+-                                rt.confirmAttempts < 2;
+-        if (clickReady) {
+-            if (ClickSlotNow(a, ClickSlot::Confirm, L"cross-map v1.4.1 known-good timing")) {
+-                rt.lastConfirmClickTick = now;
+-                ++rt.confirmAttempts;
+-                rt.suppressRouteSinceTick = now;
+-                rt.stallSinceTick = now;
+-                rt.status = L"Đã click Xác nhận • chờ chuyển map";
+-                LogAccount(a, L"Cross-map Confirm: dùng timing v1.4.1 • click " + std::to_wstring(rt.confirmAttempts) + L"/2.");
+-            }
+-            return true;
+-        }
+-        rt.status = rt.confirmAttempts >= 2 ? L"Xác nhận đã thử 2 lần • chờ thủ công" : L"Stall ở cổng • chờ cooldown";
++
++        rt.status = L"Cross-map • chờ MessageBox thật";
+         return true;
+     }
+ 
+@@ -2561,6 +2591,8 @@ private:
+         if (s.validMask & ValidLifeState) text += L" • " + std::wstring(s.dead ? L"CHẾT" : L"SỐNG");
+         if (s.validMask & ValidAutoFight) text += L" • Đánh quái " + std::wstring(s.autoFight ? L"ON" : L"OFF");
+         if (s.validMask & ValidBagSpace) text += L" • Túi trống " + std::to_wstring(s.freeBagSpace);
++        if (s.validMask & ValidConfirmUi) text += L" • MessageBox " + std::wstring(s.confirmUiVisible ? L"ON" : L"OFF");
++        else text += L" • MessageBox ?";
+         if (globalPaused_) text += L" • F4 PAUSE";
+         if (!s.mapReady || s.waitingChangeMap) text = L"STATE " + AccountTag(*a) + L" • ĐANG CHUYỂN MAP";
+         SetText(live_, text);

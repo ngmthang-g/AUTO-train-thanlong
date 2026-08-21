@@ -1,0 +1,119 @@
+--- a/src/controller.cpp
++++ b/src/controller.cpp
+@@ -19,7 +19,7 @@
+ 
+ namespace {
+ 
+-constexpr wchar_t kTitle[] = L"Thần Long Clean Route v1.5.5 • Địa Phủ AutoFight Guard";
++constexpr wchar_t kTitle[] = L"Thần Long Clean Route v1.5.6 • Death Session Cold Restart";
+ constexpr wchar_t kGameModule[] = L"GameAssembly.dll";
+ constexpr UINT_PTR kTimer = 1;
+ constexpr int kCaptureHotkeyId = 9001;
+@@ -803,6 +803,11 @@
+     std::wstring displayName;
+     AccountProfile profile{};
+     RuntimeState runtime{};
++
++    // Lifecycle latch intentionally lives OUTSIDE RuntimeState. ResetRuntime() may wipe
++    // every automation phase at death/alive boundaries without forgetting that both
++    // snapshots still belong to the same death session.
++    bool deathSessionLatched = false;
+ };
+ 
+ std::wstring PointDescription(const ClickPoint& p) {
+@@ -1711,6 +1716,7 @@
+                 LogAccount(a, L"Không start: " + error);
+                 continue;
+             }
++            a.deathSessionLatched = false;
+             a.runtime.running = true;
+             ResetRuntime(a.runtime);
+             a.runtime.running = true;
+@@ -1726,6 +1732,7 @@
+ 
+     void StopAccount(Account& a) {
+         const bool wasFrozen = a.runtime.clientFreezeActive;
++        a.deathSessionLatched = false;
+         a.runtime.running = false;
+         ResetRuntime(a.runtime);
+         a.runtime.running = false;
+@@ -1929,47 +1936,52 @@
+     bool HandleDeath(Account& a, DWORD now) {
+         RuntimeState& rt = a.runtime;
+         const Snapshot& s = a.snapshot;
++
++        // Life state is authoritative for the death-session boundary. If it becomes
++        // temporarily unavailable while a death session is latched, fail closed and
++        // preserve the latch/timers instead of silently returning to normal automation.
+         if ((s.validMask & ValidLifeState) == 0) {
+-            rt.deadSinceTick = 0;
+-            rt.revivePhase = 0;
++            if (a.deathSessionLatched) {
++                rt.status = L"DEATH SESSION • chờ life-state authoritative";
++                return true;
++            }
+             return false;
+         }
++
+         if (!s.dead) {
+-            if (rt.revivePhase != 0) {
+-                rt.revivePhase = 0;
+-                rt.deadSinceTick = 0;
+-                rt.lastReviveClickTick = 0;
+-            }
+-            return false;
++            if (!a.deathSessionLatched) return false;
++
++            // SECOND boundary reset: the character is alive again on a stable client
++            // snapshot. Wipe every revive/travel/fight/sell/confirm/watchdog phase and
++            // resume exactly like a fresh BẮT ĐẦU, while AccountProfile/settings and
++            // the existing Bridge attachment remain intact.
++            ResetRuntime(rt);
++            a.deathSessionLatched = false;
++            rt.status = L"ALIVE • cold restart runtime như vừa BẮT ĐẦU";
++            LogAccount(a, L"POST-REVIVE COLD START: ResetRuntime toàn bộ • giữ nguyên setting/bãi/click • phiên auto mới.");
++            return true;
+         }
+ 
+-        rt.status = L"Nhân vật đang chết";
+-        if (rt.deadSinceTick == 0) {
++        if (!a.deathSessionLatched) {
++            // FIRST boundary reset: a new authoritative death is a hard session
++            // boundary. Never carry ANY runtime state from the previous life. The
++            // lifecycle latch is outside RuntimeState so this full reset cannot cause
++            // a repeated-reset loop while the same dead snapshot remains true.
++            ResetRuntime(rt);
++            a.deathSessionLatched = true;
+             rt.deadSinceTick = now;
+-            // A new death starts a new travel/Confirm generation. Never inherit
+-            // route ownership, popup debounce or retry counters from the prior life.
+-            rt.crossMapSeenAutoPath = false;
+-            rt.crossMapRouteArmed = false;
+-            rt.crossMapRouteMoved = false;
+-            rt.stallSinceTick = 0;
+-            rt.confirmAttempts = 0;
+-            rt.lastConfirmClickTick = 0;
+-            rt.confirmUiFirstSeenTick = 0;
+-            rt.confirmStopPathTick = 0;
+-            rt.suppressRouteSinceTick = 0;
+-            rt.underworldStopPhase = 0;
+-            rt.underworldStopTick = 0;
+-            rt.underworldStopAttempts = 0;
+-            rt.underworldGuardLogged = false;
+-            LogAccount(a, L"NEW DEATH CYCLE: reset route/Confirm ownership trước Đầu thai.");
++            rt.status = L"DEAD • hard reset runtime đời trước";
++            LogAccount(a, L"NEW DEATH SESSION: HARD ResetRuntime toàn bộ • coi như AUTO vừa được bật lại từ đầu.");
+         }
++
++        rt.status = L"Nhân vật đang chết";
+         if (!a.profile.enableRevive || !a.profile.points[static_cast<std::size_t>(ClickSlot::Revive)].valid) {
+             rt.status = L"CHẾT • chờ Đầu thai thủ công";
+             return true;
+         }
+         if (rt.revivePhase == 0 && Elapsed(now, rt.deadSinceTick, 500) &&
+             (rt.lastReviveClickTick == 0 || Elapsed(now, rt.lastReviveClickTick, 5000))) {
+-            if (ClickSlotNow(a, ClickSlot::Revive, L"get_IsDeath=1 ổn định")) {
++            if (ClickSlotNow(a, ClickSlot::Revive, L"death-session hard reset • get_IsDeath=1 ổn định")) {
+                 rt.lastReviveClickTick = now;
+                 rt.revivePhase = 1;
+                 rt.revivePhaseTick = now;

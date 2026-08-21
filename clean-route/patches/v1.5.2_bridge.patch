@@ -1,0 +1,114 @@
+diff --git a/src/bridge.cpp b/src/bridge.cpp
+index 014edf2..f12ff3f 100644
+--- a/src/bridge.cpp
++++ b/src/bridge.cpp
+@@ -81,6 +81,7 @@ struct Api {
+     bool (__cdecl* class_is_valuetype)(const Il2CppClass*) = nullptr;
+     std::int32_t (__cdecl* string_length)(Il2CppString*) = nullptr;
+     const wchar_t* (__cdecl* string_chars)(Il2CppString*) = nullptr;
++    Il2CppString* (__cdecl* string_new)(const char*) = nullptr;
+ 
+     bool Load(wchar_t* detail, std::size_t cap) {
+         if (module) return true;
+@@ -95,6 +96,9 @@ struct Api {
+         NEED(class_from_type); NEED(class_is_valuetype); NEED(string_length); NEED(string_chars);
+ #undef NEED
+         if (!Resolve(module, "il2cpp_free", free_fn)) { SetText(detail, cap, L"Thiếu il2cpp_free"); return false; }
++        // Optional: semantic UI observer uses this. Route core must still work if the
++        // frozen client/build does not export it; in that case ValidConfirmUi stays unset.
++        (void)Resolve(module, "il2cpp_string_new", string_new);
+         return true;
+     }
+ };
+@@ -143,15 +147,20 @@ const MethodInfo* ExactMethod(Il2CppClass* klass, const char* name, int argc, bo
+     return m;
+ }
+ 
+-bool InvokeObject(const MethodInfo* method, void* instance, Il2CppObject*& out, wchar_t* detail, std::size_t cap) {
++bool InvokeObjectArgs(const MethodInfo* method, void* instance, void** args,
++                      Il2CppObject*& out, wchar_t* detail, std::size_t cap) {
+     out = nullptr;
+     if (!method) { SetText(detail, cap, L"Method object chưa resolve"); return false; }
+     void* exc = nullptr;
+-    out = g_api.runtime_invoke(method, instance, nullptr, &exc);
++    out = g_api.runtime_invoke(method, instance, args, &exc);
+     if (exc) { SetText(detail, cap, L"Managed exception ở object getter"); return false; }
+     return true;
+ }
+ 
++bool InvokeObject(const MethodInfo* method, void* instance, Il2CppObject*& out, wchar_t* detail, std::size_t cap) {
++    return InvokeObjectArgs(method, instance, nullptr, out, detail, cap);
++}
++
+ bool InvokeScalar(const MethodInfo* method, void* instance, std::int64_t& out, wchar_t* detail, std::size_t cap) {
+     out = 0;
+     if (!method) { SetText(detail, cap, L"Scalar method chưa resolve"); return false; }
+@@ -213,6 +222,7 @@ bool CopyString(Il2CppString* value, wchar_t* out, std::size_t cap) {
+ 
+ struct Classes {
+     Il2CppClass* gameApi = nullptr;
++    Il2CppClass* guiApi = nullptr; // optional observer surface; route core must remain usable if unavailable
+     Il2CppClass* session = nullptr;
+     Il2CppClass* shared = nullptr;
+     Il2CppClass* autoPath = nullptr;
+@@ -223,6 +233,7 @@ bool ResolveClasses(Classes& c, wchar_t* detail, std::size_t cap) {
+     const Il2CppImage* image = Image();
+     if (!image) { SetText(detail, cap, L"Không mở được Assembly-CSharp"); return false; }
+     c.gameApi = g_api.class_from_name(image, "FGStudio.LuaSystem.API", "LuaSystemAPI_Game");
++    c.guiApi = g_api.class_from_name(image, "FGStudio.LuaSystem.API", "LuaSystemAPI_GUI");
+     c.session = g_api.class_from_name(image, "FGStudio.Game.Logic", "SessionData");
+     c.shared = g_api.class_from_name(image, "FGStudio.LuaSystem", "LuaSystemSharedData");
+     c.autoPath = g_api.class_from_name(image, "FGStudio.Engine.Logic", "AutoPathManager");
+@@ -282,6 +293,24 @@ bool AutoPathInstance(const Classes& c, Il2CppObject*& instance, Il2CppClass*& a
+     return true;
+ }
+ 
++bool ReadSemanticUiPresent(const Classes& c, const char* uiName, int& visible,
++                           wchar_t* detail, std::size_t cap) {
++    visible = 0;
++    if (!c.guiApi) { SetText(detail, cap, L"LuaSystemAPI_GUI chưa resolve"); return false; }
++    if (!g_api.string_new) { SetText(detail, cap, L"il2cpp_string_new chưa resolve"); return false; }
++    // v0.9.0 donor source used the top-level MainFindUI("MessageBox") observer and
++    // user reports that detector behaved well. Preserve only that semantic lesson:
++    // prefer MainFindUI for a top-level modal; FindUI is a compatibility fallback.
++    const MethodInfo* find = ExactMethod(c.guiApi, "MainFindUI", 1, true, "System.String");
++    if (!find) find = ExactMethod(c.guiApi, "FindUI", 1, true, "System.String");
++    if (!find) { SetText(detail, cap, L"MainFindUI/FindUI(System.String) chưa resolve"); return false; }
++    Il2CppString* name = g_api.string_new(uiName);
++    if (!name) { SetText(detail, cap, L"Không tạo được managed UI name"); return false; }
++    // il2cpp_runtime_invoke expects the reference-type argument value in params[].
++    void* args[] = { name };
++    Il2CppObject* ui = nullptr;
++    if (!InvokeObjectArgs(find, nullptr, args, ui, detail, cap)) return false;
++    visible = ui ? 1 : 0;
++    return true;
++}
++
+ bool ReadState(Snapshot& s, wchar_t* detail, std::size_t cap) {
+     Classes c{};
+     if (!ResolveClasses(c, detail, cap)) return false;
+@@ -338,6 +367,17 @@ bool ReadState(Snapshot& s, wchar_t* detail, std::size_t cap) {
+         s.freeBagSpace = freeBagSpace; s.validMask |= ValidBagSpace;
+     }
+ 
++    // Read-only cross-map Confirm detector. v0.9.0 donor proved that a dedicated
++    // authoritative MessageBox/UI-presence scanner is much stronger than timing-only
++    // portal heuristics. We preserve that observation but use the current semantic
++    // LuaSystemAPI_GUI surface instead of copying the donor's UIObject.instances scanner.
++    int confirmVisible = 0;
++    optionalDetail[0] = 0;
++    if (ReadSemanticUiPresent(c, "MessageBox", confirmVisible, optionalDetail, _countof(optionalDetail))) {
++        s.confirmUiVisible = confirmVisible ? 1 : 0;
++        s.validMask |= ValidConfirmUi;
++    }
++
+     Il2CppObject* ap = nullptr; Il2CppClass* ac = nullptr;
+     if (!AutoPathInstance(c, ap, ac, detail, cap)) return false;
+     int pathing = 0;
+@@ -360,6 +400,7 @@ bool ReadState(Snapshot& s, wchar_t* detail, std::size_t cap) {
+     if (s.validMask & ValidVitals) { Append(detail, cap, L" HP="); AppendInt(detail, cap, s.hp); Append(detail, cap, L"/"); AppendInt(detail, cap, s.maxHP); }
+     if (s.validMask & ValidAutoFight) { Append(detail, cap, L" autoFight="); AppendInt(detail, cap, s.autoFight); }
+     if (s.validMask & ValidBagSpace) { Append(detail, cap, L" freeBag="); AppendInt(detail, cap, s.freeBagSpace); }
++    if (s.validMask & ValidConfirmUi) { Append(detail, cap, L" msgBox="); AppendInt(detail, cap, s.confirmUiVisible); }
+     return true;
+ }
