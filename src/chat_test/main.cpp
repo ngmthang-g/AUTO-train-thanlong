@@ -31,6 +31,7 @@ struct GameWindow {
 
 HWND g_main{};
 HWND g_list{};
+HWND g_scan{};
 HWND g_message{};
 HWND g_interval{};
 HWND g_repeat{};
@@ -102,7 +103,7 @@ int GetPositiveInt(HWND h, int fallback, int minValue, int maxValue) {
     wchar_t buf[64]{};
     GetWindowTextW(h, buf, _countof(buf));
     wchar_t* end = nullptr;
-    long v = wcstol(buf, &end, 10);
+    const long v = wcstol(buf, &end, 10);
     if (end == buf || v < minValue || v > maxValue) return fallback;
     return static_cast<int>(v);
 }
@@ -111,7 +112,7 @@ void ScanGames() {
     g_games = FindGames();
     SendMessageW(g_list, CB_RESETCONTENT, 0, 0);
     for (const auto& game : g_games) {
-        std::wstring line = L"PID " + std::to_wstring(game.pid) + L"  |  " + game.title;
+        const std::wstring line = L"PID " + std::to_wstring(game.pid) + L"  |  " + game.title;
         SendMessageW(g_list, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(line.c_str()));
     }
     if (!g_games.empty()) {
@@ -124,8 +125,9 @@ void ScanGames() {
 
 bool PostKey(HWND hwnd, UINT vk) {
     if (!IsWindow(hwnd)) return false;
-    const LPARAM down = 1 | (MapVirtualKeyW(vk, MAPVK_VK_TO_VSC) << 16);
-    const LPARAM up = down | (1u << 30) | (1u << 31);
+    const UINT scanCode = MapVirtualKeyW(vk, MAPVK_VK_TO_VSC);
+    const LPARAM down = 1 | (static_cast<LPARAM>(scanCode) << 16);
+    const LPARAM up = down | (static_cast<LPARAM>(1) << 30) | (static_cast<LPARAM>(1) << 31);
     return PostMessageW(hwnd, WM_KEYDOWN, vk, down) && PostMessageW(hwnd, WM_KEYUP, vk, up);
 }
 
@@ -141,12 +143,10 @@ bool PostUnicodeText(HWND hwnd, const std::wstring& text) {
 bool SendHiddenChatOnce(const GameWindow& game, const std::wstring& message) {
     if (!IsWindow(game.hwnd) || message.empty()) return false;
 
-    // Experimental background path: no SetForegroundWindow, no SendInput,
-    // no cursor movement, no clipboard. The game window receives messages directly.
+    // Experimental background path only: no SetForegroundWindow, SendInput,
+    // cursor movement or clipboard. Ordering is preserved by the target thread queue.
     if (!PostKey(game.hwnd, VK_RETURN)) return false;
-    Sleep(35);
     if (!PostUnicodeText(game.hwnd, message)) return false;
-    Sleep(35);
     if (!PostKey(game.hwnd, VK_RETURN)) return false;
     return true;
 }
@@ -220,54 +220,33 @@ void OnTimer() {
     }
 }
 
-void Layout(HWND hwnd) {
-    RECT rc{};
-    GetClientRect(hwnd, &rc);
-    const int pad = 14;
-    const int w = rc.right - rc.left;
-    int y = 14;
-
-    MoveWindow(g_list, pad, y, w - 130, 300, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_SCAN), w - 108, y, 94, 28, TRUE);
-    y += 42;
-
-    MoveWindow(g_message, pad, y, w - pad * 2, 92, TRUE);
-    y += 106;
-
-    MoveWindow(g_interval, pad, y, 110, 26, TRUE);
-    MoveWindow(g_repeat, pad + 130, y, 110, 26, TRUE);
-    MoveWindow(g_start, pad + 260, y, 90, 30, TRUE);
-    MoveWindow(g_stop, pad + 360, y, 90, 30, TRUE);
-    y += 42;
-
-    MoveWindow(g_status, pad, y, w - pad * 2, 44, TRUE);
-}
-
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case WM_CREATE: {
             HFONT font = static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
-            CreateWindowW(L"STATIC", L"Cửa sổ game", WS_CHILD | WS_VISIBLE, 14, 2, 120, 18, hwnd, nullptr, nullptr, nullptr);
-            g_list = CreateWindowW(WC_COMBOBOXW, L"", WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL, 14, 14, 500, 300, hwnd, reinterpret_cast<HMENU>(IDC_GAME_LIST), nullptr, nullptr);
-            HWND scan = CreateWindowW(L"BUTTON", L"Quét lại", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 90, 28, hwnd, reinterpret_cast<HMENU>(IDC_SCAN), nullptr, nullptr);
-            CreateWindowW(L"STATIC", L"Nội dung chat", WS_CHILD | WS_VISIBLE, 14, 47, 120, 18, hwnd, nullptr, nullptr, nullptr);
-            g_message = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL, 14, 60, 500, 92, hwnd, reinterpret_cast<HMENU>(IDC_MESSAGE), nullptr, nullptr);
-            CreateWindowW(L"STATIC", L"Khoảng lặp (giây)", WS_CHILD | WS_VISIBLE, 14, 162, 120, 18, hwnd, nullptr, nullptr, nullptr);
-            CreateWindowW(L"STATIC", L"Số lần", WS_CHILD | WS_VISIBLE, 144, 162, 90, 18, hwnd, nullptr, nullptr, nullptr);
-            g_interval = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"10", WS_CHILD | WS_VISIBLE | ES_NUMBER, 14, 180, 110, 26, hwnd, reinterpret_cast<HMENU>(IDC_INTERVAL), nullptr, nullptr);
-            g_repeat = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"5", WS_CHILD | WS_VISIBLE | ES_NUMBER, 144, 180, 110, 26, hwnd, reinterpret_cast<HMENU>(IDC_REPEAT), nullptr, nullptr);
-            g_start = CreateWindowW(L"BUTTON", L"Bắt đầu", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, 274, 178, 90, 30, hwnd, reinterpret_cast<HMENU>(IDC_START), nullptr, nullptr);
-            g_stop = CreateWindowW(L"BUTTON", L"Dừng", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 374, 178, 90, 30, hwnd, reinterpret_cast<HMENU>(IDC_STOP), nullptr, nullptr);
-            EnableWindow(g_stop, FALSE);
-            g_status = CreateWindowW(L"STATIC", L"Sẵn sàng.", WS_CHILD | WS_VISIBLE, 14, 220, 500, 44, hwnd, reinterpret_cast<HMENU>(IDC_STATUS), nullptr, nullptr);
+            CreateWindowW(L"STATIC", L"Cửa sổ game", WS_CHILD | WS_VISIBLE, 14, 10, 120, 18, hwnd, nullptr, nullptr, nullptr);
+            g_list = CreateWindowW(WC_COMBOBOXW, L"", WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL, 14, 30, 470, 260, hwnd, reinterpret_cast<HMENU>(IDC_GAME_LIST), nullptr, nullptr);
+            g_scan = CreateWindowW(L"BUTTON", L"Quét lại", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 500, 30, 90, 28, hwnd, reinterpret_cast<HMENU>(IDC_SCAN), nullptr, nullptr);
 
-            for (HWND h : {g_list, scan, g_message, g_interval, g_repeat, g_start, g_stop, g_status}) SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+            CreateWindowW(L"STATIC", L"Nội dung chat", WS_CHILD | WS_VISIBLE, 14, 68, 120, 18, hwnd, nullptr, nullptr, nullptr);
+            g_message = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL, 14, 88, 576, 90, hwnd, reinterpret_cast<HMENU>(IDC_MESSAGE), nullptr, nullptr);
+
+            CreateWindowW(L"STATIC", L"Khoảng lặp (giây)", WS_CHILD | WS_VISIBLE, 14, 190, 120, 18, hwnd, nullptr, nullptr, nullptr);
+            CreateWindowW(L"STATIC", L"Số lần", WS_CHILD | WS_VISIBLE, 154, 190, 90, 18, hwnd, nullptr, nullptr, nullptr);
+            g_interval = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"10", WS_CHILD | WS_VISIBLE | ES_NUMBER, 14, 210, 110, 26, hwnd, reinterpret_cast<HMENU>(IDC_INTERVAL), nullptr, nullptr);
+            g_repeat = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"5", WS_CHILD | WS_VISIBLE | ES_NUMBER, 154, 210, 110, 26, hwnd, reinterpret_cast<HMENU>(IDC_REPEAT), nullptr, nullptr);
+            g_start = CreateWindowW(L"BUTTON", L"Bắt đầu", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, 294, 208, 90, 30, hwnd, reinterpret_cast<HMENU>(IDC_START), nullptr, nullptr);
+            g_stop = CreateWindowW(L"BUTTON", L"Dừng", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 394, 208, 90, 30, hwnd, reinterpret_cast<HMENU>(IDC_STOP), nullptr, nullptr);
+            EnableWindow(g_stop, FALSE);
+
+            g_status = CreateWindowW(L"STATIC", L"Sẵn sàng.", WS_CHILD | WS_VISIBLE, 14, 252, 576, 46, hwnd, reinterpret_cast<HMENU>(IDC_STATUS), nullptr, nullptr);
+
+            for (HWND h : {g_list, g_scan, g_message, g_interval, g_repeat, g_start, g_stop, g_status}) {
+                SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+            }
             ScanGames();
             return 0;
         }
-        case WM_SIZE:
-            Layout(hwnd);
-            return 0;
         case WM_COMMAND:
             switch (LOWORD(wp)) {
                 case IDC_SCAN: ScanGames(); return 0;
@@ -302,8 +281,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     if (!RegisterClassExW(&wc)) return 1;
 
     g_main = CreateWindowExW(0, wc.lpszClassName, kTitle,
-                             WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_THICKFRAME,
-                             CW_USEDEFAULT, CW_USEDEFAULT, 620, 360,
+                             WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
+                             CW_USEDEFAULT, CW_USEDEFAULT, 620, 350,
                              nullptr, nullptr, instance, nullptr);
     if (!g_main) return 2;
     ShowWindow(g_main, show);
