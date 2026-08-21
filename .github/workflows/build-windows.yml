@@ -2,9 +2,11 @@ name: Build NewCore Windows x64
 on:
   workflow_dispatch:
   push:
-    branches: [main, master]
+    branches: [main, master, feature/hidden-auto-chat-test]
+    paths-ignore:
+      - 'dist/ThanLongHiddenAutoChat_TEST.exe'
 permissions:
-  contents: read
+  contents: write
 jobs:
   build:
     runs-on: windows-latest
@@ -13,21 +15,32 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.15.2
-      - name: Build
+      - name: Build main NewCore
         shell: cmd
         run: build.cmd
-      - name: Verify
+      - name: Build hidden chat test
+        shell: cmd
+        run: build-chat-test.cmd
+      - name: Verify binaries
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          $exe='dist/ThanLongAutoTrain_NewCore_v1.0.7.exe'
+          $main='dist/ThanLongAutoTrain_NewCore_v1.0.7.exe'
           $dll='dist/ThanLongNewCoreBridge.dll'
-          if (!(Test-Path $exe)) { throw 'Missing EXE' }
-          if (!(Test-Path $dll)) { throw 'Missing bridge DLL' }
-          Get-FileHash -Algorithm SHA256 $exe,$dll | Format-Table -AutoSize
+          $chat='dist/ThanLongHiddenAutoChat_TEST.exe'
+          foreach ($f in @($main,$dll,$chat)) { if (!(Test-Path $f)) { throw "Missing $f" } }
+          Get-FileHash -Algorithm SHA256 $main,$dll,$chat | Format-Table -AutoSize
       - uses: actions/upload-artifact@v4
         with:
-          name: ThanLongAutoTrain_NewCore_v1.0.7
-          path: |
-            dist/ThanLongAutoTrain_NewCore_v1.0.7.exe
-            dist/ThanLongNewCoreBridge.dll
+          name: ThanLongHiddenAutoChat_TEST
+          path: dist/ThanLongHiddenAutoChat_TEST.exe
+      - name: Commit standalone chat test EXE
+        if: github.ref == 'refs/heads/feature/hidden-auto-chat-test'
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f dist/ThanLongHiddenAutoChat_TEST.exe
+          if (git diff --cached --quiet) { Write-Host 'EXE unchanged'; exit 0 }
+          git commit -m "build: publish hidden auto chat test exe"
+          git push
