@@ -2,7 +2,7 @@ name: Build NewCore Windows x64
 on:
   workflow_dispatch:
   push:
-    branches: [main, master]
+    branches: [main, master, feature/hidden-auto-chat-test]
 permissions:
   contents: read
 jobs:
@@ -13,9 +13,13 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.15.2
-      - name: Build
+      - name: Build main NewCore
         shell: cmd
         run: build.cmd
+      - name: Build hidden chat test
+        if: github.ref == 'refs/heads/feature/hidden-auto-chat-test'
+        shell: cmd
+        run: build-chat-test.cmd
       - name: Verify
         shell: pwsh
         run: |
@@ -31,3 +35,17 @@ jobs:
           path: |
             dist/ThanLongAutoTrain_NewCore_v1.0.7.exe
             dist/ThanLongNewCoreBridge.dll
+      - name: Verify chat test
+        if: github.ref == 'refs/heads/feature/hidden-auto-chat-test'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $chat='dist/ThanLongHiddenAutoChat_TEST.exe'
+          if (!(Test-Path $chat)) { throw 'Missing chat test EXE' }
+          Get-FileHash -Algorithm SHA256 $chat | Format-Table -AutoSize
+      - name: Upload chat test
+        if: github.ref == 'refs/heads/feature/hidden-auto-chat-test'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ThanLongHiddenAutoChat_TEST
+          path: dist/ThanLongHiddenAutoChat_TEST.exe
